@@ -67,7 +67,7 @@ jobs:
           repository: soloztech/marketing-center
           # Release CI is intentionally coupled to the matching, immutable
           # cross-repository candidate instead of the moving 16.0 branch.
-          ref: "16.0.20260904.2-rc1"
+          ref: "16.0.20260904.3-rc1"
           path: .ci-private-dependency/marketing-center
           token: ${{ secrets.CROSS_REPO_READ_TOKEN }}
           persist-credentials: false
