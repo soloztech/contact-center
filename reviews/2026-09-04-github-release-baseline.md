@@ -64,3 +64,21 @@ This release candidate is the first production-target source baseline. It does n
 that the production go-live gates for retention/LGPD, edge rate limiting and controlled
 provider failure exercises are complete. Production was not accessed or changed by this
 validation.
+
+## GitHub publication result
+
+The private repository and coordinated prerelease are available at:
+
+- repository: <https://github.com/soloztech/contact-center>;
+- release:
+  <https://github.com/soloztech/contact-center/releases/tag/16.0.20260904.3-rc1>;
+- pre-commit: <https://github.com/soloztech/contact-center/actions/runs/33879183325>;
+- dependency gate and Odoo tests:
+  <https://github.com/soloztech/contact-center/actions/runs/33879183066>.
+
+All checks completed successfully. Actions has read-only workflow permissions, mandatory
+SHA pinning and an exact four-action allowlist. Vulnerability alerts and automated
+security fixes are enabled. GitHub rejected branch protection/rulesets for this private
+repository under the current organization plan; making the source public is not an
+acceptable workaround. The immutable release tag and restricted write access are the
+current compensating controls.

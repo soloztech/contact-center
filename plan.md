@@ -2862,3 +2862,17 @@ Base, **199/199** WuzAPI, **895/895** integrados e os quatro QUnit previstos. Ca
 Meta compartilhada resolve exatamente uma vez em `/mnt/outros/marketing-center`; a rota
 de teste retornou ao SHA-256 original e ao HTTP 200. Evidência:
 `scans/raw/20260903-odoo16-contact-center-base-crm-greenfield-closeout/release/20260904T124751394613Z/summary.json`.
+
+## Publicação GitHub coordenada — ✅ RC1 em 2026-09-04
+
+O repositório privado `soloztech/contact-center` foi publicado a partir de um novo
+histórico sanitizado. A linhagem anterior, com identificadores do laboratório, não foi
+enviada e permanece apenas no bundle privado verificado. A tag coordenada
+`16.0.20260904.3-rc1` foi publicada como pré-release e fixa a dependência privada do
+Marketing Center na mesma tag.
+
+O GitHub Actions passou pre-commit, detecção de dependências não lançadas e testes OCB:
+`https://github.com/soloztech/contact-center/actions/runs/33879183325` e
+`https://github.com/soloztech/contact-center/actions/runs/33879183066`. Produção segue
+intocada; os gates LGPD/retenção, rate limit de borda, falhas controladas, desempenho em
+volume representativo e janela de cutover continuam obrigatórios.
