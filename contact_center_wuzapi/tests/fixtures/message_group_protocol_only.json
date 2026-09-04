@@ -1,0 +1,25 @@
+{
+  "type": "Message",
+  "instanceName": "Laboratorio",
+  "userID": "group-test-instance",
+  "event": {
+    "Info": {
+      "Chat": "120363000000001@g.us",
+      "Sender": "200000000000003@lid",
+      "SenderAlt": "5511900000003@s.whatsapp.net",
+      "IsFromMe": false,
+      "IsGroup": true,
+      "ID": "GROUPPROTO000000000000000000001",
+      "PushName": "Participante de teste",
+      "Timestamp": "2026-08-24T12:04:05Z"
+    },
+    "Message": {
+      "senderKeyDistributionMessage": {
+        "groupID": "120363000000001@g.us"
+      },
+      "messageContextInfo": {
+        "deviceListMetadataVersion": 2
+      }
+    }
+  }
+}

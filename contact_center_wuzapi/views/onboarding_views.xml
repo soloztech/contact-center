@@ -1,0 +1,326 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="view_contact_center_wuzapi_server_tree" model="ir.ui.view">
+        <field name="name">contact.center.wuzapi.server.tree</field>
+        <field name="model">contact.center.wuzapi.server</field>
+        <field name="arch" type="xml">
+            <tree>
+                <field name="name" />
+                <field name="base_url" />
+                <field name="company_id" groups="base.group_multi_company" />
+                <field name="state" />
+                <field name="instance_count" />
+                <field name="last_check_at" />
+                <field name="active" widget="boolean_toggle" />
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_contact_center_wuzapi_server_form" model="ir.ui.view">
+        <field name="name">contact.center.wuzapi.server.form</field>
+        <field name="model">contact.center.wuzapi.server</field>
+        <field name="arch" type="xml">
+            <form>
+                <header>
+                    <button
+                        name="action_check_server"
+                        type="object"
+                        string="Verify Server"
+                        icon="fa-refresh"
+                        class="oe_highlight"
+                    />
+                    <field
+                        name="state"
+                        widget="statusbar"
+                        statusbar_visible="unchecked,available,error"
+                    />
+                </header>
+                <sheet>
+                    <widget
+                        name="web_ribbon"
+                        title="Archived"
+                        bg_color="bg-danger"
+                        attrs="{'invisible': [('active', '=', True)]}"
+                    />
+                    <div class="oe_title">
+                        <label for="name" />
+                        <h1><field name="name" /></h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="active" invisible="1" />
+                            <field
+                                name="company_id"
+                                groups="base.group_multi_company"
+                            />
+                            <field
+                                name="base_url"
+                                placeholder="https://wuzapi.example.com"
+                            />
+                            <field name="admin_token" password="True" />
+                        </group>
+                        <group>
+                            <field name="last_check_at" readonly="1" />
+                            <field name="instance_count" readonly="1" />
+                            <field
+                                name="last_error"
+                                readonly="1"
+                                attrs="{'invisible': [('state', '!=', 'error')]}"
+                            />
+                        </group>
+                    </group>
+                    <div class="alert alert-info" role="alert">
+                        Um servidor WuzAPI pode hospedar várias instâncias. O token
+                        administrativo cria a instância; cada caixa recebe seu próprio
+                        token privado, QR e callback.
+                    </div>
+                    <notebook>
+                        <page string="Connections">
+                            <field name="connection_ids" readonly="1">
+                                <tree>
+                                    <field name="name" />
+                                    <field name="wuzapi_instance_name" />
+                                    <field name="state" />
+                                    <field name="wuzapi_onboarding_state" />
+                                </tree>
+                            </field>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_contact_center_wuzapi_servers" model="ir.actions.act_window">
+        <field name="name">WuzAPI Servers</field>
+        <field name="res_model">contact.center.wuzapi.server</field>
+        <field name="view_mode">tree,form</field>
+    </record>
+
+    <menuitem
+        id="menu_contact_center_wuzapi_servers"
+        name="WuzAPI Servers"
+        parent="contact_center_base.menu_contact_center_configuration"
+        action="action_contact_center_wuzapi_servers"
+        sequence="55"
+        groups="contact_center_base.group_contact_center_admin"
+    />
+
+    <record
+        id="view_contact_center_account_setup_wizard_form_wuzapi"
+        model="ir.ui.view"
+    >
+        <field name="name">contact.center.account.setup.wizard.form.wuzapi</field>
+        <field name="model">contact.center.account.setup.wizard</field>
+        <field
+            name="inherit_id"
+            ref="contact_center_base.view_contact_center_account_setup_wizard_form"
+        />
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='setup_ref']" position="after">
+                <field name="wuzapi_onboarding_state" invisible="1" />
+            </xpath>
+            <xpath expr="//div[@name='provider_setup_slot']" position="inside">
+                <div
+                    class="o_cc_wuzapi_provider_card"
+                    attrs="{'invisible': [('provider_key', '!=', 'wuzapi')]}"
+                >
+                    <group>
+                        <group>
+                            <field
+                                name="wuzapi_server_id"
+                                options="{'no_quick_create': True}"
+                                domain="[('company_id', '=', company_id), ('active', '=', True), ('state', '=', 'available')]"
+                                attrs="{'readonly': [('connection_id', '!=', False)]}"
+                            />
+                            <field
+                                name="wuzapi_instance_mode"
+                                widget="radio"
+                                attrs="{'readonly': [('connection_id', '!=', False)]}"
+                            />
+                        </group>
+                        <group>
+                            <field
+                                name="wuzapi_instance_name"
+                                placeholder="Ex.: Comercial 01"
+                            />
+                            <field
+                                name="wuzapi_existing_token"
+                                password="True"
+                                attrs="{'invisible': [('wuzapi_instance_mode', '!=', 'existing')]}"
+                            />
+                        </group>
+                    </group>
+                    <div class="alert alert-info mb-0" role="note">
+                        Na criação automática, o Odoo gera tokens fortes, configura
+                        HMAC e callback e mantém a instância isolada das demais caixas.
+                    </div>
+                    <div
+                        class="alert alert-warning mb-0 mt-2"
+                        role="note"
+                        attrs="{'invisible': [('connection_id', '=', False)]}"
+                    >
+                        Revise o nome ou informe um novo token. O servidor e o modo
+                        permanecem fixos para preservar a mesma instância remota.
+                    </div>
+                </div>
+            </xpath>
+
+            <xpath expr="//div[@name='provider_connect_slot']" position="inside">
+                <div attrs="{'invisible': [('provider_key', '!=', 'wuzapi')]}">
+                    <field name="wuzapi_pairing_revision" invisible="1" />
+                    <div class="o_cc_wuzapi_state" role="status">
+                        <i
+                            class="fa fa-circle-o-notch"
+                            title="Estado da conexão"
+                            aria-hidden="true"
+                        />
+                        <field
+                            name="wuzapi_onboarding_state"
+                            readonly="1"
+                            class="oe_inline"
+                        />
+                    </div>
+                    <p class="text-muted">
+                        Escaneie o QR no WhatsApp e use “Atualizar estado”. A caixa
+                        só recebe ou envia mensagens depois da revisão e ativação.
+                    </p>
+                    <field
+                        name="wuzapi_qr_url"
+                        widget="contact_center_onboarding_qr"
+                        readonly="1"
+                        nolabel="1"
+                        attrs="{'invisible': [('wuzapi_onboarding_state', '!=', 'awaiting_scan')]}"
+                    />
+                    <div
+                        class="alert alert-warning"
+                        role="alert"
+                        attrs="{'invisible': [('wuzapi_onboarding_state', '!=', 'error')]}"
+                    >
+                        <field
+                            name="wuzapi_onboarding_last_error"
+                            readonly="1"
+                            nolabel="1"
+                        />
+                    </div>
+                    <div
+                        class="alert alert-success"
+                        role="status"
+                        attrs="{'invisible': [('wuzapi_onboarding_state', '!=', 'ready')]}"
+                    >
+                        WhatsApp conectado como
+                        <field
+                            name="wuzapi_connected_identity"
+                            readonly="1"
+                            class="oe_inline"
+                        />.
+                    </div>
+                </div>
+            </xpath>
+
+            <xpath expr="//button[@name='action_start_provider']" position="attributes">
+                <attribute
+                    name="attrs"
+                >{'invisible': ['|', ('step', '!=', 'connect'), ('provider_key', '=', 'wuzapi')]}</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_back_inbox']" position="attributes">
+                <attribute
+                    name="attrs"
+                >{'invisible': ['|', ('step', '!=', 'provider'), '&amp;', ('provider_key', '=', 'wuzapi'), ('connection_id', '!=', False)]}</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_prepare']" position="attributes">
+                <attribute
+                    name="attrs"
+                >{'invisible': ['|', ('step', '!=', 'provider'), '&amp;', ('provider_key', '=', 'wuzapi'), ('connection_id', '!=', False)]}</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_prepare']" position="after">
+                <button
+                    name="action_prepare"
+                    type="object"
+                    string="Salvar e tentar novamente"
+                    class="btn-primary"
+                    attrs="{'invisible': ['|', '|', ('step', '!=', 'provider'), ('provider_key', '!=', 'wuzapi'), ('connection_id', '=', False)]}"
+                />
+            </xpath>
+            <xpath
+                expr="//button[@name='action_refresh_provider']"
+                position="attributes"
+            >
+                <attribute
+                    name="attrs"
+                >{'invisible': ['|', ('step', '!=', 'connect'), ('provider_key', '=', 'wuzapi')]}</attribute>
+            </xpath>
+            <xpath
+                expr="//button[@name='action_restart_provider']"
+                position="attributes"
+            >
+                <attribute
+                    name="attrs"
+                >{'invisible': ['|', ('step', '!=', 'connect'), ('provider_key', '=', 'wuzapi')]}</attribute>
+            </xpath>
+            <xpath expr="//button[@name='action_restart_provider']" position="after">
+                <button
+                    name="action_repair_provider"
+                    type="object"
+                    string="Corrigir configuração"
+                    icon="fa-wrench"
+                    attrs="{'invisible': ['|', '|', ('step', '!=', 'connect'), ('provider_key', '!=', 'wuzapi'), ('wuzapi_onboarding_state', '!=', 'error')]}"
+                />
+                <button
+                    name="action_start_provider"
+                    type="object"
+                    string="Iniciar conexão"
+                    class="btn-primary"
+                    attrs="{'invisible': ['|', '|', ('step', '!=', 'connect'), ('provider_key', '!=', 'wuzapi'), ('wuzapi_onboarding_state', 'in', ('queued', 'provisioning', 'awaiting_scan', 'verifying', 'ready'))]}"
+                />
+                <button
+                    name="action_refresh_provider"
+                    type="object"
+                    string="Atualizar estado"
+                    icon="fa-refresh"
+                    attrs="{'invisible': ['|', '|', ('step', '!=', 'connect'), ('provider_key', '!=', 'wuzapi'), ('wuzapi_onboarding_state', '=', 'none')]}"
+                />
+                <button
+                    name="action_restart_provider"
+                    type="object"
+                    string="Gerar novo QR"
+                    icon="fa-repeat"
+                    attrs="{'invisible': ['|', '|', ('step', '!=', 'connect'), ('provider_key', '!=', 'wuzapi'), ('wuzapi_onboarding_state', '!=', 'awaiting_scan')]}"
+                />
+            </xpath>
+        </field>
+    </record>
+
+    <record
+        id="view_contact_center_connection_form_wuzapi_onboarding"
+        model="ir.ui.view"
+    >
+        <field
+            name="name"
+        >contact.center.provider.connection.form.wuzapi.onboarding</field>
+        <field name="model">contact.center.provider.connection</field>
+        <field
+            name="inherit_id"
+            ref="contact_center_wuzapi.view_contact_center_connection_form_wuzapi"
+        />
+        <field name="arch" type="xml">
+            <xpath
+                expr="//page[@name='wuzapi_configuration']/group[1]"
+                position="before"
+            >
+                <group string="Guided Setup">
+                    <group>
+                        <field name="wuzapi_server_id" readonly="1" />
+                        <field name="wuzapi_instance_name" readonly="1" />
+                        <field name="wuzapi_remote_user_id" readonly="1" />
+                    </group>
+                    <group>
+                        <field name="wuzapi_onboarding_state" readonly="1" />
+                        <field name="wuzapi_hmac_verified_at" readonly="1" />
+                        <field name="wuzapi_onboarding_last_error" readonly="1" />
+                    </group>
+                </group>
+            </xpath>
+        </field>
+    </record>
+</odoo>

@@ -1,0 +1,54 @@
+{
+  "type": "Message",
+  "instanceName": "Lucas",
+  "userID": "instance-user-1",
+  "event": {
+    "Info": {
+      "Chat": "100000000000001@lid",
+      "Sender": "100000000000001@lid",
+      "SenderAlt": "5511999999999@s.whatsapp.net",
+      "IsFromMe": false,
+      "IsGroup": false,
+      "ID": "ASSOCIATEDVIDEO00000000000000001",
+      "Timestamp": "2026-08-30T12:00:02Z"
+    },
+    "Message": {
+      "messageContextInfo": {
+        "messageAssociation": {
+          "associationType": "MEDIA_ALBUM",
+          "parentMessageKey": {
+            "remoteJID": "100000000000001@lid",
+            "fromMe": false,
+            "ID": "ALBUMPARENT000000000000000000001"
+          },
+          "messageIndex": 2
+        },
+        "messageSecret": "outer-message-secret-must-not-persist",
+        "paddingBytes": "outer-padding-must-not-persist"
+      },
+      "associatedChildMessage": {
+        "mediaKey": "wrapper-lookalike-key-must-not-persist",
+        "message": {
+          "videoMessage": {
+            "URL": "https://mmg.whatsapp.net/associated-video.enc",
+            "directPath": "/associated-video.enc",
+            "mediaKey": "dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnY=",
+            "fileSHA256": "z1ZkqGQmr6Qnme/WwOiy6d8O80yQJNyJ4TIDKHLt+Tg=",
+            "fileEncSHA256": "dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnY=",
+            "fileLength": 13,
+            "mimetype": "video/mp4",
+            "caption": "Vídeo associado recebido",
+            "seconds": 4,
+            "width": 1280,
+            "height": 720,
+            "JPEGThumbnail": "associated-thumbnail-must-not-persist",
+            "streamingSidecar": "associated-sidecar-must-not-persist",
+            "contextInfo": {
+              "mediaKey": "nested-lookalike-key-must-not-persist"
+            }
+          }
+        }
+      }
+    }
+  }
+}

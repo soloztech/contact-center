@@ -1,0 +1,359 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<templates xml:space="preserve">
+    <t t-name="contact_center_ui.MessageContent" owl="1">
+        <div class="cc-message-body">
+            <div
+                t-if="message.is_deleted &amp;&amp; !message.deleted_content_visible"
+                class="cc-message-tombstone"
+            >
+                <i class="fa fa-ban" aria-hidden="true" />
+                <span>Mensagem apagada</span>
+            </div>
+            <div
+                t-elif="controlMeta &amp;&amp; !message.is_deleted"
+                t-attf-class="cc-control-card cc-control-card--#{controlMeta.family}"
+            >
+                <span class="cc-control-card__icon" aria-hidden="true">
+                    <i t-att-class="controlMeta.icon" />
+                </span>
+                <p t-esc="controlText" />
+            </div>
+            <t t-else="">
+                <div
+                    t-if="message.is_deleted"
+                    class="cc-message-tombstone cc-message-deleted-notice"
+                >
+                    <i class="fa fa-ban" aria-hidden="true" />
+                    <span>Mensagem apagada</span>
+                </div>
+                <div t-if="message.is_deleted" class="cc-message-deleted-content">
+                    <t t-call="contact_center_ui.MessagePayload" />
+                </div>
+                <t t-else="">
+                    <t t-call="contact_center_ui.MessagePayload" />
+                </t>
+            </t>
+        </div>
+    </t>
+
+    <t t-name="contact_center_ui.MessagePayload" owl="1">
+        <div
+            t-if="message.media &amp;&amp; message.media.length"
+            class="cc-message-media"
+        >
+            <div
+                t-foreach="message.media"
+                t-as="media"
+                t-key="media.id ? 'id:' + media.id : 'idx:' + media_index"
+                t-att-class="mediaClass(media)"
+            >
+                <div
+                    t-if="media.state === 'pending'"
+                    class="cc-media-state"
+                    role="status"
+                >
+                    <span class="cc-media-state__pulse" aria-hidden="true" />
+                    <span>Preparando <t
+                            t-esc="mediaLabel(media).toLocaleLowerCase()"
+                        />…</span>
+                </div>
+                <div
+                    t-elif="media.state === 'failed' || !contentUrl(media)"
+                    class="cc-media-state cc-media-state--failed"
+                >
+                    <i class="fa fa-exclamation-circle" aria-hidden="true" />
+                    <span>Este arquivo não pôde ser carregado.</span>
+                </div>
+                <div
+                    t-elif="media.kind === 'image' &amp;&amp; imageFailed(media)"
+                    class="cc-media-image-error"
+                    role="alert"
+                >
+                    <i class="fa fa-exclamation-circle" aria-hidden="true" />
+                    <span>Esta imagem não pôde ser carregada.</span>
+                    <button
+                        type="button"
+                        class="cc-media-image-error__retry"
+                        t-on-click="(event) => this.retryImage(media, event)"
+                    >
+                        <i class="fa fa-refresh" aria-hidden="true" />
+                        Tentar novamente
+                    </button>
+                </div>
+                <button
+                    t-elif="media.kind === 'image'"
+                    type="button"
+                    class="cc-media-image"
+                    aria-haspopup="dialog"
+                    t-att-aria-label="'Abrir ' + fileLabel(media)"
+                    t-on-click="(event) => this.openViewer(media, event)"
+                >
+                    <DeferredImage
+                        t-key="imageRenderKey(media)"
+                        src="contentUrl(media)"
+                        alt="fileLabel(media)"
+                        width="media.width"
+                        height="media.height"
+                        priority="30"
+                        loadGeneration="imageAttempt(media)"
+                        onLoadError="(attempt) => this.onImageLoadError(media, attempt)"
+                    />
+                </button>
+                <AudioPlayer t-elif="media.kind === 'audio'" media="media" />
+                <button
+                    t-elif="media.kind === 'video'"
+                    type="button"
+                    class="cc-media-video"
+                    aria-haspopup="dialog"
+                    t-att-aria-label="'Reproduzir ' + fileLabel(media)"
+                    t-on-click="(event) => this.openViewer(media, event)"
+                >
+                    <video
+                        preload="none"
+                        muted="muted"
+                        playsinline="playsinline"
+                        t-att-src="contentUrl(media)"
+                        tabindex="-1"
+                        aria-hidden="true"
+                    >
+                        Seu navegador não reproduz este vídeo.
+                    </video>
+                    <span class="cc-media-video__overlay">
+                        <i class="fa fa-play" aria-hidden="true" />
+                        <span>Abrir vídeo</span>
+                    </span>
+                </button>
+                <button
+                    t-elif="isViewablePdf(media)"
+                    type="button"
+                    class="cc-media-document cc-media-document--preview"
+                    aria-haspopup="dialog"
+                    t-att-aria-label="'Visualizar PDF ' + fileLabel(media)"
+                    t-on-click="(event) => this.openViewer(media, event)"
+                >
+                    <span class="cc-media-document__icon" aria-hidden="true">
+                        <i class="fa fa-file-pdf-o" />
+                    </span>
+                    <span class="cc-media-document__copy">
+                        <strong t-esc="fileLabel(media)" />
+                        <small t-esc="fileMeta(media)" />
+                    </span>
+                    <i class="fa fa-expand" aria-hidden="true" />
+                </button>
+                <a
+                    t-else=""
+                    class="cc-media-document"
+                    t-att-href="downloadUrl(media)"
+                    t-att-download="fileLabel(media)"
+                    t-att-aria-label="'Baixar ' + fileLabel(media)"
+                >
+                    <span class="cc-media-document__icon" aria-hidden="true">
+                        <i class="fa fa-file-o" />
+                    </span>
+                    <span class="cc-media-document__copy">
+                        <strong t-esc="fileLabel(media)" />
+                        <small t-esc="fileMeta(media)" />
+                    </span>
+                    <i class="fa fa-download" aria-hidden="true" />
+                </a>
+                <a
+                    t-if="['image', 'video'].includes(media.kind) &amp;&amp; downloadUrl(media)"
+                    class="cc-media-download"
+                    t-att-href="downloadUrl(media)"
+                    t-att-download="fileLabel(media)"
+                    t-att-aria-label="'Baixar ' + fileLabel(media)"
+                    title="Baixar arquivo"
+                >
+                    <i class="fa fa-download" aria-hidden="true" />
+                </a>
+            </div>
+        </div>
+        <p t-if="message.body_text" t-esc="message.body_text" />
+    </t>
+
+    <t t-name="contact_center_ui.MediaViewer" owl="1">
+        <Dialog
+            title="current.name"
+            size="'xl'"
+            technical="false"
+            footer="false"
+            withBodyPadding="false"
+            contentClass="'cc-media-viewer-dialog'"
+            bodyClass="'cc-media-viewer-dialog__body'"
+            modalRef="modalRef"
+        >
+            <t t-set-slot="header">
+                <div class="cc-media-viewer__identity">
+                    <span class="cc-media-viewer__kind">
+                        <i
+                            t-att-class="current.kind === 'document' ? 'fa fa-file-pdf-o' : (current.kind === 'video' ? 'fa fa-film' : 'fa fa-picture-o')"
+                            aria-hidden="true"
+                        />
+                    </span>
+                    <span>
+                        <strong t-esc="current.name" />
+                        <small t-if="props.items.length > 1" t-esc="positionLabel" />
+                    </span>
+                </div>
+                <div class="cc-media-viewer__header-actions">
+                    <a
+                        class="cc-media-viewer__control"
+                        t-att-href="current.download_url"
+                        t-att-download="current.name"
+                        t-att-aria-label="'Baixar ' + current.name"
+                        title="Baixar arquivo"
+                    >
+                        <i class="fa fa-download" aria-hidden="true" />
+                    </a>
+                    <button
+                        type="button"
+                        class="cc-media-viewer__control"
+                        aria-label="Fechar visualizador"
+                        title="Fechar"
+                        t-on-click="props.close"
+                    >
+                        <i class="fa fa-times" aria-hidden="true" />
+                    </button>
+                </div>
+            </t>
+            <div
+                t-att-class="props.items.length > 1 ? 'cc-media-viewer' : 'cc-media-viewer is-single'"
+                t-ref="viewer"
+                tabindex="0"
+                role="region"
+                t-att-aria-label="viewerAriaLabel"
+                t-on-keydown="onKeydown"
+            >
+                <button
+                    t-if="props.items.length > 1"
+                    type="button"
+                    class="cc-media-viewer__nav is-previous"
+                    t-att-disabled="state.index === 0"
+                    aria-label="Mídia anterior"
+                    t-on-click="previous"
+                >
+                    <i class="fa fa-chevron-left" aria-hidden="true" />
+                </button>
+                <div class="cc-media-viewer__stage">
+                    <img
+                        t-if="current.kind === 'image'"
+                        t-att-src="current.content_url"
+                        t-att-alt="current.name"
+                    />
+                    <iframe
+                        t-elif="current.kind === 'document'"
+                        class="cc-media-viewer__pdf"
+                        t-att-src="current.pdf_viewer_url"
+                        t-att-title="'Visualização do PDF ' + current.name"
+                    />
+                    <video
+                        t-else=""
+                        controls="controls"
+                        autoplay="autoplay"
+                        preload="metadata"
+                        playsinline="playsinline"
+                        t-att-src="current.content_url"
+                    >
+                        Seu navegador não reproduz este vídeo.
+                    </video>
+                </div>
+                <button
+                    t-if="props.items.length > 1"
+                    type="button"
+                    class="cc-media-viewer__nav is-next"
+                    t-att-disabled="state.index === props.items.length - 1"
+                    aria-label="Próxima mídia"
+                    t-on-click="next"
+                >
+                    <i class="fa fa-chevron-right" aria-hidden="true" />
+                </button>
+            </div>
+        </Dialog>
+    </t>
+
+    <t t-name="contact_center_ui.AudioPlayer" owl="1">
+        <div class="cc-audio-player" t-att-class="{ 'is-error': state.error }">
+            <button
+                type="button"
+                class="cc-audio-player__play"
+                t-att-disabled="state.error"
+                t-att-aria-label="state.playing ? 'Pausar áudio' : 'Reproduzir áudio'"
+                t-on-click="togglePlayback"
+            >
+                <i
+                    t-att-class="state.playing ? 'fa fa-pause' : 'fa fa-play'"
+                    aria-hidden="true"
+                />
+            </button>
+            <div class="cc-audio-player__main">
+                <div class="cc-audio-player__heading">
+                    <span>
+                        <strong t-esc="label" />
+                        <small t-esc="meta" />
+                    </span>
+                    <time>
+                        <t t-esc="formatTime(state.currentTime)" />
+                        <span aria-hidden="true"> / </span>
+                        <t t-esc="formatTime(state.duration)" />
+                    </time>
+                </div>
+                <div class="cc-audio-scrub">
+                    <span class="cc-audio-wave" aria-hidden="true">
+                        <i
+                            t-foreach="waveform"
+                            t-as="height"
+                            t-key="height_index"
+                            t-att-class="barClass(height_index)"
+                            t-att-style="'height: ' + height + '%'"
+                        />
+                    </span>
+                    <input
+                        type="range"
+                        min="0"
+                        step="0.1"
+                        t-att-max="state.duration || 1"
+                        t-att-value="state.currentTime"
+                        t-att-disabled="!state.duration || state.error"
+                        aria-label="Posição do áudio"
+                        t-on-input="onSeek"
+                    />
+                </div>
+                <span
+                    t-if="state.error"
+                    class="cc-audio-player__error"
+                    role="alert"
+                >Este áudio não pôde ser reproduzido.</span>
+            </div>
+            <button
+                type="button"
+                class="cc-audio-player__speed"
+                t-att-aria-label="'Velocidade ' + state.rate + ' vezes'"
+                t-att-title="'Velocidade ' + state.rate + 'x'"
+                t-on-click="cycleRate"
+            ><t t-esc="state.rate" />x</button>
+            <a
+                class="cc-audio-player__download"
+                t-att-href="media.download_url || media.content_url"
+                t-att-download="media.name || label"
+                t-att-aria-label="'Baixar ' + label"
+                title="Baixar áudio"
+            >
+                <i class="fa fa-download" aria-hidden="true" />
+            </a>
+            <audio
+                class="cc-audio-player__element"
+                t-ref="audio"
+                preload="none"
+                t-att-src="media.content_url"
+                tabindex="-1"
+                aria-hidden="true"
+                t-on-loadedmetadata="onLoadedMetadata"
+                t-on-timeupdate="onTimeUpdate"
+                t-on-play="onPlay"
+                t-on-pause="onPause"
+                t-on-ended="onEnded"
+                t-on-error="onError"
+            />
+        </div>
+    </t>
+</templates>

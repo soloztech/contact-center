@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="view_contact_center_media_download_search" model="ir.ui.view">
+        <field name="name">contact.center.media.binding.search</field>
+        <field name="model">contact.center.media.binding</field>
+        <field name="arch" type="xml">
+            <search string="Media Downloads">
+                <field name="file_name" />
+                <field name="message_binding_id" />
+                <field name="account_id" />
+                <field name="provider_connection_id" />
+                <filter
+                    name="pending"
+                    string="Pending"
+                    domain="[('state', 'in', ('pending', 'downloading'))]"
+                />
+                <filter
+                    name="ready"
+                    string="Ready"
+                    domain="[('state', '=', 'ready')]"
+                />
+                <filter
+                    name="failed"
+                    string="Failed"
+                    domain="[('state', '=', 'failed')]"
+                />
+                <group expand="0" string="Group By">
+                    <filter
+                        name="group_by_account"
+                        string="Account"
+                        context="{'group_by': 'account_id'}"
+                    />
+                    <filter
+                        name="group_by_state"
+                        string="State"
+                        context="{'group_by': 'state'}"
+                    />
+                    <filter
+                        name="group_by_kind"
+                        string="Media Type"
+                        context="{'group_by': 'kind'}"
+                    />
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="view_contact_center_media_download_tree" model="ir.ui.view">
+        <field name="name">contact.center.media.binding.tree</field>
+        <field name="model">contact.center.media.binding</field>
+        <field name="arch" type="xml">
+            <tree
+                create="0"
+                delete="0"
+                edit="0"
+                decoration-success="state == 'ready'"
+                decoration-warning="state in ('pending', 'downloading')"
+                decoration-danger="state == 'failed'"
+            >
+                <field name="create_date" />
+                <field name="account_id" />
+                <field name="provider_connection_id" optional="hide" />
+                <field name="message_binding_id" />
+                <field name="kind" />
+                <field name="file_name" />
+                <field name="mime_type" optional="hide" />
+                <field name="size_bytes" optional="hide" />
+                <field name="state" />
+                <field name="attempts" />
+                <field name="last_error_class" />
+                <button
+                    name="action_retry_download"
+                    type="object"
+                    string="Retry download"
+                    icon="fa-repeat"
+                    groups="contact_center_base.group_contact_center_supervisor"
+                    attrs="{'invisible': [('state', '!=', 'failed')]}"
+                />
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_contact_center_media_download_form" model="ir.ui.view">
+        <field name="name">contact.center.media.binding.form</field>
+        <field name="model">contact.center.media.binding</field>
+        <field name="arch" type="xml">
+            <form create="0" delete="0" edit="0">
+                <header>
+                    <button
+                        name="action_retry_download"
+                        type="object"
+                        string="Retry download"
+                        class="oe_highlight"
+                        groups="contact_center_base.group_contact_center_supervisor"
+                        attrs="{'invisible': [('state', '!=', 'failed')]}"
+                    />
+                    <field name="state" widget="statusbar" />
+                </header>
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="account_id" />
+                            <field name="provider_connection_id" />
+                            <field name="message_binding_id" />
+                            <field name="attachment_id" />
+                        </group>
+                        <group>
+                            <field name="kind" />
+                            <field name="file_name" />
+                            <field name="mime_type" />
+                            <field name="size_bytes" />
+                            <field
+                                name="sha256"
+                                groups="contact_center_base.group_contact_center_admin"
+                            />
+                        </group>
+                    </group>
+                    <group string="Download">
+                        <group>
+                            <field name="attempts" />
+                            <field name="queue_job_uuid" />
+                            <field name="downloaded_at" />
+                        </group>
+                        <group>
+                            <field name="last_error_class" />
+                            <field name="last_error_message" nolabel="1" />
+                        </group>
+                    </group>
+                    <group
+                        string="Provider Locator"
+                        groups="contact_center_base.group_contact_center_admin"
+                    >
+                        <field
+                            name="remote_locator_json"
+                            nolabel="1"
+                            widget="contact_center_json_viewer"
+                        />
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_contact_center_media_downloads" model="ir.actions.act_window">
+        <field name="name">Media Downloads</field>
+        <field name="res_model">contact.center.media.binding</field>
+        <field name="view_mode">tree,form</field>
+        <field name="search_view_id" ref="view_contact_center_media_download_search" />
+    </record>
+</odoo>

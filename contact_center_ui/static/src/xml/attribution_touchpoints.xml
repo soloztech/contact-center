@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<templates xml:space="preserve">
+    <t t-name="contact_center_ui.AttributionTouchpoints" owl="1">
+        <section
+            t-if="visible"
+            class="cc-detail-section cc-attribution"
+            t-att-aria-busy="projection.phase === 'loading' || projection.phase === 'loading_more' ? 'true' : 'false'"
+        >
+            <div class="cc-detail-section__heading">
+                <h3>Origem</h3>
+                <span t-if="items.length" t-esc="items.length" />
+            </div>
+            <p
+                t-if="projection.phase === 'loading' &amp;&amp; !items.length"
+                class="cc-detail-copy"
+                role="status"
+            >Carregando origem…</p>
+            <div
+                t-if="projection.phase === 'error'"
+                class="cc-attribution__retry"
+                role="status"
+            >
+                <p t-if="items.length">A origem não pôde ser atualizada agora.</p>
+                <p t-else="">A origem não pôde ser carregada agora.</p>
+                <button
+                    type="button"
+                    class="cc-text-button"
+                    t-on-click="retry"
+                >Tentar novamente</button>
+            </div>
+            <ol t-if="items.length" class="cc-attribution__timeline">
+                <li t-foreach="items" t-as="item" t-key="item.public_ref">
+                    <i aria-hidden="true" />
+                    <div>
+                        <div class="cc-attribution__title">
+                            <strong t-esc="typeLabel(item)" />
+                            <span
+                                t-attf-class="cc-attribution__evidence cc-attribution__evidence--#{evidenceTone(item)}"
+                                t-esc="evidenceLabel(item)"
+                            />
+                        </div>
+                        <p t-esc="sourceLabel(item)" />
+                        <time
+                            t-if="occurredAtLabel(item)"
+                            t-att-datetime="occurredAtDateTime(item)"
+                            t-esc="occurredAtLabel(item)"
+                        />
+                    </div>
+                </li>
+            </ol>
+            <button
+                t-if="projection.hasMore &amp;&amp; projection.phase !== 'error'"
+                type="button"
+                class="cc-text-button cc-attribution__more"
+                t-att-disabled="projection.phase === 'loading_more'"
+                t-on-click="() => store.loadMoreAttribution()"
+            ><t t-if="projection.phase === 'loading_more'">Carregando…</t><t
+                    t-else=""
+                >Mostrar anteriores</t></button>
+        </section>
+    </t>
+</templates>

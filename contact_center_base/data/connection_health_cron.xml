@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo noupdate="1">
+    <record id="ir_cron_contact_center_connection_health" model="ir.cron">
+        <field name="name">Contact Center: schedule connection health checks</field>
+        <field name="model_id" ref="model_contact_center_provider_connection" />
+        <field name="state">code</field>
+        <field name="code">model._cron_schedule_health_checks()</field>
+        <field name="interval_number">1</field>
+        <field name="interval_type">minutes</field>
+        <field name="numbercall">-1</field>
+        <field name="doall" eval="False" />
+        <field name="active" eval="True" />
+    </record>
+    <record id="ir_cron_contact_center_group_metadata" model="ir.cron">
+        <field name="name">Contact Center: schedule group metadata sync</field>
+        <field name="model_id" ref="model_contact_center_group_profile" />
+        <field name="state">code</field>
+        <field name="code">model._cron_schedule_group_metadata()</field>
+        <field name="interval_number">15</field>
+        <field name="interval_type">minutes</field>
+        <field name="numbercall">-1</field>
+        <field name="doall" eval="False" />
+        <field name="active" eval="True" />
+    </record>
+    <record id="ir_cron_contact_center_identity_avatar" model="ir.cron">
+        <field name="name">Contact Center: schedule identity avatar sync</field>
+        <field name="model_id" ref="model_contact_center_channel_binding" />
+        <field name="state">code</field>
+        <field name="code">model._cron_schedule_identity_avatars()</field>
+        <field name="interval_number">15</field>
+        <field name="interval_type">minutes</field>
+        <field name="numbercall">-1</field>
+        <field name="doall" eval="False" />
+        <field name="active" eval="True" />
+    </record>
+</odoo>

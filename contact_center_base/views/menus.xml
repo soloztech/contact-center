@@ -1,0 +1,273 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <menuitem
+        id="menu_contact_center_root"
+        name="Contact Center"
+        sequence="35"
+        web_icon="contact_center_base,static/description/icon.png"
+        groups="contact_center_base.group_contact_center_agent"
+    />
+
+    <menuitem
+        id="menu_contact_center_operations"
+        name="Operations"
+        parent="menu_contact_center_root"
+        sequence="20"
+        groups="contact_center_base.group_contact_center_supervisor"
+    />
+    <menuitem
+        id="menu_contact_center_channels"
+        name="Conversations"
+        parent="menu_contact_center_operations"
+        action="action_contact_center_channels"
+        sequence="10"
+    />
+    <menuitem
+        id="menu_contact_center_identities"
+        name="Remote Identities"
+        parent="menu_contact_center_operations"
+        action="action_contact_center_identities"
+        sequence="20"
+    />
+    <menuitem
+        id="menu_contact_center_identity_conflicts"
+        name="Identity Conflicts"
+        parent="menu_contact_center_operations"
+        action="action_contact_center_identity_conflicts"
+        sequence="30"
+    />
+
+    <menuitem
+        id="menu_contact_center_technical"
+        name="Technical"
+        parent="menu_contact_center_root"
+        sequence="80"
+        groups="base.group_system"
+    />
+    <menuitem
+        id="menu_contact_center_odoo_messaging"
+        name="Odoo Messaging"
+        parent="menu_contact_center_technical"
+        sequence="10"
+        groups="base.group_system"
+    />
+    <menuitem
+        id="menu_contact_center_native_messages"
+        name="Messages"
+        parent="menu_contact_center_odoo_messaging"
+        action="mail.action_view_mail_message"
+        sequence="10"
+        groups="base.group_system"
+    />
+    <menuitem
+        id="menu_contact_center_native_scheduled_messages"
+        name="Scheduled Messages"
+        parent="menu_contact_center_odoo_messaging"
+        action="mail.mail_message_schedule_action"
+        sequence="20"
+        groups="base.group_system"
+    />
+    <menuitem
+        id="menu_contact_center_native_guests"
+        name="Guests"
+        parent="menu_contact_center_odoo_messaging"
+        action="mail.mail_guest_action"
+        sequence="30"
+        groups="base.group_system"
+    />
+    <menuitem
+        id="menu_contact_center_native_reactions"
+        name="Message Reactions"
+        parent="menu_contact_center_odoo_messaging"
+        action="mail.mail_message_reaction_action"
+        sequence="40"
+        groups="base.group_system"
+    />
+    <menuitem
+        id="menu_contact_center_native_ratings"
+        name="Ratings"
+        parent="menu_contact_center_odoo_messaging"
+        action="rating.rating_rating_action"
+        sequence="50"
+        groups="base.group_system"
+    />
+    <menuitem
+        id="menu_contact_center_native_link_previews"
+        name="Link Previews"
+        parent="menu_contact_center_odoo_messaging"
+        action="mail.mail_link_preview_action"
+        sequence="60"
+        groups="base.group_system"
+    />
+    <menuitem
+        id="menu_contact_center_native_notifications"
+        name="Notifications"
+        parent="menu_contact_center_odoo_messaging"
+        action="mail.mail_notification_action"
+        sequence="70"
+        groups="base.group_system"
+    />
+    <menuitem
+        id="menu_contact_center_native_followers"
+        name="Followers"
+        parent="menu_contact_center_odoo_messaging"
+        action="mail.action_view_followers"
+        sequence="80"
+        groups="base.group_system"
+    />
+    <menuitem
+        id="menu_contact_center_native_subtypes"
+        name="Subtypes"
+        parent="menu_contact_center_odoo_messaging"
+        action="mail.action_view_message_subtype"
+        sequence="90"
+        groups="base.group_system"
+    />
+    <menuitem
+        id="menu_contact_center_native_tracking_values"
+        name="Tracking Values"
+        parent="menu_contact_center_odoo_messaging"
+        action="mail.action_view_mail_tracking_value"
+        sequence="100"
+        groups="base.group_system"
+    />
+    <menuitem
+        id="menu_contact_center_native_activity_types"
+        name="Activity Types"
+        parent="menu_contact_center_odoo_messaging"
+        action="mail.mail_activity_type_action"
+        sequence="110"
+        groups="base.group_system"
+    />
+    <menuitem
+        id="menu_contact_center_native_activities"
+        name="Activities"
+        parent="menu_contact_center_odoo_messaging"
+        action="mail.mail_activity_action"
+        sequence="120"
+        groups="base.group_system"
+    />
+    <menuitem
+        id="menu_contact_center_native_quick_replies"
+        name="Native Quick Replies"
+        parent="menu_contact_center_odoo_messaging"
+        action="mail.mail_shortcode_action"
+        sequence="130"
+        groups="base.group_system"
+    />
+
+    <menuitem
+        id="menu_contact_center_technical_records"
+        name="Contact Center Records"
+        parent="menu_contact_center_technical"
+        sequence="20"
+        groups="base.group_system"
+    />
+    <menuitem
+        id="menu_contact_center_inbox"
+        name="Inbox Events"
+        parent="menu_contact_center_technical_records"
+        action="action_contact_center_inbox"
+        sequence="10"
+        groups="base.group_system"
+    />
+    <menuitem
+        id="menu_contact_center_outbox"
+        name="Outbox Commands"
+        parent="menu_contact_center_technical_records"
+        action="action_contact_center_outbox"
+        sequence="20"
+        groups="base.group_system"
+    />
+    <menuitem
+        id="menu_contact_center_media_downloads"
+        name="Media Downloads"
+        parent="menu_contact_center_technical_records"
+        action="action_contact_center_media_downloads"
+        sequence="30"
+        groups="base.group_system"
+    />
+    <menuitem
+        id="menu_contact_center_attribution_touchpoints"
+        name="Attribution Touchpoints"
+        parent="menu_contact_center_technical_records"
+        action="action_contact_center_attribution_touchpoints"
+        sequence="40"
+        groups="base.group_system"
+    />
+    <menuitem
+        id="menu_contact_center_scheduled_provider_messages"
+        name="Scheduled Provider Messages"
+        parent="menu_contact_center_technical_records"
+        action="action_contact_center_scheduled_messages"
+        sequence="50"
+        groups="base.group_system"
+    />
+    <menuitem
+        id="menu_contact_center_internal_note_requests"
+        name="Internal Note Requests"
+        parent="menu_contact_center_technical_records"
+        action="action_contact_center_internal_note_requests"
+        sequence="60"
+        groups="base.group_system"
+    />
+    <menuitem
+        id="menu_contact_center_followup_requests"
+        name="Follow-up Receipts"
+        parent="menu_contact_center_technical_records"
+        action="action_contact_center_followup_requests"
+        sequence="70"
+        groups="base.group_system"
+    />
+
+    <menuitem
+        id="menu_contact_center_configuration"
+        name="Configuration"
+        parent="menu_contact_center_root"
+        sequence="90"
+        groups="contact_center_base.group_contact_center_admin"
+    />
+    <menuitem
+        id="menu_contact_center_add_account"
+        name="Add Inbox"
+        parent="menu_contact_center_configuration"
+        action="action_contact_center_account_setup"
+        sequence="5"
+    />
+    <menuitem
+        id="menu_contact_center_accounts"
+        name="Inboxes"
+        parent="menu_contact_center_configuration"
+        action="action_contact_center_accounts"
+        sequence="10"
+    />
+    <menuitem
+        id="menu_contact_center_connections"
+        name="Provider Connections"
+        parent="menu_contact_center_configuration"
+        action="action_contact_center_connections"
+        sequence="20"
+    />
+    <menuitem
+        id="menu_contact_center_teams"
+        name="Teams"
+        parent="menu_contact_center_configuration"
+        action="action_contact_center_teams"
+        sequence="30"
+    />
+    <menuitem
+        id="menu_contact_center_tags"
+        name="Tags"
+        parent="menu_contact_center_configuration"
+        action="action_contact_center_tags"
+        sequence="40"
+    />
+    <menuitem
+        id="menu_contact_center_quick_replies"
+        name="Quick Reply Scopes"
+        parent="menu_contact_center_configuration"
+        action="action_contact_center_quick_reply_bindings"
+        sequence="50"
+        groups="contact_center_base.group_contact_center_admin"
+    />
+</odoo>

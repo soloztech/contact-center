@@ -1,0 +1,200 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<templates xml:space="preserve">
+    <t t-name="contact_center_ui.ConnectionHealth" owl="1">
+        <section
+            class="cc-connection-health cc-connection-health--compact"
+            t-att-data-health-revision="state.connectionHealthRevision"
+            t-on-keydown="onKeydown"
+        >
+            <button
+                type="button"
+                t-attf-class="cc-connection-health__trigger cc-connection-health__trigger--compact cc-connection-health__trigger--#{fleetMeta.state}"
+                t-att-aria-expanded="state.connectionHealthOpen ? 'true' : 'false'"
+                t-att-aria-label="'Saúde das conexões: ' + fleetMeta.label"
+                aria-controls="cc-connection-health-panel"
+                t-att-title="fleetMeta.description"
+                t-on-click="toggle"
+                t-ref="toggle"
+            >
+                <i class="fa fa-signal" aria-hidden="true" />
+                <span
+                    t-attf-class="cc-health-marker cc-health-marker--#{fleetMeta.state}"
+                    aria-hidden="true"
+                />
+                <b t-if="attentionCount" t-esc="attentionCount" />
+            </button>
+
+            <section
+                t-if="state.connectionHealthOpen"
+                id="cc-connection-health-panel"
+                class="cc-connection-health__panel"
+                role="region"
+                aria-label="Saúde das conexões"
+            >
+                <div class="cc-connection-health__header">
+                    <div>
+                        <p class="cc-kicker">Rede de atendimento</p>
+                        <h2>Canais do atendimento</h2>
+                    </div>
+                    <button
+                        type="button"
+                        class="cc-icon-button"
+                        aria-label="Fechar saúde das conexões"
+                        t-on-click="close"
+                    >
+                        <i class="fa fa-times" aria-hidden="true" />
+                    </button>
+                </div>
+
+                <div class="cc-connection-health__overview">
+                    <strong t-esc="fleetMeta.label" />
+                    <span t-esc="fleetMeta.description" />
+                    <small
+                        t-if="summary.last_check_at"
+                        t-esc="relativeCheck(summary.last_check_at)"
+                    />
+                    <div class="cc-health-counts" aria-label="Resumo por estado">
+                        <t
+                            t-foreach="['authentication_required', 'disconnected', 'degraded', 'checking', 'unknown', 'connected']"
+                            t-as="healthState"
+                            t-key="healthState"
+                        >
+                            <span
+                                t-if="summary[healthState]"
+                                t-attf-class="cc-health-count cc-health-count--#{healthState}"
+                            >
+                                <b t-esc="summary[healthState]" />
+                                <t t-esc="stateMeta(healthState).label" />
+                            </span>
+                        </t>
+                    </div>
+                </div>
+
+                <div
+                    t-if="attentionCount || canCheckAll"
+                    class="cc-connection-health__tools"
+                >
+                    <div
+                        t-if="attentionCount"
+                        class="cc-health-filter"
+                        aria-label="Filtrar conexões"
+                    >
+                        <button
+                            type="button"
+                            t-att-class="local.view === 'attention' ? 'is-active' : ''"
+                            t-att-aria-pressed="local.view === 'attention' ? 'true' : 'false'"
+                            t-on-click="() => this.setView('attention')"
+                        >Atenção <b t-esc="attentionCount" /></button>
+                        <button
+                            type="button"
+                            t-att-class="local.view === 'all' ? 'is-active' : ''"
+                            t-att-aria-pressed="local.view === 'all' ? 'true' : 'false'"
+                            t-on-click="() => this.setView('all')"
+                        >Todas <b t-esc="summary.total" /></button>
+                    </div>
+                    <span t-else="" />
+                    <button
+                        t-if="canCheckAll"
+                        type="button"
+                        class="cc-health-check-all"
+                        t-att-disabled="checkAllDisabled"
+                        t-on-click="checkAll"
+                    >
+                        <i
+                            t-attf-class="fa #{state.connectionHealthCheckingId === 0 || summary.checking ? 'fa-circle-o-notch fa-spin' : 'fa-refresh'}"
+                            aria-hidden="true"
+                        />
+                        <span>Verificar todas</span>
+                    </button>
+                </div>
+
+                <p
+                    t-if="state.connectionHealthError"
+                    class="cc-connection-health__error"
+                    role="alert"
+                    t-esc="state.connectionHealthError"
+                />
+
+                <ol t-if="visibleItems.length" class="cc-connection-list">
+                    <li
+                        t-foreach="visibleItems"
+                        t-as="item"
+                        t-key="item.id"
+                        t-att-class="rowClass(item)"
+                    >
+                        <span
+                            t-attf-class="cc-health-marker cc-health-marker--#{item.state}"
+                            aria-hidden="true"
+                        />
+                        <span class="cc-connection-row__identity">
+                            <strong t-esc="displayName(item)" />
+                            <small
+                                t-if="item.display_address"
+                                class="cc-connection-row__address"
+                                t-att-title="item.display_address"
+                                t-esc="item.display_address"
+                            />
+                            <small t-if="sourceLabel(item)" t-esc="sourceLabel(item)" />
+                            <span class="cc-connection-row__route">
+                                <span
+                                    t-attf-class="cc-connection-role cc-connection-role--#{item.connection_role}"
+                                    t-esc="roleLabel(item)"
+                                />
+                                <span
+                                    t-if="item.unsupported_count"
+                                    class="cc-connection-unsupported"
+                                    t-att-title="unsupportedLabel(item)"
+                                >
+                                    <i
+                                        class="fa fa-exclamation-circle"
+                                        aria-hidden="true"
+                                    />
+                                    <t t-esc="item.unsupported_count" /> em 24h
+                                </span>
+                            </span>
+                            <small
+                                class="cc-connection-row__time"
+                                t-esc="relativeCheck(item.last_check_at)"
+                            />
+                            <span
+                                t-if="detailLabel(item)"
+                                t-attf-class="cc-connection-row__detail cc-connection-row__detail--#{item.state}"
+                                t-esc="detailLabel(item)"
+                            />
+                        </span>
+                        <span class="cc-connection-row__actions">
+                            <span
+                                t-attf-class="cc-health-state cc-health-state--#{item.state}"
+                                t-esc="stateMeta(item.state).label"
+                            />
+                            <span
+                                t-if="item.checking"
+                                class="cc-health-state cc-health-state--checking"
+                            >Verificando…</span>
+                            <button
+                                t-if="canCheck(item)"
+                                type="button"
+                                class="cc-connection-row__check"
+                                t-att-disabled="state.connectionHealthPhase === 'checking' || isChecking(item)"
+                                t-att-aria-label="checkLabel(item)"
+                                t-on-click="() => this.check(item)"
+                            >
+                                <i
+                                    t-attf-class="fa #{isChecking(item) ? 'fa-circle-o-notch fa-spin' : 'fa-refresh'}"
+                                    aria-hidden="true"
+                                />
+                                <span>Verificar</span>
+                            </button>
+                        </span>
+                    </li>
+                </ol>
+                <div t-else="" class="cc-connection-health__empty">
+                    <strong>Nenhuma conexão neste filtro.</strong>
+                    <button type="button" t-on-click="() => this.setView('all')">
+                        Mostrar todas
+                    </button>
+                </div>
+            </section>
+        </section>
+    </t>
+</templates>

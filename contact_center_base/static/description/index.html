@@ -1,0 +1,560 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<meta name="generator" content="Docutils: https://docutils.sourceforge.io/" />
+<title>Contact Center Base</title>
+<style type="text/css">
+
+/*
+:Author: David Goodger (goodger@python.org)
+:Id: $Id: html4css1.css 9511 2024-01-13 09:50:07Z milde $
+:Copyright: This stylesheet has been placed in the public domain.
+
+Default cascading style sheet for the HTML output of Docutils.
+Despite the name, some widely supported CSS2 features are used.
+
+See https://docutils.sourceforge.io/docs/howto/html-stylesheets.html for how to
+customize this style sheet.
+*/
+
+/* used to remove borders from tables and images */
+.borderless, table.borderless td, table.borderless th {
+  border: 0 }
+
+table.borderless td, table.borderless th {
+  /* Override padding for "table.docutils td" with "! important".
+     The right padding separates the table cells. */
+  padding: 0 0.5em 0 0 ! important }
+
+.first {
+  /* Override more specific margin styles with "! important". */
+  margin-top: 0 ! important }
+
+.last, .with-subtitle {
+  margin-bottom: 0 ! important }
+
+.hidden {
+  display: none }
+
+.subscript {
+  vertical-align: sub;
+  font-size: smaller }
+
+.superscript {
+  vertical-align: super;
+  font-size: smaller }
+
+a.toc-backref {
+  text-decoration: none ;
+  color: black }
+
+blockquote.epigraph {
+  margin: 2em 5em ; }
+
+dl.docutils dd {
+  margin-bottom: 0.5em }
+
+object[type="image/svg+xml"], object[type="application/x-shockwave-flash"] {
+  overflow: hidden;
+}
+
+/* Uncomment (and remove this text!) to get bold-faced definition list terms
+dl.docutils dt {
+  font-weight: bold }
+*/
+
+div.abstract {
+  margin: 2em 5em }
+
+div.abstract p.topic-title {
+  font-weight: bold ;
+  text-align: center }
+
+div.admonition, div.attention, div.caution, div.danger, div.error,
+div.hint, div.important, div.note, div.tip, div.warning {
+  margin: 2em ;
+  border: medium outset ;
+  padding: 1em }
+
+div.admonition p.admonition-title, div.hint p.admonition-title,
+div.important p.admonition-title, div.note p.admonition-title,
+div.tip p.admonition-title {
+  font-weight: bold ;
+  font-family: sans-serif }
+
+div.attention p.admonition-title, div.caution p.admonition-title,
+div.danger p.admonition-title, div.error p.admonition-title,
+div.warning p.admonition-title, .code .error {
+  color: red ;
+  font-weight: bold ;
+  font-family: sans-serif }
+
+/* Uncomment (and remove this text!) to get reduced vertical space in
+   compound paragraphs.
+div.compound .compound-first, div.compound .compound-middle {
+  margin-bottom: 0.5em }
+
+div.compound .compound-last, div.compound .compound-middle {
+  margin-top: 0.5em }
+*/
+
+div.dedication {
+  margin: 2em 5em ;
+  text-align: center ;
+  font-style: italic }
+
+div.dedication p.topic-title {
+  font-weight: bold ;
+  font-style: normal }
+
+div.figure {
+  margin-left: 2em ;
+  margin-right: 2em }
+
+div.footer, div.header {
+  clear: both;
+  font-size: smaller }
+
+div.line-block {
+  display: block ;
+  margin-top: 1em ;
+  margin-bottom: 1em }
+
+div.line-block div.line-block {
+  margin-top: 0 ;
+  margin-bottom: 0 ;
+  margin-left: 1.5em }
+
+div.sidebar {
+  margin: 0 0 0.5em 1em ;
+  border: medium outset ;
+  padding: 1em ;
+  background-color: #ffffee ;
+  width: 40% ;
+  float: right ;
+  clear: right }
+
+div.sidebar p.rubric {
+  font-family: sans-serif ;
+  font-size: medium }
+
+div.system-messages {
+  margin: 5em }
+
+div.system-messages h1 {
+  color: red }
+
+div.system-message {
+  border: medium outset ;
+  padding: 1em }
+
+div.system-message p.system-message-title {
+  color: red ;
+  font-weight: bold }
+
+div.topic {
+  margin: 2em }
+
+h1.section-subtitle, h2.section-subtitle, h3.section-subtitle,
+h4.section-subtitle, h5.section-subtitle, h6.section-subtitle {
+  margin-top: 0.4em }
+
+h1.title {
+  text-align: center }
+
+h2.subtitle {
+  text-align: center }
+
+hr.docutils {
+  width: 75% }
+
+img.align-left, .figure.align-left, object.align-left, table.align-left {
+  clear: left ;
+  float: left ;
+  margin-right: 1em }
+
+img.align-right, .figure.align-right, object.align-right, table.align-right {
+  clear: right ;
+  float: right ;
+  margin-left: 1em }
+
+img.align-center, .figure.align-center, object.align-center {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+table.align-center {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.align-left {
+  text-align: left }
+
+.align-center {
+  clear: both ;
+  text-align: center }
+
+.align-right {
+  text-align: right }
+
+/* reset inner alignment in figures */
+div.align-right {
+  text-align: inherit }
+
+/* div.align-center * { */
+/*   text-align: left } */
+
+.align-top    {
+  vertical-align: top }
+
+.align-middle {
+  vertical-align: middle }
+
+.align-bottom {
+  vertical-align: bottom }
+
+ol.simple, ul.simple {
+  margin-bottom: 1em }
+
+ol.arabic {
+  list-style: decimal }
+
+ol.loweralpha {
+  list-style: lower-alpha }
+
+ol.upperalpha {
+  list-style: upper-alpha }
+
+ol.lowerroman {
+  list-style: lower-roman }
+
+ol.upperroman {
+  list-style: upper-roman }
+
+p.attribution {
+  text-align: right ;
+  margin-left: 50% }
+
+p.caption {
+  font-style: italic }
+
+p.credits {
+  font-style: italic ;
+  font-size: smaller }
+
+p.label {
+  white-space: nowrap }
+
+p.rubric {
+  font-weight: bold ;
+  font-size: larger ;
+  color: maroon ;
+  text-align: center }
+
+p.sidebar-title {
+  font-family: sans-serif ;
+  font-weight: bold ;
+  font-size: larger }
+
+p.sidebar-subtitle {
+  font-family: sans-serif ;
+  font-weight: bold }
+
+p.topic-title {
+  font-weight: bold }
+
+pre.address {
+  margin-bottom: 0 ;
+  margin-top: 0 ;
+  font: inherit }
+
+pre.literal-block, pre.doctest-block, pre.math, pre.code {
+  margin-left: 2em ;
+  margin-right: 2em }
+
+pre.code .ln { color: gray; } /* line numbers */
+pre.code, code { background-color: #eeeeee }
+pre.code .comment, code .comment { color: #5C6576 }
+pre.code .keyword, code .keyword { color: #3B0D06; font-weight: bold }
+pre.code .literal.string, code .literal.string { color: #0C5404 }
+pre.code .name.builtin, code .name.builtin { color: #352B84 }
+pre.code .deleted, code .deleted { background-color: #DEB0A1}
+pre.code .inserted, code .inserted { background-color: #A3D289}
+
+span.classifier {
+  font-family: sans-serif ;
+  font-style: oblique }
+
+span.classifier-delimiter {
+  font-family: sans-serif ;
+  font-weight: bold }
+
+span.interpreted {
+  font-family: sans-serif }
+
+span.option {
+  white-space: nowrap }
+
+span.pre {
+  white-space: pre }
+
+span.problematic, pre.problematic {
+  color: red }
+
+span.section-subtitle {
+  /* font-size relative to parent (h1..h6 element) */
+  font-size: 80% }
+
+table.citation {
+  border-left: solid 1px gray;
+  margin-left: 1px }
+
+table.docinfo {
+  margin: 2em 4em }
+
+table.docutils {
+  margin-top: 0.5em ;
+  margin-bottom: 0.5em }
+
+table.footnote {
+  border-left: solid 1px black;
+  margin-left: 1px }
+
+table.docutils td, table.docutils th,
+table.docinfo td, table.docinfo th {
+  padding-left: 0.5em ;
+  padding-right: 0.5em ;
+  vertical-align: top }
+
+table.docutils th.field-name, table.docinfo th.docinfo-name {
+  font-weight: bold ;
+  text-align: left ;
+  white-space: nowrap ;
+  padding-left: 0 }
+
+/* "booktabs" style (no vertical lines) */
+table.docutils.booktabs {
+  border: 0px;
+  border-top: 2px solid;
+  border-bottom: 2px solid;
+  border-collapse: collapse;
+}
+table.docutils.booktabs * {
+  border: 0px;
+}
+table.docutils.booktabs th {
+  border-bottom: thin solid;
+  text-align: left;
+}
+
+h1 tt.docutils, h2 tt.docutils, h3 tt.docutils,
+h4 tt.docutils, h5 tt.docutils, h6 tt.docutils {
+  font-size: 100% }
+
+ul.auto-toc {
+  list-style-type: none }
+
+</style>
+</head>
+<body>
+<div class="document" id="contact-center-base">
+<h1 class="title">Contact Center Base</h1>
+
+<!-- !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!! This file is generated by oca-gen-addon-readme !!
+!! changes will be overwritten.                   !!
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!! source digest: sha256:fdbc1724b19c637b8bb66497772a8d32dba32a1f98e515ef040eb52af2a04d96
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! -->
+<p><a class="reference external image-reference" href="https://odoo-community.org/page/development-status"><img alt="Beta" src="https://img.shields.io/badge/maturity-Beta-yellow.png" /></a> <a class="reference external image-reference" href="http://www.gnu.org/licenses/agpl-3.0-standalone.html"><img alt="License: AGPL-3" src="https://img.shields.io/badge/license-AGPL--3-blue.png" /></a> <a class="reference external image-reference" href="https://github.com/soloztech/contact-center/tree/16.0/contact_center_base"><img alt="soloztech/contact-center" src="https://img.shields.io/badge/github-soloztech%2Fcontact--center-lightgray.png?logo=github" /></a></p>
+<p>Provides the provider-neutral foundation for external customer conversations.</p>
+<p>The addon keeps <tt class="docutils literal">mail.channel</tt> and <tt class="docutils literal">mail.message</tt> canonical and adds versioned
+DTOs, an adapter registry, persistent guest identities and aliases, transport
+bindings, durable inbox/outbox ledgers and a stable local API for a dedicated frontend.
+The ledgers preserve domain state and audit evidence; OCA <tt class="docutils literal">queue_job</tt> provides the
+actual asynchronous executor, concurrency control and retry schedule.</p>
+<p>Canonical conversations use only <tt class="docutils literal">open</tt> and <tt class="docutils literal">resolved</tt> operational states.  Each
+logical inbox may optionally reopen a resolved conversation when a genuinely new
+inbound message is accepted after provider deduplication.  Webhook replays, receipts,
+mutations and self-side echoes do not reopen it, and the existing responsible agent is
+preserved.</p>
+<p>Remote participants remain <tt class="docutils literal">mail.guest</tt> records until an agent explicitly links
+their identity to an existing or newly created contact.</p>
+<p>Identity linking is person-first.  The normal flow accepts a personal
+<tt class="docutils literal">res.partner</tt> and may then relate that person to a principal company through Odoo’s
+native <tt class="docutils literal">parent_id</tt>.  Linking the identity directly to a company is a separate,
+supervisor-only action for a genuinely centralized number shared by several people.
+The protected <tt class="docutils literal">identity.partner_link_kind</tt> records that operator decision instead
+of inferring it later from the mutable <tt class="docutils literal">res.partner.is_company</tt> field.  A drifted
+partner is therefore flagged without weakening the original authorization boundary.
+Both flows preserve the original guest, channel memberships, aliases and historical
+message authorship.  Future business integrations should derive the commercial entity
+from <tt class="docutils literal">partner_id.commercial_partner_id</tt> instead of replacing the personal identity.</p>
+<p>Odoo’s native contact merge remains available when every linked identity is compatible
+with the chosen survivor. The merge contract is checked before and again under the
+canonical partner/identity locks; identities are rebound to the survivor and Contact
+Center memberships are reconciled from their inbox authority. A person/company,
+cross-company or internal-user conflict rejects the complete merge atomically. Direct
+deletion of an identity-linked contact remains protected.</p>
+<p>Inbound group conversations may also have one provider-neutral group profile. It keeps
+the safe display name, private avatar, synchronization state and a technical
+participant roster with all observed PN/LID aliases. Roster synchronization never
+creates <tt class="docutils literal">mail.guest</tt>, <tt class="docutils literal">contact.center.identity</tt>, <tt class="docutils literal">res.partner</tt> or
+<tt class="docutils literal">mail.channel.member</tt> records; only authors actually observed in messages enter the
+normal guest/identity flow. Complete snapshots may reconcile removals, while partial
+snapshots only upsert observations and remain explicitly stale.</p>
+<p>The operational API exposes only aggregate group metadata and a local authenticated
+avatar URL. Technical participants, aliases, raw group identifiers and provider
+revisions remain outside UiDTO and bus payloads. Group outbound and mutation
+capabilities stay disabled unless both the inbox policy and provider adapter opt in.</p>
+<p>The generic <em>Provider Connections</em> form exposes a stable extension notebook. Provider
+addons register their selector entry and add conditional settings there without adding
+provider fields to the core.</p>
+<p><strong>Table of contents</strong></p>
+<div class="contents local topic" id="contents">
+<ul class="simple">
+<li><a class="reference internal" href="#usage" id="toc-entry-1">Usage</a></li>
+<li><a class="reference internal" href="#group-metadata" id="toc-entry-2">Group metadata</a></li>
+<li><a class="reference internal" href="#provider-configuration" id="toc-entry-3">Provider configuration</a></li>
+<li><a class="reference internal" href="#queue-runtime" id="toc-entry-4">Queue runtime</a></li>
+<li><a class="reference internal" href="#cases-pipelines-and-productivity" id="toc-entry-5">Cases, pipelines and productivity</a></li>
+<li><a class="reference internal" href="#bug-tracker" id="toc-entry-6">Bug Tracker</a></li>
+<li><a class="reference internal" href="#credits" id="toc-entry-7">Credits</a><ul>
+<li><a class="reference internal" href="#authors" id="toc-entry-8">Authors</a></li>
+<li><a class="reference internal" href="#contributors" id="toc-entry-9">Contributors</a></li>
+<li><a class="reference internal" href="#maintainers" id="toc-entry-10">Maintainers</a></li>
+</ul>
+</li>
+</ul>
+</div>
+<div class="section" id="usage">
+<h1><a class="toc-backref" href="#toc-entry-1">Usage</a></h1>
+<p>Provider addons register a <tt class="docutils literal">ProviderAdapter</tt> and exchange only <tt class="docutils literal">EventDTO</tt> and
+<tt class="docutils literal">CommandDTO</tt> payloads with this module. They must not create channels, identities or
+messages directly.</p>
+</div>
+<div class="section" id="group-metadata">
+<h1><a class="toc-backref" href="#toc-entry-2">Group metadata</a></h1>
+<p>For an inbound group binding, the base addon maintains a provider-neutral group profile
+and schedules its metadata reads through OCA <tt class="docutils literal">queue_job</tt>. The provider webhook may
+only request a refresh; the adapter’s subsequent snapshot is authoritative. A complete
+snapshot expires after six hours. A partial snapshot remains <tt class="docutils literal">stale</tt>, is retried
+after 15 minutes and cannot remove unseen participants or publish old aggregate counts
+as current.</p>
+<p>The synchronized roster is technical data. PN and LID values are preserved as separate
+participant aliases, without creating guests, identities, partners or channel
+memberships. The agent UI receives only the safe group name, authenticated local avatar
+URL, complete aggregate counts, own role, metadata state and last synchronization time.
+This metadata does not enable outbound group actions.</p>
+<p>Agents use the local <tt class="docutils literal">contact.center.ui.api</tt> service. Outbound provider calls are
+performed only by OCA <tt class="docutils literal">queue_job</tt> after the UI transaction commits. Inbox events and
+outbox commands remain domain ledgers; scheduling, concurrency and retry timing belong
+to <tt class="docutils literal">queue_job</tt>.</p>
+</div>
+<div class="section" id="provider-configuration">
+<h1><a class="toc-backref" href="#toc-entry-3">Provider configuration</a></h1>
+<p>Administrators create every provider instance under <em>Contact Center &gt; Configuration &gt;
+Provider Connections</em>. The <tt class="docutils literal">Provider</tt> selector is populated by installed adapter
+addons. The base form provides a named notebook extension point; each provider addon
+must inject a conditional tab for its own endpoint and credentials. It must not add a
+parallel provider menu or configuration model.</p>
+<p>Connections are fail-closed by construction. An ORM create without <tt class="docutils literal">role</tt> always
+creates an active <tt class="docutils literal">standby</tt> with ingress and egress disabled; traffic flags never
+promote it implicitly. Programmatic creation of a <tt class="docutils literal">primary</tt> must explicitly provide
+<tt class="docutils literal">active=True</tt>, <tt class="docutils literal"><span class="pre">role='primary'</span></tt>, <tt class="docutils literal">inbound_active=True</tt> and the intended boolean
+<tt class="docutils literal">outbound_active</tt>. Existing standby or migration connections become primary only
+through <tt class="docutils literal">action_use_as_primary()</tt>; enabling outbound directly on either role is
+rejected. The normal archive toggle remains intentional: archive maps a connection to
+<tt class="docutils literal">historical</tt> and unarchive restores it as traffic-disabled <tt class="docutils literal">standby</tt>.</p>
+</div>
+<div class="section" id="queue-runtime">
+<h1><a class="toc-backref" href="#toc-entry-4">Queue runtime</a></h1>
+<p>The OCA <tt class="docutils literal">queue</tt> repository for branch <tt class="docutils literal">16.0</tt> must be available in the Odoo
+<tt class="docutils literal">addons_path</tt> before installing this module. Load <tt class="docutils literal">queue_job</tt> server-wide and keep
+an active JobRunner. Production should use Odoo workers sized together with the queue
+capacity. A minimal configuration is conceptually:</p>
+<pre class="literal-block">
+server_wide_modules = web,queue_job
+
+[queue_job]
+channels = root:4,root.contact_center.health:2,root.contact_center.media:1
+</pre>
+<p>Channel capacities are a JobRunner runtime setting, not a field on
+<tt class="docutils literal">queue.job.channel</tt>.  The example caps slow media downloads at one slot, admits two
+health probes for a fleet of roughly twenty connections, and keeps the global root cap
+at four. Choose the production capacity according to the database connection pool,
+provider limits and measured workload. Do not enable <tt class="docutils literal">QUEUE_JOB__NO_DELAY</tt> in a
+running environment; direct mode is only suitable for focused tests.</p>
+<p>Inbox and outbox records remain visible under <em>Contact Center &gt; Message Flow</em>. Their
+states and error fields are domain audit data, while the referenced OCA job owns ETA
+and retry scheduling. A Contact Center administrator may use <em>Requeue</em> on an eligible
+ledger whose referenced job is no longer active. The action does not duplicate an
+active job. An outbox record that has crossed the durable dispatch boundary is never
+blindly requeued: a resumed execution is classified as <tt class="docutils literal">uncertain</tt> for manual
+reconciliation.</p>
+</div>
+<div class="section" id="cases-pipelines-and-productivity">
+<h1><a class="toc-backref" href="#toc-entry-5">Cases, pipelines and productivity</a></h1>
+<p>Each conversation owns one canonical service case. Pipelines and stages are
+provider-neutral operational state: inboxes and teams select which pipelines are
+available, transitions are idempotent and revision-checked, and the immutable
+transition ledger records both effective moves and deliberate no-ops. Default
+pipelines and canonical conversation cases cannot be archived; other records use
+explicit archive services that reject live references and open follow-ups.</p>
+<p>The core lock order is account, team, user, pipeline, channel and case. Topology
+revisions fence concurrent roster, routing, pipeline and case changes. Optional
+bridges must extend this order through the documented case hook instead of taking
+their own authority locks before or after the core graph arbitrarily.</p>
+<p>Operational productivity reuses native Odoo records behind durable Contact Center
+receipts:</p>
+<ul class="simple">
+<li>internal notes are immutable <tt class="docutils literal">mail.message</tt> comments with <tt class="docutils literal">mail.mt_note</tt> and
+never create an outbox;</li>
+<li>follow-ups are native <tt class="docutils literal">mail.activity</tt> records on the canonical case, with
+company, assignee and conversation-scope validation;</li>
+<li>scheduled external messages are provider-neutral, cancelable intents dispatched
+by OCA <tt class="docutils literal">queue_job</tt> only after their due time and a fresh authorization check; the
+immutable <tt class="docutils literal">outbound_request_id</tt> preserves the exact request that was admitted; and</li>
+<li>quick-reply text remains native <tt class="docutils literal">mail.shortcode</tt>, but is invisible to the agent
+until an active <tt class="docutils literal">contact.center.quick.reply.binding</tt> explicitly exposes it at
+company, team, inbox or conversation scope. The most specific applicable binding
+wins.</li>
+</ul>
+<p>There is intentionally no automatic backfill for historical <tt class="docutils literal">mail.shortcode</tt> rows.
+Administrators opt each reusable text into an audience explicitly, which keeps a new
+or upgraded installation fail-closed.</p>
+</div>
+<div class="section" id="bug-tracker">
+<h1><a class="toc-backref" href="#toc-entry-6">Bug Tracker</a></h1>
+<p>Bugs are tracked on <a class="reference external" href="https://github.com/soloztech/contact-center/issues">GitHub Issues</a>.
+In case of trouble, please check there if your issue has already been reported.
+If you spotted it first, help us to smash it by providing a detailed and welcomed
+<a class="reference external" href="https://github.com/soloztech/contact-center/issues/new?body=module:%20contact_center_base%0Aversion:%2016.0%0A%0A**Steps%20to%20reproduce**%0A-%20...%0A%0A**Current%20behavior**%0A%0A**Expected%20behavior**">feedback</a>.</p>
+<p>Do not contact contributors directly about support or help with technical issues.</p>
+</div>
+<div class="section" id="credits">
+<h1><a class="toc-backref" href="#toc-entry-7">Credits</a></h1>
+<div class="section" id="authors">
+<h2><a class="toc-backref" href="#toc-entry-8">Authors</a></h2>
+<ul class="simple">
+<li>Soloz Technologies</li>
+</ul>
+</div>
+<div class="section" id="contributors">
+<h2><a class="toc-backref" href="#toc-entry-9">Contributors</a></h2>
+<ul class="simple">
+<li>Soloz Technologies</li>
+</ul>
+</div>
+<div class="section" id="maintainers">
+<h2><a class="toc-backref" href="#toc-entry-10">Maintainers</a></h2>
+<p>This module is part of the <a class="reference external" href="https://github.com/soloztech/contact-center/tree/16.0/contact_center_base">soloztech/contact-center</a> project on GitHub.</p>
+<p>You are welcome to contribute.</p>
+</div>
+</div>
+</div>
+</body>
+</html>

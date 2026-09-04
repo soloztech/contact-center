@@ -1,0 +1,102 @@
+name: tests
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - "16.0*"
+  push:
+    branches:
+      - "16.0"
+      - "16.0-ocabot-*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unreleased-deps:
+    runs-on: ubuntu-latest
+    name: Detect unreleased dependencies
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - run: |
+          for reqfile in requirements.txt test-requirements.txt ; do
+              if [ -f ${reqfile} ] ; then
+                  result=0
+                  # reject non-comment lines that contain a / (i.e. URLs, relative paths)
+                  grep "^[^#].*/" ${reqfile} || result=$?
+                  if [ $result -eq 0 ] ; then
+                      echo "Unreleased dependencies found in ${reqfile}."
+                      exit 1
+                  fi
+              fi
+          done
+  test:
+    runs-on: ubuntu-22.04
+    container: ${{ matrix.container }}
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - container: ghcr.io/oca/oca-ci/py3.10-ocb16.0:latest
+            name: test with OCB
+            makepot: "false"
+    services:
+      postgres:
+        image: postgres:12
+        env:
+          POSTGRES_USER: odoo
+          POSTGRES_PASSWORD: odoo
+          POSTGRES_DB: odoo
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Checkout private Marketing Center dependency
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: soloztech/marketing-center
+          # Release CI is intentionally coupled to the matching, immutable
+          # cross-repository candidate instead of the moving 16.0 branch.
+          ref: "16.0.20260904.1-rc1"
+          path: .ci-private-dependency/marketing-center
+          token: ${{ secrets.CROSS_REPO_READ_TOKEN }}
+          persist-credentials: false
+      - name: Install private Marketing Center addon dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sibling_parent="$(mktemp -d "${RUNNER_TEMP}/contact-center-ci.XXXXXX")"
+          sibling_root="${sibling_parent}/marketing-center"
+          mv "${GITHUB_WORKSPACE}/.ci-private-dependency/marketing-center" "${sibling_root}"
+          python -m pip install --editable "${sibling_root}/setup/meta_api_base"
+          python -m pip install --editable "${sibling_root}/setup/meta_webhook_base"
+      - name: Install addons and dependencies
+        run: oca_install_addons
+      - name: Check licenses
+        run: manifestoo -d . check-licenses
+      - name: Check development status
+        run: manifestoo -d . check-dev-status --default-dev-status=Beta
+      - name: Initialize test db
+        run: oca_init_test_database
+      - name: Run tests
+        run: oca_run_tests
+      - name: Upload screenshots from JS tests
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ failure() }}
+        with:
+          name: Screenshots of failed JS tests - ${{ matrix.name }}
+          path: /tmp/odoo_tests/${{ env.PGDATABASE }}
+          if-no-files-found: ignore
+      - name: Update .pot files
+        run: oca_export_and_push_pot https://x-access-token:${{ secrets.GIT_PUSH_TOKEN }}@github.com/${{ github.repository }}
+        if: ${{ matrix.makepot == 'true' && github.event_name == 'push' && github.repository_owner == 'soloztech' }}

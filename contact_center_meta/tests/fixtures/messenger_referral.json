@@ -1,0 +1,26 @@
+{
+  "object": "page",
+  "entry": [
+    {
+      "id": "100000000000001",
+      "time": 1787680800000,
+      "messaging": [
+        {
+          "sender": {
+            "id": "900000000000040"
+          },
+          "recipient": {
+            "id": "100000000000001"
+          },
+          "timestamp": 1787680800100,
+          "referral": {
+            "ref": "phase62-messenger-standalone",
+            "source": "ADS",
+            "type": "OPEN_THREAD",
+            "ad_id": "phase62-messenger-ad"
+          }
+        }
+      ]
+    }
+  ]
+}

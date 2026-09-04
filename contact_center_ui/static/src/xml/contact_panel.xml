@@ -1,0 +1,715 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<templates xml:space="preserve">
+    <t t-name="contact_center_ui.ContactPanel" owl="1">
+        <aside
+            class="cc-contact-panel"
+            aria-label="Detalhes da conversa"
+            t-att-aria-hidden="state.detailsOpen ? 'false' : 'true'"
+            t-att-inert="!state.detailsOpen"
+        >
+            <header class="cc-contact-panel__header">
+                <DeferredImage
+                    t-if="avatarUrl"
+                    className="'cc-avatar cc-avatar--large cc-avatar--image'"
+                    src="avatarUrl"
+                    alt="''"
+                    ariaHidden="true"
+                    priority="20"
+                />
+                <span
+                    t-else=""
+                    class="cc-avatar cc-avatar--large"
+                    t-esc="initials(displayName)"
+                />
+                <div class="cc-contact-panel__identity">
+                    <p class="cc-kicker" t-esc="identityKicker" />
+                    <form
+                        t-if="local.renameOpen"
+                        class="cc-guest-name-editor"
+                        t-on-submit.prevent="renameGuest"
+                    >
+                        <input
+                            t-ref="renameInput"
+                            type="text"
+                            maxlength="255"
+                            required="required"
+                            aria-label="Nome do perfil convidado"
+                            t-model="local.renameName"
+                            t-att-disabled="local.renamePhase === 'saving'"
+                            t-on-keydown="onGuestRenameKeydown"
+                        />
+                        <button
+                            type="submit"
+                            aria-label="Salvar nome"
+                            title="Salvar nome"
+                            t-att-disabled="local.renamePhase === 'saving' || !local.renameName.trim()"
+                        ><i
+                                t-att-class="local.renamePhase === 'saving' ? 'fa fa-circle-o-notch fa-spin' : 'fa fa-check'"
+                                aria-hidden="true"
+                            /></button>
+                        <button
+                            type="button"
+                            aria-label="Cancelar edição"
+                            title="Cancelar edição"
+                            t-att-disabled="local.renamePhase === 'saving'"
+                            t-on-click="cancelGuestRename"
+                        ><i class="fa fa-times" aria-hidden="true" /></button>
+                    </form>
+                    <div t-else="" class="cc-contact-panel__name-row">
+                        <h2>
+                            <button
+                                t-if="partner"
+                                type="button"
+                                class="cc-record-link cc-record-link--header"
+                                t-att-aria-label="'Abrir cadastro de ' + partner.name"
+                                t-att-title="'Abrir cadastro de ' + partner.name"
+                                t-on-click="() => this.openPartnerRecord(partner.id)"
+                            ><span t-esc="displayName" /><i
+                                    class="fa fa-external-link"
+                                    aria-hidden="true"
+                                /></button>
+                            <t t-else="" t-esc="displayName" />
+                        </h2>
+                        <button
+                            t-if="canRenameGuest"
+                            type="button"
+                            class="cc-guest-name-edit"
+                            aria-label="Editar nome do perfil convidado"
+                            title="Editar nome"
+                            t-on-click="openGuestRename"
+                        ><i class="fa fa-pencil" aria-hidden="true" /></button>
+                    </div>
+                    <span>
+                        <t
+                            t-if="conversation.account"
+                            t-esc="conversation.account.name"
+                        />
+                        <t
+                            t-if="conversation.account &amp;&amp; conversation.provider"
+                        > · </t><t t-if="conversation.provider"><t
+                                t-esc="conversation.provider"
+                            /></t>
+                    </span>
+                </div>
+                <button
+                    type="button"
+                    class="cc-icon-button"
+                    aria-label="Fechar detalhes"
+                    t-on-click="() => store.toggleDetails()"
+                >
+                    <i class="fa fa-times" aria-hidden="true" />
+                </button>
+            </header>
+
+            <div class="cc-contact-panel__scroll">
+                <section
+                    t-if="isGroup"
+                    t-attf-class="cc-detail-section cc-group-metadata cc-group-metadata--#{groupState.tone}"
+                    t-att-aria-busy="groupMetadata.metadata_state === 'pending' ? 'true' : 'false'"
+                >
+                    <div class="cc-detail-section__heading">
+                        <h3>Dados do grupo</h3>
+                        <span
+                            t-attf-class="cc-group-sync cc-group-sync--#{groupState.tone}"
+                            role="status"
+                            aria-live="polite"
+                        >
+                            <i aria-hidden="true" />
+                            <span t-esc="groupState.label" />
+                        </span>
+                    </div>
+                    <p class="cc-detail-copy" t-esc="groupState.description" />
+                    <div class="cc-group-metrics">
+                        <div t-if="groupMetadata.participant_count !== false">
+                            <strong t-esc="groupMetadata.participant_count" />
+                            <span
+                                t-esc="groupMetadata.participant_count === 1 ? 'Participante' : 'Participantes'"
+                            />
+                        </div>
+                        <div t-if="groupMetadata.admin_count !== false">
+                            <strong t-esc="groupMetadata.admin_count" />
+                            <span
+                                t-esc="groupMetadata.admin_count === 1 ? 'Administrador' : 'Administradores'"
+                            />
+                        </div>
+                        <p
+                            t-if="groupMetadata.participant_count === false &amp;&amp; groupMetadata.admin_count === false"
+                        >A contagem ainda não foi informada.</p>
+                    </div>
+                    <dl class="cc-group-facts">
+                        <div>
+                            <dt>Papel da conta</dt>
+                            <dd t-esc="groupRole.label" />
+                        </div>
+                        <div t-if="groupLastSyncLabel">
+                            <dt>Última sincronização</dt>
+                            <dd><time
+                                    t-att-datetime="groupMetadata.last_synced_at"
+                                    t-esc="groupLastSyncLabel"
+                                /></dd>
+                        </div>
+                    </dl>
+                </section>
+                <section t-elif="identity" class="cc-detail-section">
+                    <div class="cc-detail-section__heading">
+                        <h3 t-esc="isLinkedCompany ? 'Empresa' : 'Pessoa'" />
+                        <span
+                            t-attf-class="cc-persona-chip cc-persona-chip--#{isLinkedCompany ? 'company' : identity.persona_kind}"
+                            t-esc="isLinkedCompany ? 'Número centralizado' : (identity.persona_kind === 'contact' ? 'Contato' : 'Guest')"
+                        />
+                    </div>
+                    <t t-if="identity.partner">
+                        <p
+                            t-if="!linkInvariantValid"
+                            class="cc-link-invariant-warning"
+                            role="status"
+                        ><i
+                                class="fa fa-exclamation-triangle"
+                                aria-hidden="true"
+                            /><span
+                            >O tipo deste cadastro mudou depois do vínculo. Abra o contato e peça a um supervisor para revisar a classificação.</span></p>
+                        <dl class="cc-compact-definition">
+                            <div><dt>Nome</dt><dd><button
+                                        type="button"
+                                        class="cc-record-link"
+                                        t-att-aria-label="'Abrir cadastro de ' + identity.partner.name"
+                                        t-on-click="() => this.openPartnerRecord(identity.partner.id)"
+                                    ><span t-esc="identity.partner.name" /><i
+                                            class="fa fa-external-link"
+                                            aria-hidden="true"
+                                        /></button></dd></div>
+                            <div
+                                t-if="isLinkedCompany &amp;&amp; identity.partner.vat"
+                            ><dt>CNPJ / VAT</dt><dd
+                                    t-esc="identity.partner.vat"
+                                /></div>
+                            <div t-if="identity.partner.phone"><dt>Telefone</dt><dd
+                                    t-esc="identity.partner.phone"
+                                /></div>
+                            <div t-if="identity.partner.email"><dt>E-mail</dt><dd
+                                    t-esc="identity.partner.email"
+                                /></div>
+                        </dl>
+                        <div
+                            t-if="!isLinkedCompany &amp;&amp; identity.partner.is_company === false"
+                            t-attf-class="cc-company-relation cc-company-relation--#{companyRelationState}"
+                            t-on-keydown="onCompanyLinkerKeydown"
+                        >
+                            <span class="cc-company-relation__rail" aria-hidden="true">
+                                <i class="fa fa-building-o" />
+                            </span>
+                            <div class="cc-company-relation__body">
+                                <div class="cc-company-relation__heading">
+                                    <span>Empresa</span>
+                                    <small t-if="company">Vínculo principal</small>
+                                </div>
+                                <t t-if="company">
+                                    <button
+                                        type="button"
+                                        class="cc-company-relation__name"
+                                        t-att-aria-label="'Abrir cadastro de ' + company.name"
+                                        t-on-click="() => this.openPartnerRecord(company.id)"
+                                    ><span t-esc="company.name" /><i
+                                            class="fa fa-external-link"
+                                            aria-hidden="true"
+                                        /></button>
+                                    <dl class="cc-company-relation__details">
+                                        <div t-if="company.vat"><dt>CNPJ / VAT</dt><dd
+                                                t-esc="company.vat"
+                                            /></div>
+                                        <div t-if="company.phone"><dt>Telefone</dt><dd
+                                                t-esc="company.phone"
+                                            /></div>
+                                        <div t-if="company.email"><dt>E-mail</dt><dd
+                                                t-esc="company.email"
+                                            /></div>
+                                    </dl>
+                                </t>
+                                <p
+                                    t-elif="companyProjectionUnavailable"
+                                    class="cc-detail-copy"
+                                >Os dados da empresa vinculada não estão disponíveis neste painel.</p>
+                                <t t-elif="canLinkCompany">
+                                    <p
+                                        class="cc-detail-copy"
+                                    >Vincule a empresa principal desta pessoa. Ao selecionar uma empresa, o Odoo aplica imediatamente o vínculo comercial e sincroniza os dados fiscais e de endereço.</p>
+                                    <div class="cc-inline-actions">
+                                        <button
+                                            t-ref="companyLinkTrigger"
+                                            type="button"
+                                            class="cc-secondary-button"
+                                            t-att-aria-expanded="state.companyLinker.open"
+                                            aria-controls="cc-company-linker"
+                                            t-att-disabled="companyMutationPending"
+                                            t-on-click="() => store.openCompanyLinker('search')"
+                                        >Vincular empresa</button>
+                                        <button
+                                            t-if="canCreateCompany"
+                                            type="button"
+                                            class="cc-text-button"
+                                            t-att-disabled="companyMutationPending"
+                                            t-on-click="openCreateCompany"
+                                        >Criar empresa</button>
+                                    </div>
+                                </t>
+                                <p
+                                    t-elif="identity.partner.company_linking_allowed === true"
+                                    class="cc-detail-copy"
+                                >Solicite a um supervisor o vínculo da empresa deste contato.</p>
+                                <p
+                                    t-else=""
+                                    class="cc-detail-copy"
+                                >A empresa deste contato deve ser gerenciada no aplicativo Contatos.</p>
+
+                                <div
+                                    t-if="state.companyLinker.open &amp;&amp; canLinkCompany"
+                                    id="cc-company-linker"
+                                    class="cc-contact-linker cc-company-linker"
+                                    t-att-aria-busy="state.companyLinker.phase === 'loading' || state.companyLinker.phase === 'saving'"
+                                >
+                                    <div
+                                        class="cc-contact-linker__tabs"
+                                        role="group"
+                                        aria-label="Vincular empresa"
+                                    >
+                                        <button
+                                            type="button"
+                                            t-att-aria-pressed="state.companyLinker.mode === 'search'"
+                                            t-att-disabled="state.companyLinker.phase === 'saving'"
+                                            t-att-class="state.companyLinker.mode === 'search' ? 'is-active' : ''"
+                                            t-on-click="() => store.openCompanyLinker('search')"
+                                        >Buscar</button>
+                                        <button
+                                            t-if="canCreateCompany"
+                                            type="button"
+                                            t-att-aria-pressed="state.companyLinker.mode === 'create'"
+                                            t-att-disabled="state.companyLinker.phase === 'saving'"
+                                            t-att-class="state.companyLinker.mode === 'create' ? 'is-active' : ''"
+                                            t-on-click="openCreateCompany"
+                                        >Criar</button>
+                                        <button
+                                            type="button"
+                                            aria-label="Fechar vínculo de empresa"
+                                            t-att-disabled="state.companyLinker.phase === 'saving'"
+                                            t-on-click="closeCompanyLinker"
+                                        ><i
+                                                class="fa fa-times"
+                                                aria-hidden="true"
+                                            /></button>
+                                    </div>
+                                    <t t-if="state.companyLinker.mode === 'search'">
+                                        <input
+                                            t-ref="companyInput"
+                                            type="search"
+                                            aria-label="Buscar empresa por nome, CNPJ ou VAT, telefone ou e-mail"
+                                            placeholder="Nome, CNPJ/VAT, telefone ou e-mail"
+                                            t-att-value="state.companyLinker.query"
+                                            t-att-disabled="state.companyLinker.phase === 'saving'"
+                                            t-on-input="onCompanySearch"
+                                        />
+                                        <div class="cc-contact-results">
+                                            <p
+                                                t-if="state.companyLinker.phase === 'loading'"
+                                                role="status"
+                                            >Buscando empresas…</p>
+                                            <button
+                                                t-foreach="state.companyLinker.results"
+                                                t-as="resultCompany"
+                                                t-key="resultCompany.id"
+                                                type="button"
+                                                t-att-disabled="state.companyLinker.phase === 'saving'"
+                                                t-on-click="() => store.linkPartnerCompany(resultCompany.id)"
+                                            >
+                                                <strong>Vincular <t
+                                                        t-esc="resultCompany.name"
+                                                    /></strong>
+                                                <small
+                                                    t-esc="resultCompany.vat || resultCompany.phone || resultCompany.email || 'Sem detalhes cadastrais'"
+                                                />
+                                            </button>
+                                            <p
+                                                t-if="state.companyLinker.phase === 'ready' &amp;&amp; !state.companyLinker.results.length"
+                                            >Nenhuma empresa encontrada.</p>
+                                            <p
+                                                t-if="state.companyLinker.phase === 'error'"
+                                                role="alert"
+                                                t-esc="state.companyLinker.error"
+                                            />
+                                        </div>
+                                    </t>
+                                    <form
+                                        t-else=""
+                                        class="cc-contact-form"
+                                        t-on-submit.prevent="createCompany"
+                                    >
+                                        <label>Nome<input
+                                                t-ref="companyInput"
+                                                type="text"
+                                                autocomplete="organization"
+                                                required="required"
+                                                t-att-disabled="state.companyLinker.phase === 'saving'"
+                                                t-model="local.companyName"
+                                            /></label>
+                                        <label>CNPJ / VAT<input
+                                                type="text"
+                                                t-att-disabled="state.companyLinker.phase === 'saving'"
+                                                t-model="local.companyVat"
+                                            /></label>
+                                        <label>Telefone<input
+                                                type="tel"
+                                                autocomplete="tel"
+                                                t-att-disabled="state.companyLinker.phase === 'saving'"
+                                                t-model="local.companyPhone"
+                                            /></label>
+                                        <label>E-mail<input
+                                                type="email"
+                                                autocomplete="email"
+                                                t-att-disabled="state.companyLinker.phase === 'saving'"
+                                                t-model="local.companyEmail"
+                                            /></label>
+                                        <p
+                                            t-if="state.companyLinker.phase === 'error'"
+                                            class="cc-company-linker__error"
+                                            role="alert"
+                                            t-esc="state.companyLinker.error"
+                                        />
+                                        <button
+                                            type="submit"
+                                            class="cc-primary-button"
+                                            t-att-disabled="state.companyLinker.phase === 'saving' || !local.companyName.trim()"
+                                        ><t
+                                                t-if="state.companyLinker.phase === 'saving'"
+                                            >Criando…</t><t
+                                                t-else=""
+                                            >Criar e vincular</t></button>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                        <button
+                            t-if="canUnlinkIdentity"
+                            type="button"
+                            class="cc-text-button"
+                            t-att-disabled="companyMutationPending"
+                            t-on-click="() => store.unlinkPartner()"
+                        ><t
+                                t-esc="isLinkedCompany ? 'Desvincular empresa' : 'Desvincular pessoa'"
+                            /></button>
+                        <p
+                            t-elif="isLinkedCompany"
+                            class="cc-detail-copy cc-central-company-note"
+                        ><i
+                                class="fa fa-lock"
+                                aria-hidden="true"
+                            />Somente um supervisor pode desvincular este número central da empresa.</p>
+                    </t>
+                    <t t-else="">
+                        <div class="cc-person-first-guidance">
+                            <i class="fa fa-user" aria-hidden="true" />
+                            <div>
+                                <strong>Prefira identificar uma pessoa</strong>
+                                <p
+                                >Vincule este número à pessoa que conversa com sua equipe. O histórico é preservado e passa a ganhar o contexto do cadastro.</p>
+                            </div>
+                        </div>
+                        <div class="cc-inline-actions">
+                            <button
+                                type="button"
+                                class="cc-secondary-button"
+                                t-on-click="openPersonLinker"
+                            >Vincular pessoa</button>
+                            <button
+                                t-if="store.capabilities.create_contact"
+                                type="button"
+                                class="cc-text-button"
+                                t-on-click="openCreateContact"
+                            >Criar pessoa</button>
+                        </div>
+                        <button
+                            t-if="canManageCentralCompany"
+                            type="button"
+                            class="cc-central-company-trigger"
+                            t-att-aria-expanded="state.contactLinker.open &amp;&amp; centralCompanyLinker"
+                            aria-controls="cc-identity-linker"
+                            t-on-click="openCentralCompanyLinker"
+                        >
+                            <i class="fa fa-building-o" aria-hidden="true" />
+                            <span><strong>Número central de empresa</strong><small
+                                >Use somente quando várias pessoas atendem por este número e não existe uma pessoa fixa.</small></span>
+                            <i class="fa fa-chevron-right" aria-hidden="true" />
+                        </button>
+                        <p t-else="" class="cc-central-company-note">
+                            <i class="fa fa-building-o" aria-hidden="true" />
+                            Se este for um número central de empresa, solicite o vínculo a um supervisor.
+                        </p>
+                    </t>
+
+                    <div
+                        t-if="state.contactLinker.open"
+                        id="cc-identity-linker"
+                        t-attf-class="cc-contact-linker cc-identity-linker cc-identity-linker--#{centralCompanyLinker ? 'company' : 'person'}"
+                        t-att-aria-busy="state.contactLinker.phase === 'loading' || state.contactLinker.phase === 'saving'"
+                    >
+                        <div class="cc-identity-linker__context">
+                            <i
+                                t-att-class="centralCompanyLinker ? 'fa fa-building-o' : 'fa fa-user'"
+                                aria-hidden="true"
+                            />
+                            <span><strong
+                                    t-esc="centralCompanyLinker ? 'Empresa central' : 'Pessoa'"
+                                /><small
+                                    t-esc="centralCompanyLinker ? 'Este número representa a empresa, sem uma pessoa fixa.' : 'Opção recomendada para números de uso individual.'"
+                                /></span>
+                        </div>
+                        <div class="cc-contact-linker__tabs">
+                            <button
+                                t-if="centralCompanyLinker ? canLinkCentralCompany : store.capabilities.link_contact"
+                                type="button"
+                                t-att-aria-pressed="state.contactLinker.mode === 'search'"
+                                t-att-disabled="state.contactLinker.phase === 'saving'"
+                                t-att-class="state.contactLinker.mode === 'search' ? 'is-active' : ''"
+                                t-on-click="() => store.openContactLinker('search', centralCompanyLinker ? 'central_company' : 'person')"
+                            >Buscar</button>
+                            <button
+                                t-if="centralCompanyLinker ? canCreateCentralCompany : store.capabilities.create_contact"
+                                type="button"
+                                t-att-aria-pressed="state.contactLinker.mode === 'create'"
+                                t-att-disabled="state.contactLinker.phase === 'saving'"
+                                t-att-class="state.contactLinker.mode === 'create' ? 'is-active' : ''"
+                                t-on-click="() => centralCompanyLinker ? this.openCreateCentralCompany() : this.openCreateContact()"
+                            >Criar</button>
+                            <button
+                                type="button"
+                                aria-label="Fechar vínculo de cadastro"
+                                t-att-disabled="state.contactLinker.phase === 'saving'"
+                                t-on-click="() => store.closeContactLinker()"
+                            ><i class="fa fa-times" aria-hidden="true" /></button>
+                        </div>
+                        <t t-if="state.contactLinker.mode === 'search'">
+                            <input
+                                type="search"
+                                t-att-aria-label="centralCompanyLinker ? 'Buscar empresa por nome, CNPJ ou VAT, telefone ou e-mail' : 'Buscar pessoa por nome, telefone ou e-mail'"
+                                t-att-placeholder="centralCompanyLinker ? 'Nome, CNPJ/VAT, telefone ou e-mail' : 'Nome, telefone ou e-mail'"
+                                t-att-value="state.contactLinker.query"
+                                t-att-disabled="state.contactLinker.phase === 'saving'"
+                                t-on-input="onContactSearch"
+                            />
+                            <div class="cc-contact-results">
+                                <p
+                                    t-if="state.contactLinker.phase === 'loading'"
+                                    role="status"
+                                ><t
+                                        t-esc="centralCompanyLinker ? 'Buscando empresas…' : 'Buscando pessoas…'"
+                                    /></p>
+                                <button
+                                    t-foreach="state.contactLinker.results"
+                                    t-as="partner"
+                                    t-key="partner.id"
+                                    type="button"
+                                    t-att-disabled="state.contactLinker.phase === 'saving'"
+                                    t-on-click="() => centralCompanyLinker ? store.linkCentralCompany(partner.id) : store.linkPartner(partner.id)"
+                                >
+                                    <strong>Vincular <t t-esc="partner.name" /></strong>
+                                    <small
+                                        t-esc="(centralCompanyLinker &amp;&amp; partner.vat) || partner.phone || partner.email || 'Sem detalhes cadastrais'"
+                                    />
+                                </button>
+                                <p
+                                    t-if="state.contactLinker.phase === 'ready' &amp;&amp; !state.contactLinker.results.length"
+                                ><t
+                                        t-esc="centralCompanyLinker ? 'Nenhuma empresa encontrada.' : 'Nenhuma pessoa encontrada.'"
+                                    /></p>
+                                <p
+                                    t-if="state.contactLinker.phase === 'error'"
+                                    role="alert"
+                                    t-esc="state.contactLinker.error"
+                                />
+                            </div>
+                        </t>
+                        <form
+                            t-elif="centralCompanyLinker"
+                            class="cc-contact-form"
+                            t-on-submit.prevent="createCentralCompany"
+                        >
+                            <label>Razão social ou nome<input
+                                    type="text"
+                                    autocomplete="organization"
+                                    required="required"
+                                    t-att-disabled="state.contactLinker.phase === 'saving'"
+                                    t-model="local.companyName"
+                                /></label>
+                            <label>CNPJ / VAT<input
+                                    type="text"
+                                    t-att-disabled="state.contactLinker.phase === 'saving'"
+                                    t-model="local.companyVat"
+                                /></label>
+                            <label>Telefone<input
+                                    type="tel"
+                                    autocomplete="tel"
+                                    t-att-disabled="state.contactLinker.phase === 'saving'"
+                                    t-model="local.companyPhone"
+                                /></label>
+                            <label>E-mail<input
+                                    type="email"
+                                    autocomplete="email"
+                                    t-att-disabled="state.contactLinker.phase === 'saving'"
+                                    t-model="local.companyEmail"
+                                /></label>
+                            <p
+                                t-if="state.contactLinker.phase === 'error'"
+                                class="cc-company-linker__error"
+                                role="alert"
+                                t-esc="state.contactLinker.error"
+                            />
+                            <button
+                                type="submit"
+                                class="cc-primary-button"
+                                t-att-disabled="state.contactLinker.phase === 'saving' || !local.companyName.trim()"
+                            ><t
+                                    t-if="state.contactLinker.phase === 'saving'"
+                                >Criando…</t><t
+                                    t-else=""
+                                >Criar e vincular empresa</t></button>
+                        </form>
+                        <form
+                            t-else=""
+                            class="cc-contact-form"
+                            t-on-submit.prevent="createContact"
+                        >
+                            <label>Nome<input
+                                    type="text"
+                                    autocomplete="name"
+                                    required="required"
+                                    t-att-disabled="state.contactLinker.phase === 'saving'"
+                                    t-model="local.name"
+                                /></label>
+                            <label>Telefone<input
+                                    type="tel"
+                                    autocomplete="tel"
+                                    t-att-disabled="state.contactLinker.phase === 'saving'"
+                                    t-model="local.phone"
+                                /></label>
+                            <label>E-mail<input
+                                    type="email"
+                                    autocomplete="email"
+                                    t-att-disabled="state.contactLinker.phase === 'saving'"
+                                    t-model="local.email"
+                                /></label>
+                            <p
+                                t-if="state.contactLinker.phase === 'error'"
+                                class="cc-company-linker__error"
+                                role="alert"
+                                t-esc="state.contactLinker.error"
+                            />
+                            <button
+                                type="submit"
+                                class="cc-primary-button"
+                                t-att-disabled="state.contactLinker.phase === 'saving' || !local.name.trim()"
+                            ><t
+                                    t-if="state.contactLinker.phase === 'saving'"
+                                >Criando…</t><t
+                                    t-else=""
+                                >Criar e vincular pessoa</t></button>
+                        </form>
+                    </div>
+                </section>
+                <section t-else="" class="cc-detail-section">
+                    <div class="cc-detail-section__heading"><h3>Conversa</h3></div>
+                    <p
+                        class="cc-detail-copy"
+                    >Este canal não possui uma identidade individual vinculada. Os dados operacionais e as mensagens continuam disponíveis.</p>
+                </section>
+
+                <AttributionTouchpoints
+                    t-if="canViewAttribution"
+                    attribution="state.attribution"
+                    store="store"
+                />
+
+                <section class="cc-detail-section">
+                    <div class="cc-detail-section__heading"><h3>Operação</h3></div>
+                    <div class="cc-detail-field">
+                        <span>Acesso da caixa</span>
+                        <span
+                            class="cc-detail-field__value cc-detail-field__value--access"
+                        >
+                            <span t-if="conversation.owner">
+                                <i class="fa fa-user" aria-hidden="true" />
+                                Proprietário:
+                                <t t-esc="conversation.owner.name" />
+                            </span>
+                            <span t-if="conversation.team">
+                                <i class="fa fa-users" aria-hidden="true" />
+                                Equipe: <t t-esc="conversation.team.name" />
+                            </span>
+                            <span
+                                t-if="!conversation.owner &amp;&amp; !conversation.team"
+                            >Sem acesso operacional configurado</span>
+                        </span>
+                        <small
+                        >Proprietário e equipe, quando informados, têm acesso cumulativo.</small>
+                    </div>
+                    <label class="cc-detail-field">
+                        <span>Responsável</span>
+                        <select
+                            t-att-disabled="!store.capabilities.manage_assignment"
+                            t-on-change="onResponsibleChange"
+                        >
+                            <option
+                                value=""
+                                t-att-selected="!conversation.responsible"
+                            >Sem responsável</option>
+                            <option
+                                t-foreach="effectiveAgents"
+                                t-as="agent"
+                                t-key="agent.id"
+                                t-att-value="agent.id"
+                                t-att-selected="conversation.responsible &amp;&amp; conversation.responsible.id === agent.id"
+                            ><t t-esc="agent.name" /></option>
+                        </select>
+                    </label>
+                </section>
+
+                <section class="cc-detail-section">
+                    <div class="cc-detail-section__heading"><h3>Tags</h3></div>
+                    <div class="cc-tag-picker">
+                        <button
+                            t-foreach="store.tags"
+                            t-as="tag"
+                            t-key="tag.id"
+                            type="button"
+                            t-att-class="isTagSelected(tag.id) ? 'is-active' : ''"
+                            t-att-aria-pressed="isTagSelected(tag.id) ? 'true' : 'false'"
+                            t-on-click="() => store.toggleTag(tag.id)"
+                        >
+                            <i
+                                t-attf-class="cc-tag-color cc-tag-color--#{tag.color}"
+                                aria-hidden="true"
+                            />
+                            <span t-esc="tag.name" />
+                        </button>
+                        <p
+                            t-if="!store.tags.length"
+                            class="cc-detail-copy"
+                        >Nenhuma tag configurada.</p>
+                    </div>
+                </section>
+
+                <section t-if="identity" class="cc-detail-section">
+                    <div class="cc-detail-section__heading"><h3
+                        >Identificadores observados</h3><span
+                            t-esc="identity.aliases.length"
+                        /></div>
+                    <ul class="cc-alias-list">
+                        <li t-foreach="identity.aliases" t-as="alias" t-key="alias.id">
+                            <span><strong t-esc="alias.namespace" /><small
+                                    t-esc="alias.role"
+                                /></span>
+                            <code t-esc="alias.value" />
+                        </li>
+                    </ul>
+                </section>
+            </div>
+        </aside>
+    </t>
+</templates>

@@ -1,0 +1,224 @@
+# Translation of Odoo Server.
+# This file contains the translation of the following modules:
+# 	* contact_center_wuzapi
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Odoo Server 16.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-08-30 00:00+0000\n"
+"PO-Revision-Date: 2026-08-30 00:00+0000\n"
+"Last-Translator: Soloz Technologies\n"
+"Language-Team: Portuguese (Brazil)\n"
+"Language: pt_BR\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+#. module: contact_center_wuzapi
+#: model:ir.model.fields,field_description:contact_center_wuzapi.field_contact_center_account_setup_wizard__wuzapi_server_id
+msgid "WuzAPI Server"
+msgstr "Servidor WuzAPI"
+
+#. module: contact_center_wuzapi
+#: model:ir.actions.act_window,name:contact_center_wuzapi.action_contact_center_wuzapi_servers
+#: model:ir.ui.menu,name:contact_center_wuzapi.menu_contact_center_wuzapi_servers
+msgid "WuzAPI Servers"
+msgstr "Servidores WuzAPI"
+
+#. module: contact_center_wuzapi
+#: model:ir.model.fields,field_description:contact_center_wuzapi.field_contact_center_account_setup_wizard__wuzapi_instance_mode
+msgid "Instance"
+msgstr "Instância"
+
+#. module: contact_center_wuzapi
+#: model:ir.model.fields.selection,name:contact_center_wuzapi.selection__contact_center_account_setup_wizard__wuzapi_instance_mode__managed
+msgid "Create a new instance"
+msgstr "Criar uma nova instância"
+
+#. module: contact_center_wuzapi
+#: model:ir.model.fields.selection,name:contact_center_wuzapi.selection__contact_center_account_setup_wizard__wuzapi_instance_mode__existing
+msgid "Connect an existing instance"
+msgstr "Conectar uma instância existente"
+
+#. module: contact_center_wuzapi
+#: model:ir.model.fields,field_description:contact_center_wuzapi.field_contact_center_account_setup_wizard__wuzapi_instance_name
+msgid "Instance Name"
+msgstr "Nome da instância"
+
+#. module: contact_center_wuzapi
+#: model:ir.model.fields,field_description:contact_center_wuzapi.field_contact_center_account_setup_wizard__wuzapi_existing_token
+msgid "Instance Token"
+msgstr "Token da instância"
+
+#. module: contact_center_wuzapi
+msgid "Use the private token of the existing instance (at least 32 characters)."
+msgstr "Use o token privado da instância existente (pelo menos 32 caracteres)."
+
+#. module: contact_center_wuzapi
+#: model:ir.model.fields.selection,name:contact_center_wuzapi.selection__contact_center_account_setup_wizard__wuzapi_onboarding_state__none
+msgid "Not Started"
+msgstr "Não iniciada"
+
+#. module: contact_center_wuzapi
+#: model:ir.model.fields.selection,name:contact_center_wuzapi.selection__contact_center_account_setup_wizard__wuzapi_onboarding_state__queued
+msgid "Queued"
+msgstr "Na fila"
+
+#. module: contact_center_wuzapi
+#: model:ir.model.fields.selection,name:contact_center_wuzapi.selection__contact_center_account_setup_wizard__wuzapi_onboarding_state__provisioning
+msgid "Preparing Provider"
+msgstr "Preparando o provedor"
+
+#. module: contact_center_wuzapi
+#: model:ir.model.fields.selection,name:contact_center_wuzapi.selection__contact_center_account_setup_wizard__wuzapi_onboarding_state__awaiting_scan
+msgid "Waiting for QR Scan"
+msgstr "Aguardando leitura do QR"
+
+#. module: contact_center_wuzapi
+#: model:ir.model.fields.selection,name:contact_center_wuzapi.selection__contact_center_account_setup_wizard__wuzapi_onboarding_state__verifying
+msgid "Verifying"
+msgstr "Verificando"
+
+#. module: contact_center_wuzapi
+#: model:ir.model.fields.selection,name:contact_center_wuzapi.selection__contact_center_account_setup_wizard__wuzapi_onboarding_state__ready
+msgid "Ready to Activate"
+msgstr "Pronta para ativar"
+
+#. module: contact_center_wuzapi
+#: model:ir.model.fields.selection,name:contact_center_wuzapi.selection__contact_center_account_setup_wizard__wuzapi_onboarding_state__error
+msgid "Needs Attention"
+msgstr "Requer atenção"
+
+#. module: contact_center_wuzapi
+#: model_terms:ir.ui.view,arch_db:contact_center_wuzapi.view_contact_center_wuzapi_server_form
+msgid "Verify Server"
+msgstr "Verificar servidor"
+
+#. module: contact_center_wuzapi
+#: model_terms:ir.ui.view,arch_db:contact_center_wuzapi.view_contact_center_wuzapi_server_form
+msgid "Archived"
+msgstr "Arquivado"
+
+#. module: contact_center_wuzapi
+#: model:ir.model.fields,field_description:contact_center_wuzapi.field_contact_center_wuzapi_server__connection_ids
+#: model_terms:ir.ui.view,arch_db:contact_center_wuzapi.view_contact_center_wuzapi_server_form
+msgid "Connections"
+msgstr "Conexões"
+
+#. module: contact_center_wuzapi
+#: model:ir.model.fields,field_description:contact_center_wuzapi.field_contact_center_provider_connection__wuzapi_onboarding_state
+#: model_terms:ir.ui.view,arch_db:contact_center_wuzapi.view_contact_center_connection_form_wuzapi_onboarding
+msgid "Guided Setup"
+msgstr "Configuração guiada"
+
+#. module: contact_center_wuzapi
+#: model:ir.model.fields,field_description:contact_center_wuzapi.field_contact_center_wuzapi_server__base_url
+msgid "Service URL"
+msgstr "URL do serviço"
+
+#. module: contact_center_wuzapi
+#: model:ir.model.fields,field_description:contact_center_wuzapi.field_contact_center_wuzapi_server__admin_token
+msgid "Administrative Token"
+msgstr "Token administrativo"
+
+#. module: contact_center_wuzapi
+msgid "Not Checked"
+msgstr "Não verificado"
+
+#. module: contact_center_wuzapi
+msgid "Available"
+msgstr "Disponível"
+
+#. module: contact_center_wuzapi
+msgid "Unavailable"
+msgstr "Indisponível"
+
+#. module: contact_center_wuzapi
+msgid "Managed Server"
+msgstr "Servidor gerenciado"
+
+#. module: contact_center_wuzapi
+msgid "Managed Instance"
+msgstr "Instância gerenciada"
+
+#. module: contact_center_wuzapi
+msgid "Remote Instance ID"
+msgstr "ID remoto da instância"
+
+#. module: contact_center_wuzapi
+msgid "Instance Fingerprint"
+msgstr "Impressão digital da instância"
+
+#. module: contact_center_wuzapi
+msgid "Setup Detail"
+msgstr "Detalhe da configuração"
+
+#. module: contact_center_wuzapi
+msgid "HMAC Verified At"
+msgstr "HMAC verificado em"
+
+#. module: contact_center_wuzapi
+msgid "The WuzAPI administrative token is invalid or too short."
+msgstr "O token administrativo da WuzAPI é inválido ou muito curto."
+
+#. module: contact_center_wuzapi
+msgid "Only Contact Center administrators can manage WuzAPI servers."
+msgstr "Somente administradores da Central de Atendimento podem gerenciar servidores WuzAPI."
+
+#. module: contact_center_wuzapi
+msgid "The WuzAPI administrative API did not validate."
+msgstr "A API administrativa da WuzAPI não foi validada."
+
+#. module: contact_center_wuzapi
+msgid "WuzAPI did not accept the configured server credentials."
+msgstr "A WuzAPI não aceitou as credenciais configuradas para o servidor."
+
+#. module: contact_center_wuzapi
+msgid "Server verified: %(count)s instance(s)."
+msgstr "Servidor verificado: %(count)s instância(s)."
+
+#. module: contact_center_wuzapi
+msgid "Select an active WuzAPI server for the company."
+msgstr "Selecione um servidor WuzAPI ativo para a empresa."
+
+#. module: contact_center_wuzapi
+msgid "Verify the WuzAPI server before continuing."
+msgstr "Verifique o servidor WuzAPI antes de continuar."
+
+#. module: contact_center_wuzapi
+msgid "Enter a name for the WuzAPI instance."
+msgstr "Informe um nome para a instância WuzAPI."
+
+#. module: contact_center_wuzapi
+msgid "Enter a valid existing WuzAPI token."
+msgstr "Informe um token válido da instância WuzAPI existente."
+
+#. module: contact_center_wuzapi
+msgid "Select how the WuzAPI instance will be created."
+msgstr "Selecione como a instância WuzAPI será criada."
+
+#. module: contact_center_wuzapi
+msgid "The provider remained unavailable after the safe retries."
+msgstr "O provedor continuou indisponível após as tentativas automáticas."
+
+#. module: contact_center_wuzapi
+msgid "The provider rejected the configuration or returned invalid proof."
+msgstr "O provedor rejeitou a configuração ou retornou uma validação inválida."
+
+#. module: contact_center_wuzapi
+msgid "This WuzAPI connection is not waiting for a QR scan."
+msgstr "Esta conexão WuzAPI não está aguardando a leitura de um QR."
+
+#. module: contact_center_wuzapi
+msgid "Only a failed staged WuzAPI setup can be repaired here."
+msgstr "Somente uma configuração WuzAPI preparada e com falha pode ser corrigida aqui."
+
+#. module: contact_center_wuzapi
+msgid "The staged WuzAPI connection does not match."
+msgstr "A conexão WuzAPI preparada não corresponde a esta configuração."
+
+#. module: contact_center_wuzapi
+msgid "The WuzAPI server and instance mode cannot change during repair."
+msgstr "O servidor WuzAPI e o modo da instância não podem mudar durante a correção."

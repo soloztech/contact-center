@@ -1,0 +1,548 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="view_contact_center_inbox_tree" model="ir.ui.view">
+        <field name="name">contact.center.inbox.event.tree</field>
+        <field name="model">contact.center.inbox.event</field>
+        <field name="arch" type="xml">
+            <tree
+                create="0"
+                delete="0"
+                decoration-success="state == 'done'"
+                decoration-warning="state in ('pending', 'retry')"
+                decoration-danger="state in ('blocked', 'dead')"
+            >
+                <field name="create_date" />
+                <field name="provider_connection_id" />
+                <field name="inbox_dedupe_key" />
+                <field name="state" />
+                <field name="attempts" />
+                <field name="group_roster_wait_count" optional="hide" />
+                <field name="first_group_roster_wait_at" optional="hide" />
+                <field name="queue_job_uuid" optional="hide" />
+                <field name="last_error_class" />
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_contact_center_inbox_form" model="ir.ui.view">
+        <field name="name">contact.center.inbox.event.form</field>
+        <field name="model">contact.center.inbox.event</field>
+        <field name="arch" type="xml">
+            <form create="0" delete="0" edit="0">
+                <header>
+                    <field name="has_active_queue_job" invisible="1" />
+                    <button
+                        name="action_requeue"
+                        type="object"
+                        string="Requeue"
+                        confirm="Requeue only this event? Terminal events may fail again until their cause is resolved."
+                        groups="contact_center_base.group_contact_center_admin"
+                        attrs="{'invisible': ['|', ('state', 'not in', ('pending', 'retry', 'blocked', 'unsupported', 'dead')), ('has_active_queue_job', '=', True)]}"
+                    />
+                </header>
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="provider_connection_id" />
+                            <field name="inbox_dedupe_key" />
+                            <field name="provider_schema_version" />
+                            <field name="state" />
+                        </group>
+                        <group>
+                            <field name="attempts" />
+                            <field name="group_roster_wait_count" />
+                            <field name="first_group_roster_wait_at" />
+                            <field name="waiting_group_profile_id" />
+                            <field name="waiting_group_roster_after" />
+                            <field name="queue_job_uuid" />
+                            <field name="processed_at" />
+                            <field name="last_error_class" />
+                        </group>
+                    </group>
+                    <group string="Last Error"><field
+                            name="last_error_message"
+                            nolabel="1"
+                        /></group>
+                    <notebook>
+                        <page
+                            string="Sanitized Envelope"
+                            groups="contact_center_base.group_contact_center_admin"
+                        ><field
+                                name="raw_envelope_json"
+                                nolabel="1"
+                                widget="contact_center_json_viewer"
+                            /></page>
+                        <page
+                            string="Normalized DTO"
+                            groups="contact_center_base.group_contact_center_admin"
+                        ><field
+                                name="normalized_dto_json"
+                                nolabel="1"
+                                widget="contact_center_json_viewer"
+                            /></page>
+                        <page string="Metadata"><field
+                                name="metadata_json"
+                                nolabel="1"
+                                widget="contact_center_json_viewer"
+                            /></page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_contact_center_inbox" model="ir.actions.act_window">
+        <field name="name">Inbox Events</field>
+        <field name="res_model">contact.center.inbox.event</field>
+        <field name="view_mode">tree,form</field>
+    </record>
+
+    <record id="view_contact_center_outbox_tree" model="ir.ui.view">
+        <field name="name">contact.center.outbox.command.tree</field>
+        <field name="model">contact.center.outbox.command</field>
+        <field name="arch" type="xml">
+            <tree
+                create="0"
+                delete="0"
+                decoration-success="state == 'done'"
+                decoration-warning="state in ('pending', 'retry', 'uncertain')"
+                decoration-danger="state == 'dead'"
+            >
+                <field name="create_date" />
+                <field name="provider_connection_id" />
+                <field name="command_type" />
+                <field name="outbox_idempotency_key" />
+                <field name="state" />
+                <field name="resolution" optional="show" />
+                <field name="retry_of_id" optional="hide" />
+                <field name="retry_requested_by_id" optional="hide" />
+                <field name="retry_requested_at" optional="hide" />
+                <field name="attempts" />
+                <field name="queue_job_uuid" optional="hide" />
+                <field name="last_error_class" />
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_contact_center_outbox_form" model="ir.ui.view">
+        <field name="name">contact.center.outbox.command.form</field>
+        <field name="model">contact.center.outbox.command</field>
+        <field name="arch" type="xml">
+            <form create="0" delete="0" edit="0">
+                <header>
+                    <field name="has_active_queue_job" invisible="1" />
+                    <button
+                        name="action_requeue"
+                        type="object"
+                        string="Requeue"
+                        groups="contact_center_base.group_contact_center_admin"
+                        attrs="{'invisible': ['|', ('state', 'not in', ('pending', 'retry')), ('has_active_queue_job', '=', True)]}"
+                    />
+                    <button
+                        name="action_confirm_external_delivery"
+                        type="object"
+                        string="Confirm External Delivery"
+                        class="oe_highlight"
+                        groups="contact_center_base.group_contact_center_admin"
+                        attrs="{'invisible': ['|', ('state', '!=', 'uncertain'), ('command_type', '!=', 'send_message')]}"
+                    />
+                    <button
+                        name="action_confirm_external_application"
+                        type="object"
+                        string="Confirm External Application"
+                        class="oe_highlight"
+                        groups="contact_center_base.group_contact_center_admin"
+                        attrs="{'invisible': ['|', ('state', '!=', 'uncertain'), ('command_type', 'not in', ('react', 'edit_message', 'delete_message'))]}"
+                    />
+                    <button
+                        name="action_close_without_send"
+                        type="object"
+                        string="Close Without Sending"
+                        groups="contact_center_base.group_contact_center_admin"
+                        attrs="{'invisible': [('state', '!=', 'uncertain')]}"
+                    />
+                </header>
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="account_id" />
+                            <field name="provider_connection_id" />
+                            <field name="channel_binding_id" />
+                            <field name="message_binding_id" />
+                        </group>
+                        <group>
+                            <field name="command_type" />
+                            <field name="outbox_idempotency_key" />
+                            <field name="state" />
+                            <field name="attempts" />
+                            <field name="queue_job_uuid" />
+                            <field name="dispatch_job_uuid" />
+                            <field name="dispatch_started_at" />
+                            <field name="processed_at" />
+                        </group>
+                    </group>
+                    <group
+                        string="Administrative Resolution"
+                        attrs="{'invisible': [('resolution', '=', False)]}"
+                    >
+                        <group>
+                            <field name="resolution" />
+                            <field name="resolved_by_id" />
+                            <field name="resolved_at" />
+                        </group>
+                        <group>
+                            <field name="resolution_reason" nolabel="1" />
+                        </group>
+                    </group>
+                    <group string="Last Error">
+                        <field name="last_error_class" />
+                        <field name="last_error_message" nolabel="1" />
+                    </group>
+                    <notebook>
+                        <page string="Retry Audit">
+                            <group>
+                                <group>
+                                    <field name="retry_of_id" />
+                                    <field name="retry_requested_by_id" />
+                                    <field name="retry_requested_at" />
+                                    <field name="retry_admission_revision" />
+                                </group>
+                            </group>
+                            <field name="retry_child_ids" readonly="1">
+                                <tree create="0" edit="0" delete="0">
+                                    <field name="create_date" />
+                                    <field name="message_binding_id" />
+                                    <field name="retry_requested_by_id" />
+                                    <field name="retry_requested_at" />
+                                    <field name="state" />
+                                </tree>
+                            </field>
+                        </page>
+                        <page string="Command DTO"><field
+                                name="command_json"
+                                nolabel="1"
+                                widget="contact_center_json_viewer"
+                            /></page>
+                        <page string="Provider Request"><field
+                                name="provider_request_json"
+                                nolabel="1"
+                                widget="contact_center_json_viewer"
+                            /></page>
+                        <page string="Provider Response"><field
+                                name="provider_response_json"
+                                nolabel="1"
+                                widget="contact_center_json_viewer"
+                            /></page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_contact_center_outbox" model="ir.actions.act_window">
+        <field name="name">Outbox Commands</field>
+        <field name="res_model">contact.center.outbox.command</field>
+        <field name="view_mode">tree,form</field>
+    </record>
+
+    <record id="view_contact_center_outbox_resolution_wizard_form" model="ir.ui.view">
+        <field name="name">contact.center.outbox.resolution.wizard.form</field>
+        <field name="model">contact.center.outbox.resolution.wizard</field>
+        <field name="arch" type="xml">
+            <form string="Resolve Uncertain Outbox Command">
+                <group>
+                    <field name="outbox_command_id" force_save="1" />
+                    <field name="company_id" invisible="1" />
+                    <field name="requested_resolution" force_save="1" />
+                    <field
+                        name="reason"
+                        placeholder="Record the external evidence or explain why no send occurred..."
+                    />
+                </group>
+                <footer>
+                    <button
+                        name="action_confirm"
+                        type="object"
+                        string="Confirm Resolution"
+                        class="btn-primary"
+                    />
+                    <button string="Cancel" special="cancel" class="btn-secondary" />
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_contact_center_scheduled_message_tree" model="ir.ui.view">
+        <field name="name">contact.center.scheduled.message.tree</field>
+        <field name="model">contact.center.scheduled.message</field>
+        <field name="arch" type="xml">
+            <tree
+                create="0"
+                edit="0"
+                delete="0"
+                decoration-success="state == 'released'"
+                decoration-warning="state in ('scheduled', 'processing')"
+                decoration-danger="state == 'failed'"
+                decoration-muted="state == 'cancelled'"
+            >
+                <field name="scheduled_at" />
+                <field name="channel_id" />
+                <field name="requested_by_id" />
+                <field name="state" />
+                <field name="released_at" optional="show" />
+                <field name="message_id" optional="hide" />
+                <field name="outbox_command_id" optional="hide" />
+                <field name="queue_job_uuid" optional="hide" />
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_contact_center_scheduled_message_form" model="ir.ui.view">
+        <field name="name">contact.center.scheduled.message.form</field>
+        <field name="model">contact.center.scheduled.message</field>
+        <field name="arch" type="xml">
+            <form create="0" edit="0" delete="0">
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="channel_id" />
+                            <field
+                                name="company_id"
+                                groups="base.group_multi_company"
+                            />
+                            <field name="requested_by_id" />
+                            <field name="ui_request_id" />
+                            <field name="outbound_request_id" />
+                        </group>
+                        <group>
+                            <field name="scheduled_at" />
+                            <field name="state" />
+                            <field name="queue_job_uuid" />
+                            <field name="released_at" />
+                            <field name="cancelled_at" />
+                            <field name="cancelled_by_id" />
+                            <field name="failed_at" />
+                        </group>
+                    </group>
+                    <group string="Message">
+                        <field name="body" nolabel="1" />
+                    </group>
+                    <group>
+                        <field name="message_id" />
+                        <field name="outbox_command_id" />
+                    </group>
+                    <group
+                        string="Last Error"
+                        attrs="{'invisible': [('last_error_class', '=', False)]}"
+                    >
+                        <field name="last_error_class" />
+                        <field name="last_error_message" nolabel="1" />
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_contact_center_scheduled_messages" model="ir.actions.act_window">
+        <field name="name">Scheduled Provider Messages</field>
+        <field name="res_model">contact.center.scheduled.message</field>
+        <field name="view_mode">tree,form</field>
+    </record>
+
+    <record id="view_contact_center_internal_note_request_tree" model="ir.ui.view">
+        <field name="name">contact.center.internal.note.request.tree</field>
+        <field name="model">contact.center.internal.note.request</field>
+        <field name="arch" type="xml">
+            <tree create="0" edit="0" delete="0">
+                <field name="create_date" />
+                <field name="channel_id" />
+                <field name="requested_by_id" />
+                <field name="message_id" />
+                <field name="ui_request_id" />
+                <field name="body_sha256" optional="hide" />
+                <field name="message_body_sha256" optional="hide" />
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_contact_center_internal_note_request_form" model="ir.ui.view">
+        <field name="name">contact.center.internal.note.request.form</field>
+        <field name="model">contact.center.internal.note.request</field>
+        <field name="arch" type="xml">
+            <form create="0" edit="0" delete="0">
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="channel_id" />
+                            <field
+                                name="company_id"
+                                groups="base.group_multi_company"
+                            />
+                            <field name="requested_by_id" />
+                        </group>
+                        <group>
+                            <field name="message_id" />
+                            <field name="ui_request_id" />
+                            <field name="body_sha256" />
+                            <field name="message_body_sha256" />
+                        </group>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record
+        id="action_contact_center_internal_note_requests"
+        model="ir.actions.act_window"
+    >
+        <field name="name">Internal Note Requests</field>
+        <field name="res_model">contact.center.internal.note.request</field>
+        <field name="view_mode">tree,form</field>
+    </record>
+
+    <record id="view_contact_center_followup_request_tree" model="ir.ui.view">
+        <field name="name">contact.center.followup.request.tree</field>
+        <field name="model">contact.center.followup.request</field>
+        <field name="arch" type="xml">
+            <tree create="0" edit="0" delete="0">
+                <field name="create_date" />
+                <field name="channel_id" />
+                <field name="case_id" />
+                <field name="activity_record_id" />
+                <field name="requested_by_id" />
+                <field name="state" />
+                <field name="completed_by_id" optional="show" />
+                <field name="completed_at" optional="show" />
+                <field name="ui_request_id" optional="hide" />
+                <field name="completion_request_id" optional="hide" />
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_contact_center_followup_request_form" model="ir.ui.view">
+        <field name="name">contact.center.followup.request.form</field>
+        <field name="model">contact.center.followup.request</field>
+        <field name="arch" type="xml">
+            <form create="0" edit="0" delete="0">
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="channel_id" />
+                            <field name="case_id" />
+                            <field
+                                name="company_id"
+                                groups="base.group_multi_company"
+                            />
+                            <field name="requested_by_id" />
+                        </group>
+                        <group>
+                            <field name="activity_id" />
+                            <field name="activity_record_id" />
+                            <field name="state" />
+                            <field name="completed_by_id" />
+                            <field name="completed_at" />
+                            <field name="closed_at" />
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Request">
+                            <group>
+                                <field name="ui_request_id" />
+                                <field name="schedule_payload_sha256" />
+                            </group>
+                            <field
+                                name="activity_snapshot_json"
+                                nolabel="1"
+                                widget="contact_center_json_viewer"
+                            />
+                        </page>
+                        <page string="Completion">
+                            <group>
+                                <field name="completion_request_id" />
+                                <field name="completion_payload_sha256" />
+                            </group>
+                            <field
+                                name="completion_snapshot_json"
+                                nolabel="1"
+                                widget="contact_center_json_viewer"
+                            />
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_contact_center_followup_requests" model="ir.actions.act_window">
+        <field name="name">Follow-up Receipts</field>
+        <field name="res_model">contact.center.followup.request</field>
+        <field name="view_mode">tree,form</field>
+    </record>
+
+    <record id="view_contact_center_quick_reply_binding_tree" model="ir.ui.view">
+        <field name="name">contact.center.quick.reply.binding.tree</field>
+        <field name="model">contact.center.quick.reply.binding</field>
+        <field name="arch" type="xml">
+            <tree decoration-muted="not active" default_order="sequence, id">
+                <field name="sequence" widget="handle" />
+                <field name="shortcode_id" />
+                <field name="scope" />
+                <field name="company_id" invisible="1" />
+                <field name="company_id" groups="base.group_multi_company" />
+                <field name="team_id" optional="show" />
+                <field name="account_id" optional="show" />
+                <field name="channel_id" optional="hide" />
+                <field name="active" widget="boolean_toggle" />
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_contact_center_quick_reply_binding_form" model="ir.ui.view">
+        <field name="name">contact.center.quick.reply.binding.form</field>
+        <field name="model">contact.center.quick.reply.binding</field>
+        <field name="arch" type="xml">
+            <form>
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="shortcode_id" />
+                            <field name="active" />
+                            <field name="sequence" />
+                        </group>
+                        <group>
+                            <field name="company_id" invisible="1" />
+                            <field
+                                name="company_id"
+                                groups="base.group_multi_company"
+                            />
+                            <field name="scope" />
+                            <field
+                                name="team_id"
+                                attrs="{'invisible': [('scope', '!=', 'team')], 'required': [('scope', '=', 'team')]}"
+                            />
+                            <field
+                                name="account_id"
+                                attrs="{'invisible': [('scope', '!=', 'account')], 'required': [('scope', '=', 'account')]}"
+                            />
+                            <field
+                                name="channel_id"
+                                attrs="{'invisible': [('scope', '!=', 'channel')], 'required': [('scope', '=', 'channel')]}"
+                            />
+                        </group>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record
+        id="action_contact_center_quick_reply_bindings"
+        model="ir.actions.act_window"
+    >
+        <field name="name">Quick Reply Scopes</field>
+        <field name="res_model">contact.center.quick.reply.binding</field>
+        <field name="view_mode">tree,form</field>
+        <field name="context">{'search_default_active': 1}</field>
+    </record>
+</odoo>

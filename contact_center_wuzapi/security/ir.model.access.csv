@@ -1,0 +1,3 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_wuzapi_webhook_event_admin,contact.center.wuzapi.webhook.event admin,model_contact_center_wuzapi_webhook_event,contact_center_base.group_contact_center_admin,1,0,0,0
+access_contact_center_wuzapi_server_admin,contact.center.wuzapi.server admin,model_contact_center_wuzapi_server,contact_center_base.group_contact_center_admin,1,1,1,1

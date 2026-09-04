@@ -1,0 +1,27 @@
+{
+  "type": "Message",
+  "instanceName": "Lucas",
+  "userID": "instance-user-1",
+  "event": {
+    "Info": {
+      "Chat": "5511999999999@s.whatsapp.net",
+      "Sender": "5511999999999@s.whatsapp.net",
+      "IsFromMe": false,
+      "IsGroup": false,
+      "ID": "REACTION-EVENT-0002",
+      "Timestamp": "2026-08-21T18:11:02Z"
+    },
+    "Message": {
+      "reactionMessage": {
+        "key": {
+          "remoteJID": "5511999999999@s.whatsapp.net",
+          "fromMe": false,
+          "ID": "TARGET-MESSAGE-0001",
+          "participant": "5511999999999@s.whatsapp.net"
+        },
+        "text": "",
+        "senderTimestampMS": 1787335862000
+      }
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "type": "Picture",
+  "instanceName": "Laboratorio",
+  "userID": "group-metadata-test",
+  "event": {
+    "JID": "15550101002@s.whatsapp.net",
+    "Author": "15550101002@s.whatsapp.net",
+    "Timestamp": "2026-08-24T12:10:00Z",
+    "Remove": false,
+    "PictureID": "1787573400001"
+  }
+}

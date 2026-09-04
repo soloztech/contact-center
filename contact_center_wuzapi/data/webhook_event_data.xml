@@ -1,0 +1,414 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo noupdate="1">
+    <!-- Messages and communication -->
+    <record id="webhook_event_message" model="contact.center.wuzapi.webhook.event">
+        <field name="name">Message</field>
+        <field name="technical_name">Message</field>
+        <field name="category">communication</field>
+        <field name="sequence">10</field>
+        <field name="adapter_supported" eval="True" />
+        <field name="default_enabled" eval="True" />
+    </record>
+    <record
+        id="webhook_event_undecryptable_message"
+        model="contact.center.wuzapi.webhook.event"
+    >
+        <field name="name">UndecryptableMessage</field>
+        <field name="technical_name">UndecryptableMessage</field>
+        <field name="category">communication</field>
+        <field name="sequence">11</field>
+    </record>
+    <record id="webhook_event_receipt" model="contact.center.wuzapi.webhook.event">
+        <field name="name">Receipt</field>
+        <field name="technical_name">Receipt</field>
+        <field name="category">communication</field>
+        <field name="sequence">12</field>
+    </record>
+    <record id="webhook_event_media_retry" model="contact.center.wuzapi.webhook.event">
+        <field name="name">MediaRetry</field>
+        <field name="technical_name">MediaRetry</field>
+        <field name="category">communication</field>
+        <field name="sequence">13</field>
+    </record>
+    <record id="webhook_event_read_receipt" model="contact.center.wuzapi.webhook.event">
+        <field name="name">ReadReceipt</field>
+        <field name="technical_name">ReadReceipt</field>
+        <field name="category">communication</field>
+        <field name="sequence">14</field>
+        <field name="adapter_supported" eval="True" />
+        <field name="default_enabled" eval="True" />
+    </record>
+
+    <!-- Groups and contacts -->
+    <record id="webhook_event_group_info" model="contact.center.wuzapi.webhook.event">
+        <field name="name">GroupInfo</field>
+        <field name="technical_name">GroupInfo</field>
+        <field name="category">group_contact</field>
+        <field name="sequence">20</field>
+        <field name="adapter_supported" eval="True" />
+        <field name="default_enabled" eval="True" />
+    </record>
+    <record id="webhook_event_joined_group" model="contact.center.wuzapi.webhook.event">
+        <field name="name">JoinedGroup</field>
+        <field name="technical_name">JoinedGroup</field>
+        <field name="category">group_contact</field>
+        <field name="sequence">21</field>
+        <field name="adapter_supported" eval="True" />
+        <field name="default_enabled" eval="True" />
+    </record>
+    <record id="webhook_event_picture" model="contact.center.wuzapi.webhook.event">
+        <field name="name">Picture</field>
+        <field name="technical_name">Picture</field>
+        <field name="category">group_contact</field>
+        <field name="sequence">22</field>
+        <field name="adapter_supported" eval="True" />
+        <field name="default_enabled" eval="True" />
+    </record>
+    <record
+        id="webhook_event_blocklist_change"
+        model="contact.center.wuzapi.webhook.event"
+    >
+        <field name="name">BlocklistChange</field>
+        <field name="technical_name">BlocklistChange</field>
+        <field name="category">group_contact</field>
+        <field name="sequence">23</field>
+    </record>
+    <record id="webhook_event_blocklist" model="contact.center.wuzapi.webhook.event">
+        <field name="name">Blocklist</field>
+        <field name="technical_name">Blocklist</field>
+        <field name="category">group_contact</field>
+        <field name="sequence">24</field>
+    </record>
+
+    <!-- Connection and session -->
+    <record id="webhook_event_connected" model="contact.center.wuzapi.webhook.event">
+        <field name="name">Connected</field>
+        <field name="technical_name">Connected</field>
+        <field name="category">session</field>
+        <field name="sequence">30</field>
+        <field name="adapter_supported" eval="True" />
+        <field name="default_enabled" eval="True" />
+    </record>
+    <record id="webhook_event_disconnected" model="contact.center.wuzapi.webhook.event">
+        <field name="name">Disconnected</field>
+        <field name="technical_name">Disconnected</field>
+        <field name="category">session</field>
+        <field name="sequence">31</field>
+        <field name="adapter_supported" eval="True" />
+        <field name="default_enabled" eval="True" />
+    </record>
+    <record
+        id="webhook_event_connect_failure"
+        model="contact.center.wuzapi.webhook.event"
+    >
+        <field name="name">ConnectFailure</field>
+        <field name="technical_name">ConnectFailure</field>
+        <field name="category">session</field>
+        <field name="sequence">32</field>
+        <field name="adapter_supported" eval="True" />
+        <field name="default_enabled" eval="True" />
+    </record>
+    <record
+        id="webhook_event_keep_alive_restored"
+        model="contact.center.wuzapi.webhook.event"
+    >
+        <field name="name">KeepAliveRestored</field>
+        <field name="technical_name">KeepAliveRestored</field>
+        <field name="category">session</field>
+        <field name="sequence">33</field>
+        <field name="adapter_supported" eval="True" />
+        <field name="default_enabled" eval="True" />
+    </record>
+    <record
+        id="webhook_event_keep_alive_timeout"
+        model="contact.center.wuzapi.webhook.event"
+    >
+        <field name="name">KeepAliveTimeout</field>
+        <field name="technical_name">KeepAliveTimeout</field>
+        <field name="category">session</field>
+        <field name="sequence">34</field>
+        <field name="adapter_supported" eval="True" />
+        <field name="default_enabled" eval="True" />
+    </record>
+    <record id="webhook_event_qr_timeout" model="contact.center.wuzapi.webhook.event">
+        <field name="name">QRTimeout</field>
+        <field name="technical_name">QRTimeout</field>
+        <field name="category">session</field>
+        <field name="sequence">35</field>
+        <field name="adapter_supported" eval="True" />
+        <field name="default_enabled" eval="True" />
+    </record>
+    <record id="webhook_event_logged_out" model="contact.center.wuzapi.webhook.event">
+        <field name="name">LoggedOut</field>
+        <field name="technical_name">LoggedOut</field>
+        <field name="category">session</field>
+        <field name="sequence">36</field>
+        <field name="adapter_supported" eval="True" />
+        <field name="default_enabled" eval="True" />
+    </record>
+    <record
+        id="webhook_event_client_outdated"
+        model="contact.center.wuzapi.webhook.event"
+    >
+        <field name="name">ClientOutdated</field>
+        <field name="technical_name">ClientOutdated</field>
+        <field name="category">session</field>
+        <field name="sequence">37</field>
+        <field name="adapter_supported" eval="True" />
+        <field name="default_enabled" eval="True" />
+    </record>
+    <record
+        id="webhook_event_temporary_ban"
+        model="contact.center.wuzapi.webhook.event"
+    >
+        <field name="name">TemporaryBan</field>
+        <field name="technical_name">TemporaryBan</field>
+        <field name="category">session</field>
+        <field name="sequence">38</field>
+        <field name="adapter_supported" eval="True" />
+        <field name="default_enabled" eval="True" />
+    </record>
+    <record id="webhook_event_stream_error" model="contact.center.wuzapi.webhook.event">
+        <field name="name">StreamError</field>
+        <field name="technical_name">StreamError</field>
+        <field name="category">session</field>
+        <field name="sequence">39</field>
+        <field name="adapter_supported" eval="True" />
+        <field name="default_enabled" eval="True" />
+    </record>
+    <record
+        id="webhook_event_stream_replaced"
+        model="contact.center.wuzapi.webhook.event"
+    >
+        <field name="name">StreamReplaced</field>
+        <field name="technical_name">StreamReplaced</field>
+        <field name="category">session</field>
+        <field name="sequence">40</field>
+        <field name="adapter_supported" eval="True" />
+        <field name="default_enabled" eval="True" />
+    </record>
+    <record id="webhook_event_pair_success" model="contact.center.wuzapi.webhook.event">
+        <field name="name">PairSuccess</field>
+        <field name="technical_name">PairSuccess</field>
+        <field name="category">session</field>
+        <field name="sequence">41</field>
+    </record>
+    <record id="webhook_event_pair_error" model="contact.center.wuzapi.webhook.event">
+        <field name="name">PairError</field>
+        <field name="technical_name">PairError</field>
+        <field name="category">session</field>
+        <field name="sequence">42</field>
+    </record>
+    <record id="webhook_event_qr" model="contact.center.wuzapi.webhook.event">
+        <field name="name">QR</field>
+        <field name="technical_name">QR</field>
+        <field name="category">session</field>
+        <field name="sequence">43</field>
+    </record>
+    <record
+        id="webhook_event_qr_scanned_without_multidevice"
+        model="contact.center.wuzapi.webhook.event"
+    >
+        <field name="name">QRScannedWithoutMultidevice</field>
+        <field name="technical_name">QRScannedWithoutMultidevice</field>
+        <field name="category">session</field>
+        <field name="sequence">44</field>
+    </record>
+
+    <!-- Privacy and synchronization -->
+    <record
+        id="webhook_event_privacy_settings"
+        model="contact.center.wuzapi.webhook.event"
+    >
+        <field name="name">PrivacySettings</field>
+        <field name="technical_name">PrivacySettings</field>
+        <field name="category">privacy</field>
+        <field name="sequence">50</field>
+    </record>
+    <record
+        id="webhook_event_push_name_setting"
+        model="contact.center.wuzapi.webhook.event"
+    >
+        <field name="name">PushNameSetting</field>
+        <field name="technical_name">PushNameSetting</field>
+        <field name="category">privacy</field>
+        <field name="sequence">51</field>
+    </record>
+    <record id="webhook_event_user_about" model="contact.center.wuzapi.webhook.event">
+        <field name="name">UserAbout</field>
+        <field name="technical_name">UserAbout</field>
+        <field name="category">privacy</field>
+        <field name="sequence">52</field>
+    </record>
+    <record id="webhook_event_app_state" model="contact.center.wuzapi.webhook.event">
+        <field name="name">AppState</field>
+        <field name="technical_name">AppState</field>
+        <field name="category">sync</field>
+        <field name="sequence">60</field>
+    </record>
+    <record
+        id="webhook_event_app_state_sync_complete"
+        model="contact.center.wuzapi.webhook.event"
+    >
+        <field name="name">AppStateSyncComplete</field>
+        <field name="technical_name">AppStateSyncComplete</field>
+        <field name="category">sync</field>
+        <field name="sequence">61</field>
+    </record>
+    <record id="webhook_event_history_sync" model="contact.center.wuzapi.webhook.event">
+        <field name="name">HistorySync</field>
+        <field name="technical_name">HistorySync</field>
+        <field name="category">sync</field>
+        <field name="sequence">62</field>
+    </record>
+    <record
+        id="webhook_event_offline_sync_completed"
+        model="contact.center.wuzapi.webhook.event"
+    >
+        <field name="name">OfflineSyncCompleted</field>
+        <field name="technical_name">OfflineSyncCompleted</field>
+        <field name="category">sync</field>
+        <field name="sequence">63</field>
+    </record>
+    <record
+        id="webhook_event_offline_sync_preview"
+        model="contact.center.wuzapi.webhook.event"
+    >
+        <field name="name">OfflineSyncPreview</field>
+        <field name="technical_name">OfflineSyncPreview</field>
+        <field name="category">sync</field>
+        <field name="sequence">64</field>
+    </record>
+
+    <!-- Calls, presence and identity -->
+    <record id="webhook_event_call_offer" model="contact.center.wuzapi.webhook.event">
+        <field name="name">CallOffer</field>
+        <field name="technical_name">CallOffer</field>
+        <field name="category">call</field>
+        <field name="sequence">70</field>
+        <field name="adapter_supported" eval="True" />
+        <field name="default_enabled" eval="True" />
+    </record>
+    <record id="webhook_event_call_accept" model="contact.center.wuzapi.webhook.event">
+        <field name="name">CallAccept</field>
+        <field name="technical_name">CallAccept</field>
+        <field name="category">call</field>
+        <field name="sequence">71</field>
+        <field name="adapter_supported" eval="True" />
+        <field name="default_enabled" eval="True" />
+    </record>
+    <record
+        id="webhook_event_call_terminate"
+        model="contact.center.wuzapi.webhook.event"
+    >
+        <field name="name">CallTerminate</field>
+        <field name="technical_name">CallTerminate</field>
+        <field name="category">call</field>
+        <field name="sequence">72</field>
+        <field name="adapter_supported" eval="True" />
+        <field name="default_enabled" eval="True" />
+    </record>
+    <record
+        id="webhook_event_call_offer_notice"
+        model="contact.center.wuzapi.webhook.event"
+    >
+        <field name="name">CallOfferNotice</field>
+        <field name="technical_name">CallOfferNotice</field>
+        <field name="category">call</field>
+        <field name="sequence">73</field>
+    </record>
+    <record
+        id="webhook_event_call_relay_latency"
+        model="contact.center.wuzapi.webhook.event"
+    >
+        <field name="name">CallRelayLatency</field>
+        <field name="technical_name">CallRelayLatency</field>
+        <field name="category">call</field>
+        <field name="sequence">74</field>
+    </record>
+    <record id="webhook_event_presence" model="contact.center.wuzapi.webhook.event">
+        <field name="name">Presence</field>
+        <field name="technical_name">Presence</field>
+        <field name="category">presence</field>
+        <field name="sequence">80</field>
+    </record>
+    <record
+        id="webhook_event_chat_presence"
+        model="contact.center.wuzapi.webhook.event"
+    >
+        <field name="name">ChatPresence</field>
+        <field name="technical_name">ChatPresence</field>
+        <field name="category">presence</field>
+        <field name="sequence">81</field>
+    </record>
+    <record
+        id="webhook_event_identity_change"
+        model="contact.center.wuzapi.webhook.event"
+    >
+        <field name="name">IdentityChange</field>
+        <field name="technical_name">IdentityChange</field>
+        <field name="category">identity</field>
+        <field name="sequence">90</field>
+        <field name="adapter_supported" eval="True" />
+        <field name="default_enabled" eval="True" />
+    </record>
+    <record
+        id="webhook_event_cat_refresh_error"
+        model="contact.center.wuzapi.webhook.event"
+    >
+        <field name="name">CATRefreshError</field>
+        <field name="technical_name">CATRefreshError</field>
+        <field name="category">error</field>
+        <field name="sequence">100</field>
+    </record>
+
+    <!-- WhatsApp channels, Meta bridge and special selector -->
+    <record
+        id="webhook_event_newsletter_join"
+        model="contact.center.wuzapi.webhook.event"
+    >
+        <field name="name">NewsletterJoin</field>
+        <field name="technical_name">NewsletterJoin</field>
+        <field name="category">newsletter</field>
+        <field name="sequence">110</field>
+    </record>
+    <record
+        id="webhook_event_newsletter_leave"
+        model="contact.center.wuzapi.webhook.event"
+    >
+        <field name="name">NewsletterLeave</field>
+        <field name="technical_name">NewsletterLeave</field>
+        <field name="category">newsletter</field>
+        <field name="sequence">111</field>
+    </record>
+    <record
+        id="webhook_event_newsletter_mute_change"
+        model="contact.center.wuzapi.webhook.event"
+    >
+        <field name="name">NewsletterMuteChange</field>
+        <field name="technical_name">NewsletterMuteChange</field>
+        <field name="category">newsletter</field>
+        <field name="sequence">112</field>
+    </record>
+    <record
+        id="webhook_event_newsletter_live_update"
+        model="contact.center.wuzapi.webhook.event"
+    >
+        <field name="name">NewsletterLiveUpdate</field>
+        <field name="technical_name">NewsletterLiveUpdate</field>
+        <field name="category">newsletter</field>
+        <field name="sequence">113</field>
+    </record>
+    <record id="webhook_event_fb_message" model="contact.center.wuzapi.webhook.event">
+        <field name="name">FBMessage</field>
+        <field name="technical_name">FBMessage</field>
+        <field name="category">meta</field>
+        <field name="sequence">120</field>
+    </record>
+    <record id="webhook_event_all" model="contact.center.wuzapi.webhook.event">
+        <field name="name">All</field>
+        <field name="technical_name">All</field>
+        <field name="category">special</field>
+        <field name="sequence">999</field>
+    </record>
+</odoo>

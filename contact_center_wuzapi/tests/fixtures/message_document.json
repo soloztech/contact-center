@@ -1,0 +1,30 @@
+{
+  "type": "Message",
+  "instanceName": "Lucas",
+  "userID": "instance-user-1",
+  "event": {
+    "Info": {
+      "Chat": "100000000000001@lid",
+      "Sender": "100000000000001@lid",
+      "SenderAlt": "5511999999999@s.whatsapp.net",
+      "IsFromMe": false,
+      "IsGroup": false,
+      "ID": "DOC00000000000000000000000000001",
+      "Timestamp": "2026-08-21T18:10:04Z"
+    },
+    "Message": {
+      "documentMessage": {
+        "URL": "https://mmg.whatsapp.net/document.enc",
+        "directPath": "/document.enc",
+        "mediaKey": "ZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGQ=",
+        "fileSHA256": "ycPobVhkKKHJiWbhcbjIjIvzyQej0YjGOKVGttf+574=",
+        "fileEncSHA256": "ZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGQ=",
+        "fileLength": 16,
+        "mimetype": "application/pdf",
+        "fileName": "relatorio.pdf",
+        "caption": "Documento recebido",
+        "contextInfo": {}
+      }
+    }
+  }
+}

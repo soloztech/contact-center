@@ -1,0 +1,33 @@
+{
+  "type": "Message",
+  "instanceName": "Lucas",
+  "userID": "instance-user-1",
+  "event": {
+    "Info": {
+      "Chat": "5511999999999@s.whatsapp.net",
+      "Sender": "5511999999999@s.whatsapp.net",
+      "IsFromMe": false,
+      "IsGroup": false,
+      "ID": "TARGET-MESSAGE-EDIT-0001",
+      "Edit": "1",
+      "Timestamp": "2026-08-21T18:12:01Z"
+    },
+    "Message": {
+      "extendedTextMessage": {
+        "text": "Texto corrigido",
+        "contextInfo": {}
+      }
+    },
+    "IsEdit": true,
+    "RawMessage": {
+      "editedMessage": {
+        "message": {
+          "protocolMessage": {
+            "timestampMS": 1787335921000,
+            "mediaKey": "redundant-secret"
+          }
+        }
+      }
+    }
+  }
+}

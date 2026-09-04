@@ -1,0 +1,17 @@
+{
+  "type": "CallTerminate",
+  "instanceName": "Lucas",
+  "userID": "instance-user-1",
+  "event": {
+    "From": "5511999999999@s.whatsapp.net",
+    "Timestamp": "2026-08-29T12:00:33Z",
+    "CallCreator": "100000000000001@lid",
+    "CallCreatorAlt": "5511999999999@s.whatsapp.net",
+    "CallID": "synthetic-secret-call-id-1",
+    "GroupJID": "",
+    "Reason": "synthetic-private-reason",
+    "Data": {
+      "Payload": "U0VOVElORUwtVEVSTUlOQVRFLURBVEEtQkFTRTY0"
+    }
+  }
+}

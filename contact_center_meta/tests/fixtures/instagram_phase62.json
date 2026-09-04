@@ -1,0 +1,38 @@
+{
+  "object": "instagram",
+  "entry": [
+    {
+      "id": "200000000000001",
+      "time": 1787604000000,
+      "messaging": [
+        {
+          "sender": {
+            "id": "800000000000020"
+          },
+          "recipient": {
+            "id": "200000000000001"
+          },
+          "timestamp": 1787604000100,
+          "message": {
+            "mid": "ig_phase62_inbound",
+            "text": "Synthetic Instagram inbound"
+          }
+        },
+        {
+          "sender": {
+            "id": "200000000000001"
+          },
+          "recipient": {
+            "id": "800000000000020"
+          },
+          "timestamp": 1787604000200,
+          "message": {
+            "mid": "ig_phase62_echo",
+            "text": "Synthetic Instagram external-device echo",
+            "is_echo": true
+          }
+        }
+      ]
+    }
+  ]
+}

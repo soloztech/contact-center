@@ -1,0 +1,85 @@
+{
+  "object": "page",
+  "provider_private_root": "drop-me",
+  "entry": [
+    {
+      "id": "100000000000001",
+      "time": 1787600000000,
+      "provider_private_entry": "drop-me",
+      "messaging": [
+        {
+          "sender": {
+            "id": "900000000000001",
+            "name": "drop-me"
+          },
+          "recipient": {
+            "id": "100000000000001"
+          },
+          "timestamp": 1787600000100,
+          "message": {
+            "mid": "m_synthetic_active",
+            "text": "Synthetic Messenger message",
+            "is_echo": false,
+            "provider_private_message": "drop-me",
+            "attachments": [
+              {
+                "type": "image",
+                "payload": {
+                  "url": "https://cdn.example.invalid/signed/private",
+                  "access_token": "must-not-survive",
+                  "sticker_id": "synthetic-sticker"
+                }
+              }
+            ],
+            "referral": {
+              "ref": "synthetic-ref",
+              "source": "ADS",
+              "type": "OPEN_THREAD",
+              "ad_id": "synthetic-ad-id",
+              "source_url": "https://example.invalid/private"
+            }
+          },
+          "access_token": "must-not-survive"
+        }
+      ]
+    },
+    {
+      "id": "100000000000002",
+      "time": 1787600001000,
+      "messaging": [
+        {
+          "sender": {
+            "id": "900000000000002"
+          },
+          "recipient": {
+            "id": "100000000000002"
+          },
+          "timestamp": 1787600001100,
+          "message": {
+            "mid": "m_synthetic_inactive",
+            "text": "Synthetic inactive route"
+          }
+        }
+      ]
+    },
+    {
+      "id": "100000000000099",
+      "time": 1787600002000,
+      "messaging": [
+        {
+          "sender": {
+            "id": "900000000000099"
+          },
+          "recipient": {
+            "id": "100000000000099"
+          },
+          "timestamp": 1787600002100,
+          "message": {
+            "mid": "m_synthetic_unknown",
+            "text": "Synthetic unknown route"
+          }
+        }
+      ]
+    }
+  ]
+}

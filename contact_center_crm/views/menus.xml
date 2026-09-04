@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <menuitem
+        id="menu_cc_crm_integration"
+        name="CRM Integration"
+        parent="contact_center_base.menu_contact_center_configuration"
+        sequence="50"
+        groups="contact_center_base.group_contact_center_admin"
+    />
+    <menuitem
+        id="menu_cc_crm_mapping_inventory"
+        name="Mapping Candidates"
+        parent="menu_cc_crm_integration"
+        action="action_cc_crm_mapping_inventory"
+        sequence="5"
+    />
+    <menuitem
+        id="menu_cc_crm_pipeline_bindings"
+        name="Pipeline Bindings"
+        parent="menu_cc_crm_integration"
+        action="action_cc_crm_pipeline_bindings"
+        sequence="10"
+    />
+    <menuitem
+        id="menu_cc_crm_team_bindings"
+        name="Team Bindings"
+        parent="menu_cc_crm_integration"
+        action="action_cc_crm_team_bindings"
+        sequence="20"
+    />
+    <menuitem
+        id="menu_cc_crm_case_links"
+        name="CRM Case Links"
+        parent="menu_cc_crm_integration"
+        action="action_cc_crm_case_links"
+        sequence="30"
+    />
+</odoo>

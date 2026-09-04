@@ -1,0 +1,19 @@
+{
+  "type": "Message",
+  "instanceName": "Laboratorio",
+  "userID": "group-test-instance",
+  "event": {
+    "Info": {
+      "Chat": "status@broadcast",
+      "Sender": "5511900000003@s.whatsapp.net",
+      "IsFromMe": false,
+      "IsGroup": true,
+      "ID": "BROADCAST00000000000000000000001",
+      "PushName": "Contato de teste",
+      "Timestamp": "2026-08-24T12:03:04Z"
+    },
+    "Message": {
+      "conversation": "Atualizacao de status sanitizada"
+    }
+  }
+}

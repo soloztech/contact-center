@@ -1,0 +1,497 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <data noupdate="0">
+        <record id="module_category_contact_center" model="ir.module.category">
+            <field name="name">Contact Center</field>
+            <field name="description">Access to external customer conversations.</field>
+            <field name="sequence">35</field>
+        </record>
+
+        <record id="group_contact_center_agent" model="res.groups">
+            <field name="name">Agent</field>
+            <field name="category_id" ref="module_category_contact_center" />
+            <field name="implied_ids" eval="[(4, ref('base.group_user'))]" />
+        </record>
+
+        <record id="group_contact_center_supervisor" model="res.groups">
+            <field name="name">Supervisor</field>
+            <field name="category_id" ref="module_category_contact_center" />
+            <field name="implied_ids" eval="[(4, ref('group_contact_center_agent'))]" />
+        </record>
+
+        <record id="group_contact_center_admin" model="res.groups">
+            <field name="name">Administrator</field>
+            <field name="category_id" ref="module_category_contact_center" />
+            <field
+                name="implied_ids"
+                eval="[(4, ref('group_contact_center_supervisor'))]"
+            />
+        </record>
+
+        <record id="base.group_system" model="res.groups">
+            <field name="implied_ids" eval="[(4, ref('group_contact_center_admin'))]" />
+        </record>
+    </data>
+
+    <data noupdate="1">
+        <record id="rule_contact_center_team_company" model="ir.rule">
+            <field name="name">Contact Center teams by operational scope</field>
+            <field name="model_id" ref="model_contact_center_team" />
+            <field name="groups" eval="[(4, ref('group_contact_center_agent'))]" />
+            <field
+                name="domain_force"
+            >[('company_id', 'in', company_ids), '|', ('agent_ids', '=', user.id), ('supervisor_ids', '=', user.id)]</field>
+        </record>
+        <record id="rule_contact_center_team_owner_read" model="ir.rule">
+            <field name="name">Contact Center teams readable by inbox owner</field>
+            <field name="model_id" ref="model_contact_center_team" />
+            <field name="groups" eval="[(4, ref('group_contact_center_agent'))]" />
+            <field
+                name="domain_force"
+            >[('company_id', 'in', company_ids), ('account_ids.owner_user_id', '=', user.id)]</field>
+            <field name="perm_read" eval="True" />
+            <field name="perm_write" eval="False" />
+            <field name="perm_create" eval="False" />
+            <field name="perm_unlink" eval="False" />
+        </record>
+        <record id="rule_contact_center_tag_company" model="ir.rule">
+            <field name="name">Contact Center tags by company</field>
+            <field name="model_id" ref="model_contact_center_tag" />
+            <field name="groups" eval="[(4, ref('group_contact_center_agent'))]" />
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        </record>
+        <record id="rule_contact_center_account_company" model="ir.rule">
+            <field name="name">Contact Center accounts by operational scope</field>
+            <field name="model_id" ref="model_contact_center_account" />
+            <field name="groups" eval="[(4, ref('group_contact_center_agent'))]" />
+            <field
+                name="domain_force"
+            >[('company_id', 'in', company_ids), '|', '|', ('owner_user_id', '=', user.id), ('default_team_id.agent_ids', '=', user.id), ('default_team_id.supervisor_ids', '=', user.id)]</field>
+        </record>
+        <record id="rule_contact_center_connection_company" model="ir.rule">
+            <field name="name">Contact Center connections by account scope</field>
+            <field name="model_id" ref="model_contact_center_provider_connection" />
+            <field name="groups" eval="[(4, ref('group_contact_center_agent'))]" />
+            <field
+                name="domain_force"
+            >[('company_id', 'in', company_ids), '|', '|', ('account_id.owner_user_id', '=', user.id), ('account_id.default_team_id.agent_ids', '=', user.id), ('account_id.default_team_id.supervisor_ids', '=', user.id)]</field>
+        </record>
+        <record id="rule_contact_center_team_admin_company" model="ir.rule">
+            <field name="name">Contact Center teams by administrator company</field>
+            <field name="model_id" ref="model_contact_center_team" />
+            <field name="groups" eval="[(4, ref('group_contact_center_admin'))]" />
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        </record>
+        <record id="rule_contact_center_account_admin_company" model="ir.rule">
+            <field name="name">Contact Center accounts by administrator company</field>
+            <field name="model_id" ref="model_contact_center_account" />
+            <field name="groups" eval="[(4, ref('group_contact_center_admin'))]" />
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        </record>
+        <record id="rule_contact_center_connection_admin_company" model="ir.rule">
+            <field
+                name="name"
+            >Contact Center connections by administrator company</field>
+            <field name="model_id" ref="model_contact_center_provider_connection" />
+            <field name="groups" eval="[(4, ref('group_contact_center_admin'))]" />
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        </record>
+        <record id="rule_contact_center_identity_admin_company" model="ir.rule">
+            <field
+                name="name"
+            >Contact Center identities by administrator company</field>
+            <field name="model_id" ref="model_contact_center_identity" />
+            <field name="groups" eval="[(4, ref('group_contact_center_admin'))]" />
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        </record>
+        <record id="rule_contact_center_identity_alias_admin_company" model="ir.rule">
+            <field
+                name="name"
+            >Contact Center identity aliases by administrator company</field>
+            <field name="model_id" ref="model_contact_center_identity_alias" />
+            <field name="groups" eval="[(4, ref('group_contact_center_admin'))]" />
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        </record>
+        <record id="rule_contact_center_channel_binding_admin_company" model="ir.rule">
+            <field
+                name="name"
+            >Contact Center channel bindings by administrator company</field>
+            <field name="model_id" ref="model_contact_center_channel_binding" />
+            <field name="groups" eval="[(4, ref('group_contact_center_admin'))]" />
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        </record>
+        <record id="rule_contact_center_channel_alias_admin_company" model="ir.rule">
+            <field
+                name="name"
+            >Contact Center channel aliases by administrator company</field>
+            <field name="model_id" ref="model_contact_center_channel_alias" />
+            <field name="groups" eval="[(4, ref('group_contact_center_admin'))]" />
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        </record>
+        <record id="rule_contact_center_message_binding_admin_company" model="ir.rule">
+            <field
+                name="name"
+            >Contact Center message bindings by administrator company</field>
+            <field name="model_id" ref="model_contact_center_message_binding" />
+            <field name="groups" eval="[(4, ref('group_contact_center_admin'))]" />
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        </record>
+        <record id="rule_contact_center_delivery_admin_company" model="ir.rule">
+            <field
+                name="name"
+            >Contact Center delivery events by administrator company</field>
+            <field name="model_id" ref="model_contact_center_delivery_event" />
+            <field name="groups" eval="[(4, ref('group_contact_center_admin'))]" />
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        </record>
+        <record id="rule_contact_center_identity_company" model="ir.rule">
+            <field name="name">Contact Center identities by agent membership</field>
+            <field name="model_id" ref="model_contact_center_identity" />
+            <field name="groups" eval="[(4, ref('group_contact_center_agent'))]" />
+            <field
+                name="domain_force"
+            >[('company_id', 'in', company_ids), ('channel_binding_ids.channel_id.channel_member_ids.partner_id', '=', user.partner_id.id)]</field>
+        </record>
+        <record id="rule_contact_center_identity_alias_company" model="ir.rule">
+            <field
+                name="name"
+            >Contact Center identity aliases by agent membership</field>
+            <field name="model_id" ref="model_contact_center_identity_alias" />
+            <field name="groups" eval="[(4, ref('group_contact_center_agent'))]" />
+            <field
+                name="domain_force"
+            >[('company_id', 'in', company_ids), ('identity_id.channel_binding_ids.channel_id.channel_member_ids.partner_id', '=', user.partner_id.id), '|', '|', ('account_id.owner_user_id', '=', user.id), ('account_id.default_team_id.agent_ids', '=', user.id), ('account_id.default_team_id.supervisor_ids', '=', user.id)]</field>
+        </record>
+        <record id="rule_contact_center_identity_conflict_company" model="ir.rule">
+            <field
+                name="name"
+            >Contact Center identity conflicts by account scope</field>
+            <field name="model_id" ref="model_contact_center_identity_conflict" />
+            <field name="groups" eval="[(4, ref('group_contact_center_supervisor'))]" />
+            <field
+                name="domain_force"
+            >[('company_id', 'in', company_ids), '|', '|', ('account_id.owner_user_id', '=', user.id), ('account_id.default_team_id.agent_ids', '=', user.id), ('account_id.default_team_id.supervisor_ids', '=', user.id)]</field>
+        </record>
+        <record
+            id="rule_contact_center_identity_conflict_admin_company"
+            model="ir.rule"
+        >
+            <field
+                name="name"
+            >Contact Center identity conflicts by administrator company</field>
+            <field name="model_id" ref="model_contact_center_identity_conflict" />
+            <field name="groups" eval="[(4, ref('group_contact_center_admin'))]" />
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        </record>
+        <record id="rule_contact_center_channel_binding_company" model="ir.rule">
+            <field
+                name="name"
+            >Contact Center channel bindings by agent membership</field>
+            <field name="model_id" ref="model_contact_center_channel_binding" />
+            <field name="groups" eval="[(4, ref('group_contact_center_agent'))]" />
+            <field
+                name="domain_force"
+            >[('company_id', 'in', company_ids), ('channel_id.channel_member_ids.partner_id', '=', user.partner_id.id)]</field>
+        </record>
+        <record id="rule_contact_center_channel_alias_company" model="ir.rule">
+            <field
+                name="name"
+            >Contact Center channel aliases by agent membership</field>
+            <field name="model_id" ref="model_contact_center_channel_alias" />
+            <field name="groups" eval="[(4, ref('group_contact_center_agent'))]" />
+            <field
+                name="domain_force"
+            >[('company_id', 'in', company_ids), ('channel_binding_id.channel_id.channel_member_ids.partner_id', '=', user.partner_id.id)]</field>
+        </record>
+        <record id="rule_contact_center_group_profile_company" model="ir.rule">
+            <field name="name">Contact Center group profiles by agent membership</field>
+            <field name="model_id" ref="model_contact_center_group_profile" />
+            <field name="groups" eval="[(4, ref('group_contact_center_agent'))]" />
+            <field
+                name="domain_force"
+            >[('company_id', 'in', company_ids), ('channel_id.channel_member_ids.partner_id', '=', user.partner_id.id)]</field>
+        </record>
+        <record id="rule_contact_center_message_binding_company" model="ir.rule">
+            <field
+                name="name"
+            >Contact Center message bindings by agent membership</field>
+            <field name="model_id" ref="model_contact_center_message_binding" />
+            <field name="groups" eval="[(4, ref('group_contact_center_agent'))]" />
+            <field
+                name="domain_force"
+            >[('company_id', 'in', company_ids), ('channel_binding_id.channel_id.channel_member_ids.partner_id', '=', user.partner_id.id)]</field>
+        </record>
+        <record id="rule_contact_center_delivery_company" model="ir.rule">
+            <field
+                name="name"
+            >Contact Center delivery events by agent membership</field>
+            <field name="model_id" ref="model_contact_center_delivery_event" />
+            <field name="groups" eval="[(4, ref('group_contact_center_agent'))]" />
+            <field
+                name="domain_force"
+            >[('company_id', 'in', company_ids), ('message_binding_id.channel_binding_id.channel_id.channel_member_ids.partner_id', '=', user.partner_id.id)]</field>
+        </record>
+        <record id="rule_contact_center_media_binding_company" model="ir.rule">
+            <field name="name">Contact Center media by agent membership</field>
+            <field name="model_id" ref="model_contact_center_media_binding" />
+            <field name="groups" eval="[(4, ref('group_contact_center_agent'))]" />
+            <field
+                name="domain_force"
+            >[('company_id', 'in', company_ids), ('message_binding_id.channel_binding_id.channel_id.channel_member_ids.partner_id', '=', user.partner_id.id)]</field>
+        </record>
+        <record id="rule_contact_center_message_mutation_company" model="ir.rule">
+            <field name="name">Contact Center mutations by agent membership</field>
+            <field name="model_id" ref="model_contact_center_message_mutation" />
+            <field name="groups" eval="[(4, ref('group_contact_center_agent'))]" />
+            <field
+                name="domain_force"
+            >[('company_id', 'in', company_ids), ('target_message_binding_id.channel_binding_id.channel_id.channel_member_ids.partner_id', '=', user.partner_id.id)]</field>
+        </record>
+        <record id="rule_contact_center_identity_supervisor_company" model="ir.rule">
+            <field
+                name="name"
+            >Contact Center identities by supervisor membership</field>
+            <field name="model_id" ref="model_contact_center_identity" />
+            <field name="groups" eval="[(4, ref('group_contact_center_supervisor'))]" />
+            <field
+                name="domain_force"
+            >[('company_id', 'in', company_ids), ('channel_binding_ids.channel_id.channel_member_ids.partner_id', '=', user.partner_id.id)]</field>
+        </record>
+        <record
+            id="rule_contact_center_identity_alias_supervisor_company"
+            model="ir.rule"
+        >
+            <field
+                name="name"
+            >Contact Center identity aliases by supervisor membership</field>
+            <field name="model_id" ref="model_contact_center_identity_alias" />
+            <field name="groups" eval="[(4, ref('group_contact_center_supervisor'))]" />
+            <field
+                name="domain_force"
+            >[('company_id', 'in', company_ids), ('identity_id.channel_binding_ids.channel_id.channel_member_ids.partner_id', '=', user.partner_id.id), '|', '|', ('account_id.owner_user_id', '=', user.id), ('account_id.default_team_id.agent_ids', '=', user.id), ('account_id.default_team_id.supervisor_ids', '=', user.id)]</field>
+        </record>
+        <record
+            id="rule_contact_center_channel_binding_supervisor_company"
+            model="ir.rule"
+        >
+            <field
+                name="name"
+            >Contact Center channel bindings by supervisor membership</field>
+            <field name="model_id" ref="model_contact_center_channel_binding" />
+            <field name="groups" eval="[(4, ref('group_contact_center_supervisor'))]" />
+            <field
+                name="domain_force"
+            >[('company_id', 'in', company_ids), ('channel_id.channel_member_ids.partner_id', '=', user.partner_id.id)]</field>
+        </record>
+        <record
+            id="rule_contact_center_channel_alias_supervisor_company"
+            model="ir.rule"
+        >
+            <field
+                name="name"
+            >Contact Center channel aliases by supervisor membership</field>
+            <field name="model_id" ref="model_contact_center_channel_alias" />
+            <field name="groups" eval="[(4, ref('group_contact_center_supervisor'))]" />
+            <field
+                name="domain_force"
+            >[('company_id', 'in', company_ids), ('channel_binding_id.channel_id.channel_member_ids.partner_id', '=', user.partner_id.id)]</field>
+        </record>
+        <record
+            id="rule_contact_center_message_binding_supervisor_company"
+            model="ir.rule"
+        >
+            <field
+                name="name"
+            >Contact Center message bindings by supervisor membership</field>
+            <field name="model_id" ref="model_contact_center_message_binding" />
+            <field name="groups" eval="[(4, ref('group_contact_center_supervisor'))]" />
+            <field
+                name="domain_force"
+            >[('company_id', 'in', company_ids), ('channel_binding_id.channel_id.channel_member_ids.partner_id', '=', user.partner_id.id)]</field>
+        </record>
+        <record id="rule_contact_center_delivery_supervisor_company" model="ir.rule">
+            <field
+                name="name"
+            >Contact Center delivery events by supervisor membership</field>
+            <field name="model_id" ref="model_contact_center_delivery_event" />
+            <field name="groups" eval="[(4, ref('group_contact_center_supervisor'))]" />
+            <field
+                name="domain_force"
+            >[('company_id', 'in', company_ids), ('message_binding_id.channel_binding_id.channel_id.channel_member_ids.partner_id', '=', user.partner_id.id)]</field>
+        </record>
+        <record id="rule_contact_center_inbox_company" model="ir.rule">
+            <field name="name">Contact Center inbox by account scope</field>
+            <field name="model_id" ref="model_contact_center_inbox_event" />
+            <field name="groups" eval="[(4, ref('group_contact_center_supervisor'))]" />
+            <field
+                name="domain_force"
+            >[('company_id', 'in', company_ids), '|', '|', ('account_id.owner_user_id', '=', user.id), ('account_id.default_team_id.agent_ids', '=', user.id), ('account_id.default_team_id.supervisor_ids', '=', user.id)]</field>
+        </record>
+        <record id="rule_contact_center_outbox_company" model="ir.rule">
+            <field name="name">Contact Center outbox by account scope</field>
+            <field name="model_id" ref="model_contact_center_outbox_command" />
+            <field name="groups" eval="[(4, ref('group_contact_center_supervisor'))]" />
+            <field
+                name="domain_force"
+            >[('company_id', 'in', company_ids), '|', '|', ('account_id.owner_user_id', '=', user.id), ('account_id.default_team_id.agent_ids', '=', user.id), ('account_id.default_team_id.supervisor_ids', '=', user.id)]</field>
+        </record>
+        <record id="rule_contact_center_inbox_admin_company" model="ir.rule">
+            <field name="name">Contact Center inbox by administrator company</field>
+            <field name="model_id" ref="model_contact_center_inbox_event" />
+            <field name="groups" eval="[(4, ref('group_contact_center_admin'))]" />
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        </record>
+        <record id="rule_contact_center_outbox_admin_company" model="ir.rule">
+            <field name="name">Contact Center outbox by administrator company</field>
+            <field name="model_id" ref="model_contact_center_outbox_command" />
+            <field name="groups" eval="[(4, ref('group_contact_center_admin'))]" />
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        </record>
+        <record
+            id="rule_contact_center_outbox_resolution_wizard_admin_company"
+            model="ir.rule"
+        >
+            <field
+                name="name"
+            >Contact Center outbox resolution wizard by administrator company</field>
+            <field
+                name="model_id"
+                ref="model_contact_center_outbox_resolution_wizard"
+            />
+            <field name="groups" eval="[(4, ref('group_contact_center_admin'))]" />
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        </record>
+        <record id="rule_contact_center_media_binding_admin_company" model="ir.rule">
+            <field name="name">Contact Center media by administrator company</field>
+            <field name="model_id" ref="model_contact_center_media_binding" />
+            <field name="groups" eval="[(4, ref('group_contact_center_admin'))]" />
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        </record>
+        <record
+            id="rule_contact_center_delivery_watermark_admin_company"
+            model="ir.rule"
+        >
+            <field
+                name="name"
+            >Contact Center delivery watermarks by administrator company</field>
+            <field name="model_id" ref="model_contact_center_delivery_watermark" />
+            <field name="groups" eval="[(4, ref('group_contact_center_admin'))]" />
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        </record>
+        <record id="rule_contact_center_media_upload_admin_company" model="ir.rule">
+            <field name="name">Contact Center uploads by administrator company</field>
+            <field name="model_id" ref="model_contact_center_media_upload" />
+            <field name="groups" eval="[(4, ref('group_contact_center_admin'))]" />
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        </record>
+        <record id="rule_contact_center_message_mutation_admin_company" model="ir.rule">
+            <field name="name">Contact Center mutations by administrator company</field>
+            <field name="model_id" ref="model_contact_center_message_mutation" />
+            <field name="groups" eval="[(4, ref('group_contact_center_admin'))]" />
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        </record>
+        <record id="rule_contact_center_group_profile_admin_company" model="ir.rule">
+            <field
+                name="name"
+            >Contact Center group profiles by administrator company</field>
+            <field name="model_id" ref="model_contact_center_group_profile" />
+            <field name="groups" eval="[(4, ref('group_contact_center_admin'))]" />
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        </record>
+        <record
+            id="rule_contact_center_group_participant_admin_company"
+            model="ir.rule"
+        >
+            <field
+                name="name"
+            >Contact Center group participants by administrator company</field>
+            <field name="model_id" ref="model_contact_center_group_participant" />
+            <field name="groups" eval="[(4, ref('group_contact_center_admin'))]" />
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        </record>
+        <record
+            id="rule_contact_center_group_participant_alias_admin_company"
+            model="ir.rule"
+        >
+            <field
+                name="name"
+            >Contact Center group participant aliases by administrator company</field>
+            <field name="model_id" ref="model_contact_center_group_participant_alias" />
+            <field name="groups" eval="[(4, ref('group_contact_center_admin'))]" />
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        </record>
+        <record
+            id="rule_contact_center_group_delivery_event_admin_company"
+            model="ir.rule"
+        >
+            <field
+                name="name"
+            >Contact Center group delivery events by administrator company</field>
+            <field name="model_id" ref="model_contact_center_group_delivery_event" />
+            <field name="groups" eval="[(4, ref('group_contact_center_admin'))]" />
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        </record>
+        <record
+            id="rule_contact_center_attribution_touchpoint_admin_company"
+            model="ir.rule"
+        >
+            <field
+                name="name"
+            >Contact Center attribution touchpoints by administrator company</field>
+            <field name="model_id" ref="model_contact_center_attribution_touchpoint" />
+            <field name="groups" eval="[(4, ref('group_contact_center_admin'))]" />
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        </record>
+        <record
+            id="rule_contact_center_attribution_identifier_admin_company"
+            model="ir.rule"
+        >
+            <field
+                name="name"
+            >Contact Center attribution identifiers by administrator company</field>
+            <field name="model_id" ref="model_contact_center_attribution_identifier" />
+            <field name="groups" eval="[(4, ref('group_contact_center_admin'))]" />
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        </record>
+        <record id="rule_contact_center_quick_reply_company" model="ir.rule">
+            <field
+                name="name"
+            >Company quick replies visible to Contact Center agents</field>
+            <field name="model_id" ref="model_contact_center_quick_reply_binding" />
+            <field name="groups" eval="[(4, ref('group_contact_center_agent'))]" />
+            <field
+                name="domain_force"
+            >[('company_id', 'in', company_ids), ('scope', '=', 'company')]</field>
+        </record>
+        <record id="rule_contact_center_quick_reply_team" model="ir.rule">
+            <field name="name">Team quick replies by operational scope</field>
+            <field name="model_id" ref="model_contact_center_quick_reply_binding" />
+            <field name="groups" eval="[(4, ref('group_contact_center_agent'))]" />
+            <field
+                name="domain_force"
+            >[('company_id', 'in', company_ids), ('scope', '=', 'team'), '|', ('team_id.agent_ids', '=', user.id), ('team_id.supervisor_ids', '=', user.id)]</field>
+        </record>
+        <record id="rule_contact_center_quick_reply_account" model="ir.rule">
+            <field name="name">Inbox quick replies by operational scope</field>
+            <field name="model_id" ref="model_contact_center_quick_reply_binding" />
+            <field name="groups" eval="[(4, ref('group_contact_center_agent'))]" />
+            <field
+                name="domain_force"
+            >[('company_id', 'in', company_ids), ('scope', '=', 'account'), '|', '|', ('account_id.owner_user_id', '=', user.id), ('account_id.default_team_id.agent_ids', '=', user.id), ('account_id.default_team_id.supervisor_ids', '=', user.id)]</field>
+        </record>
+        <record id="rule_contact_center_quick_reply_channel" model="ir.rule">
+            <field name="name">Conversation quick replies by native membership</field>
+            <field name="model_id" ref="model_contact_center_quick_reply_binding" />
+            <field name="groups" eval="[(4, ref('group_contact_center_agent'))]" />
+            <field
+                name="domain_force"
+            >[('company_id', 'in', company_ids), ('scope', '=', 'channel'), ('channel_id.channel_member_ids.partner_id', '=', user.partner_id.id)]</field>
+        </record>
+        <record id="rule_contact_center_quick_reply_admin_company" model="ir.rule">
+            <field name="name">Quick replies by administrator company</field>
+            <field name="model_id" ref="model_contact_center_quick_reply_binding" />
+            <field name="groups" eval="[(4, ref('group_contact_center_admin'))]" />
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+        </record>
+    </data>
+</odoo>

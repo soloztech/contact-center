@@ -1,0 +1,30 @@
+{
+  "type": "Message",
+  "instanceName": "Instancia de teste",
+  "userID": "group-first-image-test-instance",
+  "event": {
+    "Info": {
+      "Chat": "120363888888888@g.us",
+      "Sender": "700000000000888:4@lid",
+      "SenderAlt": "999000000000888@s.whatsapp.net",
+      "IsFromMe": true,
+      "IsGroup": true,
+      "AddressingMode": "lid",
+      "ID": "F1E57A6E1234567890ABCDEF00000001",
+      "PushName": "Conta de teste",
+      "Timestamp": "2026-08-31T12:00:00Z"
+    },
+    "Message": {
+      "imageMessage": {
+        "URL": "https://mmg.whatsapp.net/dummy-first-group-image.enc",
+        "directPath": "/dummy-first-group-image.enc",
+        "mediaKey": "aWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWk=",
+        "fileLength": 4096,
+        "mimetype": "image/jpeg",
+        "caption": "Primeira imagem de teste do grupo",
+        "width": 1024,
+        "height": 768
+      }
+    }
+  }
+}

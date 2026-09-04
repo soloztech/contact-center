@@ -1,0 +1,639 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<templates xml:space="preserve">
+    <t t-name="contact_center_ui.MessageComposer" owl="1">
+        <footer
+            t-attf-class="cc-composer #{local.dragActive ? 'is-dragging' : ''} #{noteMode ? 'is-note-mode' : ''}"
+            t-on-dragover="onDragOver"
+            t-on-dragleave="onDragLeave"
+            t-on-drop="onDrop"
+        >
+            <div t-if="local.dragActive" class="cc-composer-drop-target" role="status">
+                <i class="fa fa-paperclip" aria-hidden="true" />
+                <strong>Solte o arquivo para anexar</strong>
+            </div>
+            <nav
+                t-if="hasProductivityToolbar &amp;&amp; !voiceCaptureActive"
+                class="cc-productivity-toolbar"
+                aria-label="Ferramentas da conversa"
+            >
+                <button
+                    t-if="canUseQuickReplies"
+                    type="button"
+                    t-att-class="local.tool === 'quick_reply' ? 'is-active' : ''"
+                    t-att-aria-expanded="local.tool === 'quick_reply' ? 'true' : 'false'"
+                    aria-label="Abrir respostas rápidas"
+                    title="Resposta rápida (Ctrl+Shift+Q)"
+                    t-on-click="() => this.openTool('quick_reply')"
+                >
+                    <i class="fa fa-bolt" aria-hidden="true" />
+                    <span>Resposta rápida</span>
+                </button>
+                <button
+                    t-if="canUseInternalNotes"
+                    type="button"
+                    t-att-class="noteMode ? 'cc-productivity-note is-active' : 'cc-productivity-note'"
+                    t-att-aria-pressed="noteMode ? 'true' : 'false'"
+                    aria-label="Alternar nota interna"
+                    title="Nota interna (Ctrl+Shift+N)"
+                    t-on-click="toggleNoteMode"
+                >
+                    <i class="fa fa-sticky-note-o" aria-hidden="true" />
+                    <span>Nota interna</span>
+                </button>
+                <button
+                    t-if="canUseFollowups"
+                    type="button"
+                    t-att-class="local.tool === 'followup' ? 'is-active' : ''"
+                    t-att-aria-expanded="local.tool === 'followup' ? 'true' : 'false'"
+                    aria-label="Abrir follow-ups"
+                    title="Follow-up (Ctrl+Shift+F)"
+                    t-on-click="() => this.openTool('followup')"
+                >
+                    <i class="fa fa-clock-o" aria-hidden="true" />
+                    <span>Follow-up</span>
+                </button>
+                <button
+                    t-if="canUseScheduledMessages"
+                    type="button"
+                    t-att-class="local.tool === 'schedule' ? 'is-active' : ''"
+                    t-att-aria-expanded="local.tool === 'schedule' ? 'true' : 'false'"
+                    aria-label="Abrir mensagens agendadas"
+                    title="Agendar mensagem (Ctrl+Shift+G)"
+                    t-on-click="() => this.openTool('schedule')"
+                >
+                    <i class="fa fa-calendar" aria-hidden="true" />
+                    <span>Agendar</span>
+                </button>
+            </nav>
+            <section
+                t-if="local.tool"
+                class="cc-productivity-panel"
+                t-att-aria-label="local.tool === 'quick_reply' ? 'Respostas rápidas' : local.tool === 'followup' ? 'Follow-ups' : 'Mensagens agendadas'"
+            >
+                <header class="cc-productivity-panel__header">
+                    <strong>
+                        <t t-if="local.tool === 'quick_reply'">Respostas rápidas</t>
+                        <t t-elif="local.tool === 'followup'">Follow-ups</t>
+                        <t t-else="">Agendar mensagem</t>
+                    </strong>
+                    <button
+                        type="button"
+                        class="cc-productivity-panel__close"
+                        aria-label="Fechar ferramenta"
+                        t-on-click="closeTool"
+                    ><i class="fa fa-times" aria-hidden="true" /></button>
+                </header>
+
+                <t t-if="local.tool === 'quick_reply'">
+                    <label class="cc-productivity-search">
+                        <i class="fa fa-search" aria-hidden="true" />
+                        <span class="sr-only">Buscar resposta rápida</span>
+                        <input
+                            t-ref="toolSearch"
+                            type="search"
+                            placeholder="Buscar atalho ou conteúdo"
+                            t-att-value="local.quickReplyQuery"
+                            t-on-input="onQuickReplySearch"
+                        />
+                    </label>
+                    <div
+                        t-if="quickReplies.phase === 'loading'"
+                        class="cc-productivity-state"
+                        aria-busy="true"
+                    ><i
+                            class="fa fa-circle-o-notch fa-spin"
+                            aria-hidden="true"
+                        /> Buscando…</div>
+                    <div
+                        t-elif="quickReplies.phase === 'error'"
+                        class="cc-productivity-state is-error"
+                        role="alert"
+                    >
+                        <span t-esc="quickReplies.error" />
+                        <button
+                            type="button"
+                            t-on-click="retryActiveTool"
+                        >Tentar novamente</button>
+                    </div>
+                    <div t-else="" class="cc-quick-reply-list">
+                        <button
+                            t-foreach="quickReplies.items"
+                            t-as="reply"
+                            t-key="reply.id"
+                            type="button"
+                            t-on-click="() => this.insertQuickReply(reply)"
+                        >
+                            <strong t-esc="reply.name" />
+                            <small t-if="reply.description" t-esc="reply.description" />
+                            <span t-esc="reply.body" />
+                        </button>
+                        <p
+                            t-if="!quickReplies.items.length"
+                        >Nenhuma resposta rápida encontrada.</p>
+                    </div>
+                </t>
+
+                <t t-elif="local.tool === 'followup'">
+                    <div
+                        t-if="productivity.phase === 'loading'"
+                        class="cc-productivity-state"
+                        aria-busy="true"
+                    ><i
+                            class="fa fa-circle-o-notch fa-spin"
+                            aria-hidden="true"
+                        /> Carregando…</div>
+                    <div
+                        t-elif="productivity.phase === 'error'"
+                        class="cc-productivity-state is-error"
+                        role="alert"
+                    >
+                        <span t-esc="productivity.error" />
+                        <button
+                            type="button"
+                            t-on-click="retryActiveTool"
+                        >Tentar novamente</button>
+                    </div>
+                    <t t-else="">
+                        <div class="cc-followup-form">
+                            <label
+                                class="cc-productivity-field cc-productivity-field--grow"
+                            >
+                                <span>Resumo</span>
+                                <input
+                                    type="text"
+                                    placeholder="Ex.: Retornar orçamento"
+                                    t-att-value="local.followupSummary"
+                                    t-on-input="(event) => this.onFollowupField('followupSummary', event)"
+                                />
+                            </label>
+                            <label class="cc-productivity-field">
+                                <span>Data</span>
+                                <input
+                                    type="date"
+                                    t-att-min="minimumFollowupDate"
+                                    t-att-value="local.followupDate"
+                                    t-on-input="(event) => this.onFollowupField('followupDate', event)"
+                                />
+                            </label>
+                            <label
+                                t-if="productivity.activityTypes.length"
+                                class="cc-productivity-field"
+                            >
+                                <span>Tipo</span>
+                                <select
+                                    t-on-change="(event) => this.onFollowupField('followupActivityTypeId', event)"
+                                >
+                                    <option
+                                        t-foreach="productivity.activityTypes"
+                                        t-as="activityType"
+                                        t-key="activityType.id"
+                                        t-att-value="activityType.id"
+                                        t-att-selected="local.followupActivityTypeId === activityType.id"
+                                    ><t t-esc="activityType.name" /></option>
+                                </select>
+                            </label>
+                            <label
+                                t-if="productivity.assignableUsers.length"
+                                class="cc-productivity-field"
+                            >
+                                <span>Responsável</span>
+                                <select
+                                    t-on-change="(event) => this.onFollowupField('followupUserId', event)"
+                                >
+                                    <option value="">Padrão</option>
+                                    <option
+                                        t-foreach="productivity.assignableUsers"
+                                        t-as="user"
+                                        t-key="user.id"
+                                        t-att-value="user.id"
+                                        t-att-selected="local.followupUserId === user.id"
+                                    ><t t-esc="user.name" /></option>
+                                </select>
+                            </label>
+                            <label
+                                t-if="productivity.cases.length &gt; 1"
+                                class="cc-productivity-field"
+                            >
+                                <span>Caso</span>
+                                <select
+                                    t-on-change="(event) => this.onFollowupField('followupCaseId', event)"
+                                >
+                                    <option value="">Caso padrão</option>
+                                    <option
+                                        t-foreach="productivity.cases"
+                                        t-as="caseItem"
+                                        t-key="caseItem.id"
+                                        t-att-value="caseItem.id"
+                                        t-att-selected="local.followupCaseId === caseItem.id"
+                                    ><t t-esc="caseItem.name" /></option>
+                                </select>
+                            </label>
+                            <label
+                                class="cc-productivity-field cc-productivity-field--wide"
+                            >
+                                <span>Observação opcional</span>
+                                <input
+                                    type="text"
+                                    t-att-value="local.followupNote"
+                                    t-on-input="(event) => this.onFollowupField('followupNote', event)"
+                                />
+                            </label>
+                            <button
+                                type="button"
+                                class="cc-productivity-primary"
+                                t-att-disabled="local.actionBusy"
+                                t-on-click="createFollowup"
+                            >Criar follow-up</button>
+                        </div>
+                        <div
+                            class="cc-productivity-items"
+                            aria-label="Follow-ups em aberto"
+                        >
+                            <article
+                                t-foreach="productivity.activities"
+                                t-as="activity"
+                                t-key="activity.id"
+                                t-attf-class="cc-productivity-item is-#{activity.state || 'planned'}"
+                            >
+                                <div>
+                                    <strong t-esc="activity.summary" />
+                                    <small>
+                                        <t t-esc="activity.date_deadline" />
+                                        <t t-if="activity.assigned_to"> · <t
+                                                t-esc="activity.assigned_to.name"
+                                            /></t>
+                                        <t t-if="activity.case_name"> · <t
+                                                t-esc="activity.case_name"
+                                            /></t>
+                                    </small>
+                                </div>
+                                <div
+                                    t-if="activity.can_complete"
+                                    class="cc-productivity-item__actions"
+                                >
+                                    <input
+                                        type="text"
+                                        placeholder="Resultado (opcional)"
+                                        t-att-value="local.completionFeedback[activity.id] || ''"
+                                        t-on-input="(event) => this.onCompletionFeedback(activity.id, event)"
+                                    />
+                                    <button
+                                        type="button"
+                                        t-att-disabled="local.actionBusy"
+                                        t-on-click="() => this.completeFollowup(activity.id)"
+                                    ><i
+                                            class="fa fa-check"
+                                            aria-hidden="true"
+                                        /> Concluir</button>
+                                </div>
+                            </article>
+                            <p
+                                t-if="!productivity.activities.length"
+                            >Nenhum follow-up em aberto.</p>
+                        </div>
+                    </t>
+                </t>
+
+                <t t-else="">
+                    <div
+                        t-if="productivity.phase === 'loading'"
+                        class="cc-productivity-state"
+                        aria-busy="true"
+                    ><i
+                            class="fa fa-circle-o-notch fa-spin"
+                            aria-hidden="true"
+                        /> Carregando…</div>
+                    <div
+                        t-elif="productivity.phase === 'error'"
+                        class="cc-productivity-state is-error"
+                        role="alert"
+                    >
+                        <span t-esc="productivity.error" />
+                        <button
+                            type="button"
+                            t-on-click="retryActiveTool"
+                        >Tentar novamente</button>
+                    </div>
+                    <t t-else="">
+                        <div class="cc-schedule-form">
+                            <p
+                                t-if="canCreateScheduledMessage"
+                            >O texto atual será enviado automaticamente pela caixa desta conversa.</p>
+                            <p
+                                t-else=""
+                                class="cc-schedule-form__warning"
+                                role="status"
+                            ><i
+                                    class="fa fa-info-circle"
+                                    aria-hidden="true"
+                                /> Esta conversa está somente para recebimento. Você ainda pode consultar ou cancelar agendamentos existentes.</p>
+                            <label class="cc-productivity-field">
+                                <span>Enviar em</span>
+                                <input
+                                    type="datetime-local"
+                                    t-att-min="minimumScheduledAt"
+                                    t-att-max="maximumScheduledAt"
+                                    t-att-value="local.scheduledAt"
+                                    t-att-disabled="!scheduledTextOnlyAllowed || local.actionBusy"
+                                    t-on-input="onScheduledAtInput"
+                                />
+                            </label>
+                            <button
+                                type="button"
+                                class="cc-productivity-primary"
+                                t-att-disabled="!canScheduleCurrentMessage"
+                                t-on-click="scheduleCurrentMessage"
+                            >Agendar texto</button>
+                        </div>
+                        <div
+                            class="cc-productivity-items"
+                            aria-label="Mensagens agendadas"
+                        >
+                            <article
+                                t-foreach="productivity.scheduledMessages"
+                                t-as="scheduled"
+                                t-key="scheduled.id"
+                                t-attf-class="cc-productivity-item cc-productivity-item--schedule is-#{scheduledStateMeta(scheduled.state).key}"
+                            >
+                                <div>
+                                    <div class="cc-productivity-item__heading">
+                                        <strong t-esc="scheduled.body" />
+                                        <span
+                                            t-attf-class="cc-scheduled-state is-#{scheduledStateMeta(scheduled.state).key}"
+                                        ><i
+                                                t-att-class="scheduledStateMeta(scheduled.state).icon"
+                                                aria-hidden="true"
+                                            /> <t
+                                                t-esc="scheduledStateMeta(scheduled.state).label"
+                                            /></span>
+                                    </div>
+                                    <small>
+                                        <i
+                                            class="fa fa-calendar-o"
+                                            aria-hidden="true"
+                                        /> <t
+                                            t-esc="scheduledDateLabel(scheduled.scheduled_at)"
+                                        />
+                                        <t
+                                            t-if="scheduled.requested_by &amp;&amp; scheduled.requested_by.name"
+                                        > · <t
+                                                t-esc="scheduled.requested_by.name"
+                                            /></t>
+                                    </small>
+                                    <small
+                                        t-if="scheduledErrorLabel(scheduled)"
+                                        class="cc-scheduled-error"
+                                        role="alert"
+                                    ><i
+                                            class="fa fa-exclamation-triangle"
+                                            aria-hidden="true"
+                                        /> <t
+                                            t-esc="scheduledErrorLabel(scheduled)"
+                                        /></small>
+                                </div>
+                                <button
+                                    t-if="scheduled.can_cancel"
+                                    type="button"
+                                    t-att-disabled="local.actionBusy"
+                                    t-on-click="() => this.cancelScheduledMessage(scheduled.id)"
+                                >Cancelar</button>
+                            </article>
+                            <p
+                                t-if="!productivity.scheduledMessages.length"
+                            >Nenhuma mensagem agendada.</p>
+                        </div>
+                    </t>
+                </t>
+            </section>
+            <div t-if="state.replyTo" class="cc-composer__reply">
+                <i class="fa fa-reply" aria-hidden="true" />
+                <div>
+                    <strong>Respondendo a <span t-esc="replyAuthorLabel()" /></strong>
+                    <span t-esc="replyPreview()" />
+                </div>
+                <button
+                    t-if="!noteMode"
+                    type="button"
+                    aria-label="Cancelar resposta"
+                    t-on-click="() => store.clearReply()"
+                >
+                    <i class="fa fa-times" aria-hidden="true" />
+                </button>
+            </div>
+            <div
+                t-if="local.attachment"
+                t-att-class="'cc-composer-attachment is-' + local.uploadPhase"
+                t-att-aria-busy="local.uploadPhase === 'uploading' ? 'true' : 'false'"
+            >
+                <div class="cc-composer-attachment__preview" aria-hidden="true">
+                    <img
+                        t-if="local.attachment.kind === 'image' &amp;&amp; local.attachment.previewUrl"
+                        t-att-src="local.attachment.previewUrl"
+                        alt=""
+                    />
+                    <video
+                        t-elif="local.attachment.kind === 'video' &amp;&amp; local.attachment.previewUrl"
+                        t-att-src="local.attachment.previewUrl"
+                        muted="muted"
+                        playsinline="playsinline"
+                    />
+                    <i
+                        t-else=""
+                        t-att-class="local.attachment.kind === 'audio' ? 'fa fa-volume-up' : 'fa fa-file-o'"
+                    />
+                </div>
+                <div class="cc-composer-attachment__copy">
+                    <strong t-esc="local.attachment.name" />
+                    <span t-if="local.uploadPhase === 'uploading'">
+                        <i class="fa fa-circle-o-notch fa-spin" aria-hidden="true" />
+                        Enviando arquivo…
+                    </span>
+                    <span t-elif="local.uploadPhase === 'error'" class="is-error">
+                        <i class="fa fa-exclamation-circle" aria-hidden="true" />
+                        <t t-esc="local.uploadError" />
+                    </span>
+                    <span t-else="" t-esc="attachmentLabel" />
+                    <audio
+                        t-if="local.attachment.kind === 'audio' &amp;&amp; local.attachment.previewUrl"
+                        class="cc-composer-attachment__audio"
+                        t-att-src="local.attachment.previewUrl"
+                        controls="controls"
+                        controlslist="nodownload"
+                        preload="metadata"
+                        aria-label="Ouvir prévia do áudio"
+                    />
+                    <button
+                        t-if="local.uploadPhase === 'error'"
+                        type="button"
+                        class="cc-composer-attachment__retry"
+                        t-on-click="retryUpload"
+                    >Tentar novamente</button>
+                </div>
+                <button
+                    type="button"
+                    class="cc-composer-attachment__remove"
+                    aria-label="Remover arquivo"
+                    title="Remover arquivo"
+                    t-on-click="removeAttachment"
+                >
+                    <i class="fa fa-times" aria-hidden="true" />
+                </button>
+            </div>
+            <div
+                t-elif="local.uploadError"
+                class="cc-composer-upload-error"
+                role="alert"
+            >
+                <i class="fa fa-exclamation-circle" aria-hidden="true" />
+                <span t-esc="local.uploadError" />
+                <button
+                    type="button"
+                    t-on-click="chooseAttachment"
+                >Escolher outro</button>
+                <button
+                    type="button"
+                    class="cc-composer-upload-error__dismiss"
+                    aria-label="Fechar aviso"
+                    title="Fechar aviso"
+                    t-on-click="removeAttachment"
+                >
+                    <i class="fa fa-times" aria-hidden="true" />
+                </button>
+            </div>
+            <div
+                t-if="local.recordingError"
+                class="cc-composer-upload-error"
+                role="alert"
+            >
+                <i class="fa fa-exclamation-circle" aria-hidden="true" />
+                <span t-esc="local.recordingError" />
+                <button
+                    type="button"
+                    class="cc-composer-upload-error__dismiss"
+                    aria-label="Fechar aviso de gravação"
+                    title="Fechar aviso"
+                    t-on-click="dismissVoiceRecordingError"
+                >
+                    <i class="fa fa-times" aria-hidden="true" />
+                </button>
+            </div>
+            <div
+                t-if="voiceCaptureActive"
+                class="cc-voice-recorder"
+                t-att-class="'cc-voice-recorder is-' + local.recordingPhase"
+            >
+                <button
+                    t-ref="voiceCancel"
+                    type="button"
+                    class="cc-voice-recorder__cancel"
+                    aria-label="Cancelar e descartar gravação"
+                    title="Cancelar gravação"
+                    t-on-click="cancelVoiceRecording"
+                >
+                    <i class="fa fa-trash-o" aria-hidden="true" />
+                </button>
+                <span class="cc-voice-recorder__pulse" aria-hidden="true" />
+                <div class="cc-voice-recorder__status">
+                    <strong t-esc="voiceRecordingStatus" />
+                    <span
+                        class="sr-only"
+                        aria-live="polite"
+                        t-esc="voiceRecordingStatus"
+                    />
+                    <small t-esc="voiceRecordingLimit" />
+                </div>
+                <time
+                    class="cc-voice-recorder__time"
+                    aria-label="Tempo gravado"
+                    t-esc="voiceRecordingTime"
+                />
+                <button
+                    type="button"
+                    class="cc-voice-recorder__stop"
+                    t-att-disabled="local.recordingPhase !== 'recording'"
+                    aria-label="Parar e preparar gravação de áudio"
+                    title="Concluir gravação"
+                    t-on-click="stopVoiceRecording"
+                >
+                    <i
+                        t-if="local.recordingPhase === 'processing'"
+                        class="fa fa-circle-o-notch fa-spin"
+                        aria-hidden="true"
+                    />
+                    <i t-else="" class="fa fa-stop" aria-hidden="true" />
+                </button>
+            </div>
+            <div t-else="" class="cc-composer__row">
+                <input
+                    t-ref="file"
+                    type="file"
+                    class="cc-composer__file-input"
+                    t-att-accept="acceptedFiles"
+                    tabindex="-1"
+                    t-on-change="onFileChange"
+                />
+                <button
+                    t-if="!noteMode"
+                    type="button"
+                    class="cc-attachment-button"
+                    t-att-disabled="!canAttach || voiceCaptureActive || sending || local.uploadPhase === 'uploading'"
+                    t-att-title="scheduleMode ? 'Agendamento aceita somente texto' : canAttach ? 'Anexar arquivo' : 'Este canal não permite anexos'"
+                    aria-label="Anexar arquivo"
+                    t-on-click="chooseAttachment"
+                >
+                    <i class="fa fa-paperclip" aria-hidden="true" />
+                </button>
+                <div class="cc-composer__field">
+                    <textarea
+                        t-ref="input"
+                        rows="1"
+                        maxlength="65536"
+                        t-att-placeholder="noteMode ? 'Escreva uma nota interna' : local.attachment ? 'Adicione uma legenda' : 'Escreva uma mensagem'"
+                        t-att-aria-label="noteMode ? 'Nota interna' : 'Mensagem'"
+                        t-att-value="local.body"
+                        t-att-disabled="!conversation || (!noteMode &amp;&amp; !conversation.can_send) || voiceCaptureActive"
+                        t-on-input="onInput"
+                        t-on-keydown="onKeydown"
+                        t-on-paste="onPaste"
+                    />
+                    <span class="cc-composer__hint" t-esc="composerHint" />
+                </div>
+                <button
+                    t-if="showVoiceRecordingButton"
+                    type="button"
+                    class="cc-voice-record-button"
+                    t-att-disabled="!canStartVoiceRecording"
+                    t-att-title="canStartVoiceRecording ? 'Gravar áudio' : 'A gravação não está disponível agora'"
+                    aria-label="Gravar áudio"
+                    t-on-click="startVoiceRecording"
+                >
+                    <i class="fa fa-microphone" aria-hidden="true" />
+                </button>
+                <button
+                    t-else=""
+                    type="button"
+                    t-att-class="noteMode ? 'cc-send-button is-note' : scheduleMode ? 'cc-send-button is-schedule' : 'cc-send-button'"
+                    t-att-disabled="!primaryActionAvailable"
+                    t-att-title="primaryActionTitle"
+                    t-on-click="runPrimaryAction"
+                >
+                    <span
+                        t-if="sending"
+                        class="cc-send-button__spinner"
+                        aria-hidden="true"
+                    />
+                    <i
+                        t-else=""
+                        t-att-class="noteMode ? 'fa fa-sticky-note' : scheduleMode ? 'fa fa-clock-o' : 'fa fa-paper-plane'"
+                        aria-hidden="true"
+                    />
+                    <span class="sr-only"><t
+                            t-if="noteMode"
+                        >Registrar nota interna</t><t
+                            t-elif="scheduleMode"
+                        >Agendar mensagem</t><t t-else="">Enviar mensagem</t></span>
+                </button>
+            </div>
+        </footer>
+    </t>
+</templates>

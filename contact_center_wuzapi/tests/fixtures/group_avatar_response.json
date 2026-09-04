@@ -1,0 +1,11 @@
+{
+  "code": 200,
+  "success": true,
+  "data": {
+    "url": "https://pps.whatsapp.net/v/group-avatar-test.jpg?ccb=11-4",
+    "id": "1787573400001",
+    "type": "preview",
+    "direct_path": "/v/group-avatar-test.jpg?ccb=11-4",
+    "hash": ""
+  }
+}

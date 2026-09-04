@@ -1,0 +1,44 @@
+{
+  "type": "Message",
+  "instanceName": "Lucas",
+  "userID": "instance-user-1",
+  "event": {
+    "Info": {
+      "Chat": "100000000000001@lid",
+      "Sender": "100000000000001:7@lid",
+      "SenderAlt": "5511999999999@s.whatsapp.net",
+      "RecipientAlt": "5511888888888@s.whatsapp.net",
+      "IsFromMe": false,
+      "IsGroup": false,
+      "ID": "IMG00000000000000000000000000001",
+      "PushName": "Pessoa de teste",
+      "Timestamp": "2026-08-21T18:10:01Z"
+    },
+    "Message": {
+      "imageMessage": {
+        "URL": "https://mmg.whatsapp.net/image.enc",
+        "directPath": "/image.enc",
+        "mediaKey": "aWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWk=",
+        "fileSHA256": "iBDGHcmY4u85eR52tjd7y3jWuZgJ4Irv9RupghZSns4=",
+        "fileEncSHA256": "aWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWk=",
+        "fileLength": 13,
+        "mimetype": "image/jpeg",
+        "caption": "Foto recebida",
+        "width": 640,
+        "height": 480,
+        "JPEGThumbnail": "thumbnail-must-not-persist",
+        "contextInfo": {
+          "stanzaID": "3EB00000000000000000000000000000",
+          "participant": "5511999999999@s.whatsapp.net"
+        }
+      }
+    },
+    "RawMessage": {
+      "imageMessage": {
+        "mediaKey": "redundant-secret",
+        "JPEGThumbnail": "redundant-thumbnail"
+      }
+    }
+  },
+  "base64": "inline-binary-must-not-persist"
+}

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<templates xml:space="preserve">
+    <t t-name="contact_center_base.ContactCenterJsonViewerField" owl="1">
+        <section
+            t-attf-class="cc-json-viewer #{hasValue ? 'has-value' : 'is-empty'}"
+            aria-label="Visualizador JSON"
+        >
+            <header class="cc-json-viewer__toolbar">
+                <div class="cc-json-viewer__status">
+                    <i class="fa fa-code" aria-hidden="true" />
+                    <span t-if="hasValue">JSON formatado</span>
+                    <span t-else="">Sem conteúdo</span>
+                    <small t-if="hasValue">
+                        <t t-esc="lineCount" />
+                        <t t-if="lineCount === 1"> linha</t>
+                        <t t-else=""> linhas</t>
+                        <span aria-hidden="true"> · </span>
+                        <t t-esc="sizeLabel" />
+                    </small>
+                </div>
+                <button
+                    t-if="hasValue"
+                    type="button"
+                    class="btn btn-secondary btn-sm cc-json-viewer__copy"
+                    title="Copiar JSON formatado"
+                    aria-label="Copiar JSON formatado"
+                    t-on-click="onCopy"
+                >
+                    <i t-att-class="copyIcon" aria-hidden="true" />
+                    <span aria-live="polite" t-esc="copyLabel" />
+                </button>
+            </header>
+            <div t-if="hasValue" class="cc-json-viewer__viewport">
+                <pre tabindex="0" aria-label="Conteúdo JSON formatado"><code
+                        t-esc="formattedValue"
+                    /></pre>
+            </div>
+            <div t-else="" class="cc-json-viewer__empty" role="status">
+                <span class="cc-json-viewer__empty-mark" aria-hidden="true">{ }</span>
+                <span>Nenhum JSON registrado.</span>
+            </div>
+        </section>
+    </t>
+</templates>

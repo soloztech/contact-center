@@ -1,0 +1,33 @@
+{
+  "type": "Message",
+  "instanceName": "Lucas",
+  "userID": "instance-user-1",
+  "event": {
+    "Info": {
+      "Chat": "100000000000001@lid",
+      "Sender": "100000000000001@lid",
+      "SenderAlt": "5511999999999@s.whatsapp.net",
+      "IsFromMe": false,
+      "IsGroup": false,
+      "ID": "STICKER0000000000000000000000001",
+      "Timestamp": "2026-08-30T12:00:01Z"
+    },
+    "Message": {
+      "stickerMessage": {
+        "URL": "https://mmg.whatsapp.net/sticker.enc",
+        "directPath": "/sticker.enc",
+        "mediaKey": "c3NzcnNzcnNzcnNzcnNzcnNzcnNzcnNzcnNzcnNzcnM=",
+        "fileSHA256": "W6MrvJwA2dp27BxCXNVIr9+XUHOuXIiDamyNPqZMdSw=",
+        "fileEncSHA256": "c3NzcnNzcnNzcnNzcnNzcnNzcnNzcnNzcnNzcnNzcnM=",
+        "fileLength": 15,
+        "mimetype": "image/webp",
+        "width": 512,
+        "height": 512,
+        "contextInfo": {
+          "mediaKey": "redundant-context-key",
+          "messageSecret": "redundant-message-secret"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "object": "instagram",
+  "entry": [
+    {
+      "id": "200000000000001",
+      "time": 1787680900000,
+      "messaging": [
+        {
+          "sender": {
+            "id": "800000000000040"
+          },
+          "recipient": {
+            "id": "200000000000001"
+          },
+          "timestamp": 1787680900100,
+          "referral": {
+            "ref": "phase62-instagram-standalone",
+            "source": "SHORTLINKS",
+            "type": "OPEN_THREAD"
+          }
+        }
+      ]
+    }
+  ]
+}

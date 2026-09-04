@@ -1,0 +1,338 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="view_contact_center_account_tree" model="ir.ui.view">
+        <field name="name">contact.center.account.tree</field>
+        <field name="model">contact.center.account</field>
+        <field name="arch" type="xml">
+            <tree>
+                <field name="name" />
+                <field name="platform" />
+                <field name="company_id" groups="base.group_multi_company" />
+                <field name="owner_user_id" />
+                <field name="default_team_id" />
+                <field
+                    name="auto_assignment_user_id"
+                    string="Atribuir automaticamente a"
+                    optional="show"
+                />
+                <field name="active" widget="boolean_toggle" />
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_contact_center_account_form" model="ir.ui.view">
+        <field name="name">contact.center.account.form</field>
+        <field name="model">contact.center.account</field>
+        <field name="arch" type="xml">
+            <form>
+                <sheet>
+                    <div class="oe_button_box" name="button_box" />
+                    <widget
+                        name="web_ribbon"
+                        title="Archived"
+                        bg_color="bg-danger"
+                        attrs="{'invisible': [('active', '=', True)]}"
+                    />
+                    <div class="oe_title">
+                        <label for="name" />
+                        <h1><field name="name" /></h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="active" invisible="1" />
+                            <field name="platform" />
+                            <field name="company_id" invisible="1" />
+                            <field
+                                name="company_id"
+                                groups="base.group_multi_company"
+                            />
+                            <field name="owner_user_id" options="{'no_create': True}" />
+                            <field
+                                name="default_team_id"
+                                options="{'no_quick_create': True}"
+                            />
+                            <field
+                                name="auto_assignment_eligible_user_ids"
+                                invisible="1"
+                            />
+                            <field
+                                name="auto_assignment_user_id"
+                                string="Atribuir automaticamente a"
+                                domain="[('id', 'in', auto_assignment_eligible_user_ids)]"
+                                options="{'no_create': True, 'no_open': True}"
+                            />
+                            <field name="outbound_signature_enabled" />
+                            <field name="mark_read_enabled" />
+                            <field
+                                name="reopen_resolved_on_inbound"
+                                string="Reabrir conversa ao receber mensagem"
+                            />
+                            <field
+                                name="show_deleted_message_content"
+                                string="Manter conteúdo riscado ao apagar"
+                            />
+                            <field name="group_inbound_enabled" />
+                            <field name="group_outbound_enabled" />
+                            <field name="attribution_ui_enabled" />
+                        </group>
+                        <group>
+                            <field name="external_ref" readonly="1" />
+                            <field name="own_external_identity" />
+                            <field name="technical_author_id" />
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Provider Connections">
+                            <field
+                                name="connection_ids"
+                                context="{'default_account_id': active_id}"
+                            >
+                                <tree>
+                                    <field name="name" />
+                                    <field name="adapter_key" />
+                                    <field name="role" />
+                                    <field name="state" />
+                                    <field name="inbound_active" />
+                                    <field name="outbound_active" />
+                                    <field name="active" />
+                                </tree>
+                            </field>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_contact_center_accounts" model="ir.actions.act_window">
+        <field name="name">Accounts</field>
+        <field name="res_model">contact.center.account</field>
+        <field name="view_mode">tree,form</field>
+    </record>
+
+    <record id="view_contact_center_connection_tree" model="ir.ui.view">
+        <field name="name">contact.center.provider.connection.tree</field>
+        <field name="model">contact.center.provider.connection</field>
+        <field name="arch" type="xml">
+            <tree>
+                <field name="name" />
+                <field name="account_id" />
+                <field name="adapter_key" />
+                <field name="role" />
+                <field name="state" />
+                <field name="inbound_active" />
+                <field name="outbound_active" />
+                <field name="last_success_at" />
+                <field name="active" />
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_contact_center_connection_form" model="ir.ui.view">
+        <field name="name">contact.center.provider.connection.form</field>
+        <field name="model">contact.center.provider.connection</field>
+        <field name="arch" type="xml">
+            <form>
+                <header>
+                    <button
+                        name="action_resume_onboarding"
+                        type="object"
+                        string="Continue Setup"
+                        icon="fa-magic"
+                        class="oe_highlight"
+                        groups="contact_center_base.group_contact_center_admin"
+                        attrs="{'invisible': [('onboarding_ref', '=', False)]}"
+                    />
+                    <button
+                        name="action_check_health"
+                        type="object"
+                        string="Check Health"
+                        class="oe_highlight"
+                    />
+                    <button
+                        name="action_refresh_capabilities"
+                        type="object"
+                        string="Refresh Capabilities"
+                    />
+                    <button
+                        name="action_use_as_primary"
+                        type="object"
+                        string="Use as Primary Inbound"
+                        class="oe_highlight"
+                        groups="contact_center_base.group_contact_center_admin"
+                        attrs="{'invisible': [('role', '=', 'primary'), ('active', '=', True), ('inbound_active', '=', True)]}"
+                        confirm="This transfers inbound webhook traffic to this connection. Outbound remains separately controlled. Continue?"
+                    />
+                    <button
+                        name="action_enable_outbound"
+                        type="object"
+                        string="Enable Sending"
+                        icon="fa-paper-plane"
+                        groups="contact_center_base.group_contact_center_admin"
+                        attrs="{'invisible': ['|', ('role', '!=', 'primary'), ('outbound_active', '=', True)]}"
+                    />
+                    <button
+                        name="action_disable_outbound"
+                        type="object"
+                        string="Pause Sending"
+                        icon="fa-pause"
+                        groups="contact_center_base.group_contact_center_admin"
+                        attrs="{'invisible': [('outbound_active', '=', False)]}"
+                    />
+                    <button
+                        name="action_set_standby"
+                        type="object"
+                        string="Set as Standby"
+                        groups="contact_center_base.group_contact_center_admin"
+                        attrs="{'invisible': [('role', '=', 'standby'), ('active', '=', True)]}"
+                    />
+                    <button
+                        name="action_set_migration"
+                        type="object"
+                        string="Stage for Migration"
+                        groups="contact_center_base.group_contact_center_admin"
+                        attrs="{'invisible': [('role', '=', 'migration'), ('active', '=', True)]}"
+                    />
+                    <button
+                        name="action_set_historical"
+                        type="object"
+                        string="Archive as Historical"
+                        groups="contact_center_base.group_contact_center_admin"
+                        attrs="{'invisible': [('role', '=', 'historical')]}"
+                        confirm="This disables provider traffic while preserving references and history. Continue?"
+                    />
+                </header>
+                <sheet>
+                    <widget
+                        name="web_ribbon"
+                        title="Archived"
+                        bg_color="bg-danger"
+                        attrs="{'invisible': [('active', '=', True)]}"
+                    />
+                    <div class="oe_title"><h1><field name="name" /></h1></div>
+                    <group>
+                        <group>
+                            <field name="active" invisible="1" />
+                            <field name="account_id" />
+                            <field
+                                name="company_id"
+                                readonly="1"
+                                groups="base.group_multi_company"
+                            />
+                            <field name="adapter_key" />
+                            <field name="provider_schema_version" />
+                            <field name="role" readonly="1" />
+                            <field name="onboarding_ref" invisible="1" />
+                        </group>
+                        <group>
+                            <field name="external_ref" readonly="1" />
+                            <field name="state" readonly="1" />
+                            <field name="inbound_active" readonly="1" />
+                            <field name="outbound_active" readonly="1" />
+                            <field name="last_health_at" readonly="1" />
+                            <field name="health_detail" readonly="1" />
+                            <field name="identity_mismatch_latched" readonly="1" />
+                            <field name="health_check_pending" readonly="1" />
+                            <field name="health_configuration_revision" readonly="1" />
+                            <field name="last_state_change_at" readonly="1" />
+                            <field name="next_health_check_at" readonly="1" />
+                            <field name="health_retry_not_before" readonly="1" />
+                            <field name="outbound_dispatch_not_before" readonly="1" />
+                            <field
+                                name="outbound_dispatch_not_before_reason"
+                                readonly="1"
+                            />
+                            <field name="last_success_at" readonly="1" />
+                        </group>
+                    </group>
+                    <group string="Effective Capabilities">
+                        <field name="capabilities_json" readonly="1" nolabel="1" />
+                    </group>
+                    <group string="Queue Health">
+                        <group>
+                            <field name="inbox_open_count" readonly="1" />
+                            <field name="inbox_unsupported_count" readonly="1" />
+                            <field name="inbox_unsupported_recent_count" readonly="1" />
+                            <field name="outbox_open_count" readonly="1" />
+                        </group>
+                        <group>
+                            <field name="outbox_uncertain_count" readonly="1" />
+                            <field name="oldest_pending_at" readonly="1" />
+                        </group>
+                    </group>
+                    <notebook name="provider_configuration_notebook" />
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_contact_center_connections" model="ir.actions.act_window">
+        <field name="name">Provider Connections</field>
+        <field name="res_model">contact.center.provider.connection</field>
+        <field name="view_mode">tree,form</field>
+    </record>
+
+    <record id="view_contact_center_team_tree" model="ir.ui.view">
+        <field name="name">contact.center.team.tree</field>
+        <field name="model">contact.center.team</field>
+        <field name="arch" type="xml">
+            <tree>
+                <field name="name" />
+                <field name="company_id" groups="base.group_multi_company" />
+                <field name="agent_ids" widget="many2many_tags" />
+                <field name="active" widget="boolean_toggle" />
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_contact_center_team_form" model="ir.ui.view">
+        <field name="name">contact.center.team.form</field>
+        <field name="model">contact.center.team</field>
+        <field name="arch" type="xml">
+            <form>
+                <sheet>
+                    <div class="oe_title"><h1><field name="name" /></h1></div>
+                    <group>
+                        <field name="active" />
+                        <field name="company_id" invisible="1" />
+                        <field name="company_id" groups="base.group_multi_company" />
+                    </group>
+                    <notebook>
+                        <page string="Agents"><field
+                                name="agent_ids"
+                                widget="many2many_tags"
+                            /></page>
+                        <page string="Supervisors"><field
+                                name="supervisor_ids"
+                                widget="many2many_tags"
+                            /></page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_contact_center_teams" model="ir.actions.act_window">
+        <field name="name">Teams</field>
+        <field name="res_model">contact.center.team</field>
+        <field name="view_mode">tree,form</field>
+    </record>
+
+    <record id="view_contact_center_tag_tree" model="ir.ui.view">
+        <field name="name">contact.center.tag.tree</field>
+        <field name="model">contact.center.tag</field>
+        <field name="arch" type="xml">
+            <tree editable="bottom">
+                <field name="name" />
+                <field name="color" widget="color_picker" />
+                <field name="company_id" groups="base.group_multi_company" />
+            </tree>
+        </field>
+    </record>
+
+    <record id="action_contact_center_tags" model="ir.actions.act_window">
+        <field name="name">Tags</field>
+        <field name="res_model">contact.center.tag</field>
+        <field name="view_mode">tree</field>
+    </record>
+</odoo>

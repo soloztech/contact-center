@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="action_contact_center_inbox" model="ir.actions.client">
+        <field name="name">Caixa de entrada</field>
+        <field name="tag">contact_center_ui.inbox</field>
+    </record>
+
+    <menuitem
+        id="menu_contact_center_inbox"
+        name="Caixa de entrada"
+        parent="contact_center_base.menu_contact_center_root"
+        action="action_contact_center_inbox"
+        groups="contact_center_base.group_contact_center_agent"
+        sequence="10"
+    />
+</odoo>

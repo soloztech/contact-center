@@ -1,0 +1,2 @@
+queue https://github.com/OCA/queue.git 16.0
+marketing-center https://github.com/soloztech/marketing-center.git 16.0

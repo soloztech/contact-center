@@ -1,0 +1,155 @@
+.o_cc_setup_form {
+    --cc-setup-ink: #183247;
+    --cc-setup-muted: #5d7180;
+    --cc-setup-line: #d9e4e8;
+    --cc-setup-soft: #f2f7f7;
+    --cc-setup-accent: #197a70;
+
+    .o_form_sheet_bg {
+        background: radial-gradient(
+                circle at 90% 0%,
+                rgba(25, 122, 112, 0.08),
+                transparent 34rem
+            ),
+            #edf3f4;
+    }
+
+    .o_form_sheet {
+        max-width: 1080px;
+        border: 0;
+        border-radius: 18px;
+        box-shadow: 0 18px 52px rgba(24, 50, 71, 0.1);
+        color: var(--cc-setup-ink);
+    }
+
+    .o_cc_setup_hero {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        padding: 8px 4px 28px;
+        border-bottom: 1px solid var(--cc-setup-line);
+
+        h1 {
+            margin: 0 0 4px;
+            color: var(--cc-setup-ink);
+            // Odoo 16's LibSass evaluates clamp() as a Sass function and
+            // rejects mixed viewport/root units. Emit the CSS function as-is.
+            font-size: #{"clamp(1.65rem, 2.5vw, 2.25rem)"};
+            font-weight: 700;
+            letter-spacing: -0.035em;
+        }
+
+        p {
+            margin: 0;
+            color: var(--cc-setup-muted);
+            font-size: 1rem;
+        }
+    }
+
+    .o_cc_setup_hero_icon,
+    .o_cc_setup_done_icon {
+        display: grid;
+        width: 58px;
+        height: 58px;
+        flex: 0 0 58px;
+        place-items: center;
+        border-radius: 16px;
+        background: var(--cc-setup-accent);
+        color: #fff;
+        font-size: 1.55rem;
+    }
+
+    .o_cc_setup_panel {
+        min-height: 360px;
+        padding: 34px 4px 8px;
+
+        h2 {
+            margin: 2px 0 8px;
+            color: var(--cc-setup-ink);
+            font-size: 1.55rem;
+            font-weight: 700;
+            letter-spacing: -0.025em;
+        }
+    }
+
+    .o_cc_setup_kicker {
+        color: var(--cc-setup-accent);
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+    }
+
+    .o_cc_setup_options {
+        margin-top: 22px;
+        padding: 20px 22px 8px;
+        border: 1px solid var(--cc-setup-line);
+        border-radius: 14px;
+        background: var(--cc-setup-soft);
+
+        h3 {
+            margin: 0;
+            font-size: 1rem;
+            font-weight: 700;
+        }
+    }
+
+    .o_cc_setup_done {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+
+        .o_cc_setup_done_icon {
+            margin-bottom: 18px;
+            border-radius: 50%;
+        }
+
+        p {
+            max-width: 34rem;
+            color: var(--cc-setup-muted);
+            font-size: 1.05rem;
+        }
+    }
+
+    .o_statusbar_status .o_arrow_button {
+        color: var(--cc-setup-muted);
+
+        &.btn-primary {
+            background: var(--cc-setup-accent);
+            color: #fff;
+        }
+    }
+}
+
+@media (max-width: 767.98px) {
+    .o_cc_setup_form {
+        .o_form_sheet {
+            margin: 0;
+            border-radius: 0;
+        }
+
+        .o_cc_setup_hero {
+            align-items: flex-start;
+        }
+
+        .o_cc_setup_hero_icon {
+            width: 48px;
+            height: 48px;
+            flex-basis: 48px;
+        }
+
+        .o_cc_setup_panel {
+            min-height: 0;
+            padding-top: 24px;
+        }
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .o_cc_setup_form * {
+        scroll-behavior: auto !important;
+        transition: none !important;
+    }
+}

@@ -1,0 +1,21 @@
+{
+  "type": "CallOffer",
+  "instanceName": "Lucas",
+  "userID": "instance-user-1",
+  "event": {
+    "From": "5511999999999@s.whatsapp.net",
+    "Timestamp": "2026-08-29T12:00:01Z",
+    "CallCreator": "100000000000001@lid",
+    "CallCreatorAlt": "5511999999999@s.whatsapp.net",
+    "CallID": "synthetic-secret-call-id-1",
+    "GroupJID": "",
+    "RemotePlatform": "android",
+    "RemoteVersion": "synthetic-version",
+    "Data": {
+      "Attrs": {
+        "payload": "U0VOVElORUwtQ0FMTC1EQVRBLUJBU0U2NA=="
+      },
+      "Content": ["SENTINEL-CALL-DATA-PLAINTEXT"]
+    }
+  }
+}

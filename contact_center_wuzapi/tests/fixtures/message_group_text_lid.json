@@ -1,0 +1,28 @@
+{
+  "type": "Message",
+  "instanceName": "Laboratorio",
+  "userID": "group-test-instance",
+  "event": {
+    "Info": {
+      "Chat": "120363000000001@g.us",
+      "Sender": "200000000000001:9@lid",
+      "SenderAlt": "5511900000001@s.whatsapp.net",
+      "RecipientAlt": "5511800000000@s.whatsapp.net",
+      "IsFromMe": false,
+      "IsGroup": true,
+      "AddressingMode": "lid",
+      "ID": "GROUPTEXT00000000000000000000001",
+      "PushName": "Participante de teste",
+      "Timestamp": "2026-08-24T12:01:02Z"
+    },
+    "Message": {
+      "extendedTextMessage": {
+        "text": "Mensagem sanitizada do grupo",
+        "contextInfo": {
+          "stanzaID": "GROUPTARGET000000000000000000001",
+          "participant": "5511900000002@s.whatsapp.net"
+        }
+      }
+    }
+  }
+}

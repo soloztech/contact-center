@@ -1,0 +1,316 @@
+# Translation of Odoo Server.
+# This file contains the translation of the following modules:
+# 	* contact_center_base
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Odoo Server 16.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-08-21 00:00+0000\n"
+"PO-Revision-Date: 2026-08-21 00:00+0000\n"
+"Last-Translator: Soloz Technologies\n"
+"Language-Team: Portuguese (Brazil)\n"
+"Language: pt_BR\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+#. module: contact_center_base
+#: model:ir.module.module,shortdesc:base.module_contact_center_base
+msgid "Contact Center Base"
+msgstr "Central de Atendimento"
+
+#. module: contact_center_base
+#: model:ir.module.category,name:contact_center_base.module_category_contact_center
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_root
+msgid "Contact Center"
+msgstr "Central de Atendimento"
+
+#. module: contact_center_base
+#: model_terms:ir.ui.view,arch_db:contact_center_base.view_contact_center_inbox_form
+msgid "Sanitized Envelope"
+msgstr "Envelope sanitizado"
+
+#. module: contact_center_base
+#: model_terms:ir.ui.view,arch_db:contact_center_base.view_contact_center_inbox_form
+msgid "Normalized DTO"
+msgstr "DTO normalizado"
+
+#. module: contact_center_base
+#: model_terms:ir.ui.view,arch_db:contact_center_base.view_contact_center_inbox_form
+msgid "Metadata"
+msgstr "Metadados"
+
+#. module: contact_center_base
+#: model_terms:ir.ui.view,arch_db:contact_center_base.view_contact_center_outbox_form
+msgid "Command DTO"
+msgstr "DTO do comando"
+
+#. module: contact_center_base
+#: model_terms:ir.ui.view,arch_db:contact_center_base.view_contact_center_outbox_form
+msgid "Provider Request"
+msgstr "Requisição do provedor"
+
+#. module: contact_center_base
+#: model_terms:ir.ui.view,arch_db:contact_center_base.view_contact_center_outbox_form
+msgid "Provider Response"
+msgstr "Resposta do provedor"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_account_setup_wizard__step__inbox
+msgid "Inbox"
+msgstr "Caixa"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_account_setup_wizard__provider_key
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_account_setup_wizard__step__provider
+msgid "Provider"
+msgstr "Provedor"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_account_setup_wizard__step__connect
+msgid "Connect"
+msgstr "Conectar"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_account_setup_wizard__step__ready
+msgid "Review"
+msgstr "Revisão"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_account_setup_wizard__step__done
+msgid "Ready"
+msgstr "Pronta"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_account_setup_wizard__inbox_name
+msgid "Inbox Name"
+msgstr "Nome da caixa"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_account_setup_wizard__company_id
+msgid "Company"
+msgstr "Empresa"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_account_setup_wizard__default_team_id
+msgid "Service Team"
+msgstr "Equipe de atendimento"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_account_setup_wizard__outbound_signature_enabled
+msgid "Sign Agent Messages"
+msgstr "Assinar mensagens dos atendentes"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_account_setup_wizard__mark_read_enabled
+msgid "Mark Messages as Read"
+msgstr "Marcar mensagens como lidas"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_account_setup_wizard__group_inbound_enabled
+msgid "Receive Group Messages"
+msgstr "Receber mensagens de grupos"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_account_setup_wizard__group_outbound_enabled
+msgid "Send Group Messages"
+msgstr "Enviar mensagens para grupos"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_account_setup_wizard__attribution_ui_enabled
+msgid "Show Attribution to Agents"
+msgstr "Exibir origem da campanha aos atendentes"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_account_setup_wizard__enable_outbound
+msgid "Enable Sending after Activation"
+msgstr "Habilitar envio após a ativação"
+
+#. module: contact_center_base
+#: model:ir.actions.act_window,name:contact_center_base.action_contact_center_account_setup
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_add_account
+msgid "Add Inbox"
+msgstr "Adicionar caixa"
+
+#. module: contact_center_base
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_accounts
+msgid "Inboxes"
+msgstr "Caixas"
+
+#. module: contact_center_base
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_connections
+msgid "Provider Connections"
+msgstr "Conexões dos provedores"
+
+#. module: contact_center_base
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_teams
+msgid "Teams"
+msgstr "Equipes"
+
+#. module: contact_center_base
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_tags
+msgid "Tags"
+msgstr "Marcadores"
+
+#. module: contact_center_base
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_operations
+msgid "Operations"
+msgstr "Operação"
+
+#. module: contact_center_base
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_technical
+msgid "Technical"
+msgstr "Técnico"
+
+#. module: contact_center_base
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_odoo_messaging
+msgid "Odoo Messaging"
+msgstr "Mensagens do Odoo"
+
+#. module: contact_center_base
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_technical_records
+msgid "Contact Center Records"
+msgstr "Registros da Central"
+
+#. module: contact_center_base
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_native_messages
+msgid "Messages"
+msgstr "Mensagens"
+
+#. module: contact_center_base
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_native_scheduled_messages
+msgid "Scheduled Messages"
+msgstr "Mensagens programadas"
+
+#. module: contact_center_base
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_native_guests
+msgid "Guests"
+msgstr "Convidados"
+
+#. module: contact_center_base
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_native_reactions
+msgid "Message Reactions"
+msgstr "Reações às mensagens"
+
+#. module: contact_center_base
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_native_ratings
+msgid "Ratings"
+msgstr "Avaliações"
+
+#. module: contact_center_base
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_native_link_previews
+msgid "Link Previews"
+msgstr "Pré-visualizações de links"
+
+#. module: contact_center_base
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_native_notifications
+msgid "Notifications"
+msgstr "Notificações"
+
+#. module: contact_center_base
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_native_followers
+msgid "Followers"
+msgstr "Seguidores"
+
+#. module: contact_center_base
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_native_subtypes
+msgid "Subtypes"
+msgstr "Subtipos"
+
+#. module: contact_center_base
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_native_tracking_values
+msgid "Tracking Values"
+msgstr "Valores de rastreamento"
+
+#. module: contact_center_base
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_native_activity_types
+msgid "Activity Types"
+msgstr "Tipos de atividades"
+
+#. module: contact_center_base
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_native_activities
+msgid "Activities"
+msgstr "Atividades"
+
+#. module: contact_center_base
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_inbox
+msgid "Inbox Events"
+msgstr "Eventos recebidos"
+
+#. module: contact_center_base
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_outbox
+msgid "Outbox Commands"
+msgstr "Comandos de saída"
+
+#. module: contact_center_base
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_media_downloads
+msgid "Media Downloads"
+msgstr "Downloads de mídia"
+
+#. module: contact_center_base
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_attribution_touchpoints
+msgid "Attribution Touchpoints"
+msgstr "Pontos de contato de atribuição"
+
+#. module: contact_center_base
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_configuration
+msgid "Configuration"
+msgstr "Configuração"
+
+#. module: contact_center_base
+msgid "Only Contact Center administrators can configure inboxes."
+msgstr "Somente administradores da Central de Atendimento podem configurar caixas."
+
+#. module: contact_center_base
+msgid "This guided setup belongs to another user."
+msgstr "Esta configuração guiada pertence a outro usuário."
+
+#. module: contact_center_base
+msgid "The selected company is outside your access scope."
+msgstr "A empresa selecionada está fora do seu escopo de acesso."
+
+#. module: contact_center_base
+msgid "The guided setup no longer exists."
+msgstr "A configuração guiada não existe mais."
+
+#. module: contact_center_base
+msgid "The selected provider does not support guided setup yet."
+msgstr "O provedor selecionado ainda não oferece configuração guiada."
+
+#. module: contact_center_base
+msgid "The selected provider does not support guided repair yet."
+msgstr "O provedor selecionado ainda não oferece correção guiada."
+
+#. module: contact_center_base
+msgid "Enter a name for the inbox."
+msgstr "Informe um nome para a caixa."
+
+#. module: contact_center_base
+msgid "Select an active team from the same company."
+msgstr "Selecione uma equipe ativa da mesma empresa."
+
+#. module: contact_center_base
+msgid "Add at least one agent or supervisor to the service team."
+msgstr "Adicione ao menos um atendente ou supervisor à equipe de atendimento."
+
+#. module: contact_center_base
+msgid "Select a provider."
+msgstr "Selecione um provedor."
+
+#. module: contact_center_base
+msgid "The staged connection already exists and cannot be rewritten."
+msgstr "A conexão preparada já existe e não pode ser reconfigurada."
+
+#. module: contact_center_base
+msgid "Create the staged connection first."
+msgstr "Crie primeiro a configuração segura da conexão."
+
+#. module: contact_center_base
+msgid "The staged provider connection no longer exists."
+msgstr "A conexão preparada do provedor não existe mais."
+
+#. module: contact_center_base
+msgid "The staged provider connection is not eligible for guided repair."
+msgstr "A conexão preparada do provedor não pode ser corrigida por este assistente."

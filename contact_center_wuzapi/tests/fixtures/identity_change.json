@@ -1,0 +1,10 @@
+{
+  "type": "IdentityChange",
+  "instanceName": "Lucas",
+  "userID": "instance-user-1",
+  "event": {
+    "JID": "5511999999999@s.whatsapp.net",
+    "Timestamp": "2026-08-29T12:05:00Z",
+    "Implicit": true
+  }
+}

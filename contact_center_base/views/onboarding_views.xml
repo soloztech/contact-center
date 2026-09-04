@@ -1,0 +1,245 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="view_contact_center_account_setup_wizard_form" model="ir.ui.view">
+        <field name="name">contact.center.account.setup.wizard.form</field>
+        <field name="model">contact.center.account.setup.wizard</field>
+        <field name="arch" type="xml">
+            <form class="o_cc_setup_form">
+                <header>
+                    <button
+                        name="action_back_inbox"
+                        type="object"
+                        string="Voltar"
+                        attrs="{'invisible': [('step', '!=', 'provider')]}"
+                    />
+                    <button
+                        name="action_next_provider"
+                        type="object"
+                        string="Continuar"
+                        class="btn-primary"
+                        attrs="{'invisible': ['|', ('step', '!=', 'inbox'), ('provider_available', '=', False)]}"
+                    />
+                    <button
+                        name="action_prepare"
+                        type="object"
+                        string="Criar configuração segura"
+                        class="btn-primary"
+                        attrs="{'invisible': [('step', '!=', 'provider')]}"
+                    />
+                    <button
+                        name="action_start_provider"
+                        type="object"
+                        string="Iniciar conexão"
+                        class="btn-primary"
+                        attrs="{'invisible': [('step', '!=', 'connect')]}"
+                    />
+                    <button
+                        name="action_refresh_provider"
+                        type="object"
+                        string="Atualizar estado"
+                        icon="fa-refresh"
+                        attrs="{'invisible': [('step', '!=', 'connect')]}"
+                    />
+                    <button
+                        name="action_restart_provider"
+                        type="object"
+                        string="Reiniciar conexão"
+                        icon="fa-repeat"
+                        attrs="{'invisible': [('step', '!=', 'connect')]}"
+                    />
+                    <button
+                        name="action_activate"
+                        type="object"
+                        string="Ativar caixa"
+                        class="btn-primary"
+                        attrs="{'invisible': [('step', '!=', 'ready')]}"
+                    />
+                    <button
+                        name="action_revalidate_provider"
+                        type="object"
+                        string="Revalidar conexão"
+                        icon="fa-refresh"
+                        attrs="{'invisible': [('step', '!=', 'ready')]}"
+                    />
+                    <button
+                        name="action_open_inbox"
+                        type="object"
+                        string="Abrir atendimento"
+                        class="btn-primary"
+                        attrs="{'invisible': [('step', '!=', 'done')]}"
+                    />
+                    <button
+                        name="action_add_another"
+                        type="object"
+                        string="Adicionar outra"
+                        attrs="{'invisible': [('step', '!=', 'done')]}"
+                    />
+                    <button name="action_cancel" type="object" string="Fechar" />
+                    <field
+                        name="step"
+                        widget="statusbar"
+                        statusbar_visible="inbox,provider,connect,ready,done"
+                    />
+                </header>
+                <sheet>
+                    <field name="setup_ref" invisible="1" />
+                    <field name="user_id" invisible="1" />
+                    <field name="account_id" invisible="1" />
+                    <field name="connection_id" invisible="1" />
+                    <field name="provider_available" invisible="1" />
+                    <field name="auto_assignment_eligible_user_ids" invisible="1" />
+
+                    <div class="o_cc_setup_hero">
+                        <div class="o_cc_setup_hero_icon" aria-hidden="true">
+                            <i class="fa fa-comments-o" title="Atendimento" />
+                        </div>
+                        <div>
+                            <h1>Adicionar uma nova caixa</h1>
+                            <p>
+                                Configure o atendimento e conecte o canal sem expor
+                                detalhes técnicos da integração.
+                            </p>
+                        </div>
+                    </div>
+
+                    <div
+                        class="o_cc_setup_panel"
+                        attrs="{'invisible': [('step', '!=', 'inbox')]}"
+                    >
+                        <div class="o_cc_setup_kicker">1 · Atendimento</div>
+                        <h2>Como esta caixa será usada?</h2>
+                        <p class="text-muted">
+                            O proprietário recebe acesso individual. A equipe é
+                            opcional e compartilha a caixa com todos os seus membros.
+                        </p>
+                        <group>
+                            <group>
+                                <field
+                                    name="inbox_name"
+                                    placeholder="Ex.: WhatsApp Comercial"
+                                />
+                                <field name="company_id" invisible="1" />
+                                <field
+                                    name="company_id"
+                                    groups="base.group_multi_company"
+                                    options="{'no_create': True}"
+                                />
+                                <field
+                                    name="owner_user_id"
+                                    options="{'no_create': True}"
+                                />
+                                <field
+                                    name="default_team_id"
+                                    options="{'no_quick_create': True}"
+                                />
+                                <field
+                                    name="auto_assignment_user_id"
+                                    string="Atribuir automaticamente a"
+                                    domain="[('id', 'in', auto_assignment_eligible_user_ids)]"
+                                    options="{'no_create': True, 'no_open': True}"
+                                />
+                            </group>
+                            <group>
+                                <field name="provider_key" widget="radio" />
+                            </group>
+                        </group>
+                        <div
+                            class="alert alert-warning"
+                            role="alert"
+                            attrs="{'invisible': [('provider_available', '=', True)]}"
+                        >
+                            Nenhum provedor com configuração guiada está instalado.
+                            Instale um addon de provedor antes de adicionar a caixa.
+                        </div>
+                        <div class="o_cc_setup_options">
+                            <h3>Preferências</h3>
+                            <group col="2">
+                                <field name="outbound_signature_enabled" />
+                                <field name="mark_read_enabled" />
+                                <field
+                                    name="reopen_resolved_on_inbound"
+                                    string="Reabrir conversa ao receber mensagem"
+                                />
+                                <field
+                                    name="show_deleted_message_content"
+                                    string="Manter conteúdo riscado ao apagar"
+                                />
+                                <field name="group_inbound_enabled" />
+                                <field name="group_outbound_enabled" />
+                                <field name="attribution_ui_enabled" />
+                            </group>
+                        </div>
+                    </div>
+
+                    <div
+                        class="o_cc_setup_panel"
+                        attrs="{'invisible': [('step', '!=', 'provider')]}"
+                    >
+                        <div class="o_cc_setup_kicker">2 · Provedor</div>
+                        <h2>Prepare a conexão</h2>
+                        <p class="text-muted">
+                            As credenciais permanecem no addon do provedor. A caixa
+                            ainda não recebe nem envia mensagens nesta etapa.
+                        </p>
+                        <div name="provider_setup_slot" />
+                    </div>
+
+                    <div
+                        class="o_cc_setup_panel"
+                        attrs="{'invisible': [('step', '!=', 'connect')]}"
+                    >
+                        <div class="o_cc_setup_kicker">3 · Conectar</div>
+                        <h2>Conecte a conta no provedor</h2>
+                        <p class="text-muted">
+                            A ativação continua bloqueada enquanto sessão, identidade,
+                            assinatura e callback não estiverem confirmados.
+                        </p>
+                        <div name="provider_connect_slot" />
+                    </div>
+
+                    <div
+                        class="o_cc_setup_panel"
+                        attrs="{'invisible': [('step', '!=', 'ready')]}"
+                    >
+                        <div class="o_cc_setup_kicker">4 · Revisão</div>
+                        <h2>Conexão verificada</h2>
+                        <div class="alert alert-success" role="status">
+                            O provedor confirmou a sessão, a identidade e o callback.
+                            Agora você pode ativar esta caixa.
+                        </div>
+                        <group>
+                            <field name="account_id" readonly="1" />
+                            <field name="connection_id" readonly="1" />
+                            <field name="enable_outbound" />
+                        </group>
+                        <p class="text-muted">
+                            O envio tem uma validação própria e só será habilitado se
+                            também estiver seguro.
+                        </p>
+                    </div>
+
+                    <div
+                        class="o_cc_setup_panel o_cc_setup_done"
+                        attrs="{'invisible': [('step', '!=', 'done')]}"
+                    >
+                        <div class="o_cc_setup_done_icon" aria-hidden="true">
+                            <i class="fa fa-check" title="Concluído" />
+                        </div>
+                        <h2>Caixa pronta para atendimento</h2>
+                        <p>
+                            A conexão foi promovida com segurança e já pode aparecer
+                            na Central de Atendimento.
+                        </p>
+                    </div>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_contact_center_account_setup" model="ir.actions.act_window">
+        <field name="name">Adicionar caixa</field>
+        <field name="res_model">contact.center.account.setup.wizard</field>
+        <field name="view_mode">form</field>
+        <field name="target">current</field>
+    </record>
+</odoo>

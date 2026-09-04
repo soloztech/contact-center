@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="view_contact_center_attribution_touchpoint_tree" model="ir.ui.view">
+        <field name="name">contact.center.attribution.touchpoint.tree</field>
+        <field name="model">contact.center.attribution.touchpoint</field>
+        <field name="arch" type="xml">
+            <tree create="0" edit="0" delete="0">
+                <field name="occurred_at" />
+                <field name="account_id" />
+                <field name="provider_connection_id" />
+                <field name="touchpoint_type" />
+                <field name="evidence_level" />
+                <field name="source_platform" />
+                <field name="utm_campaign" optional="show" />
+                <field name="enrichment_state" optional="hide" />
+                <field name="conflict_state" optional="show" />
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_contact_center_attribution_touchpoint_form" model="ir.ui.view">
+        <field name="name">contact.center.attribution.touchpoint.form</field>
+        <field name="model">contact.center.attribution.touchpoint</field>
+        <field name="arch" type="xml">
+            <form create="0" edit="0" delete="0">
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="public_ref" />
+                            <field name="company_id" />
+                            <field name="account_id" />
+                            <field name="provider_connection_id" />
+                            <field name="inbox_event_id" />
+                            <field name="occurred_at" />
+                            <field name="captured_at" />
+                        </group>
+                        <group>
+                            <field name="touchpoint_type" />
+                            <field name="evidence_level" />
+                            <field name="network" />
+                            <field name="source_platform" />
+                            <field name="source_type" />
+                            <field name="enrichment_state" />
+                            <field name="conflict_state" />
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Projection">
+                            <group>
+                                <group>
+                                    <field name="message_binding_id" />
+                                    <field name="channel_binding_id" />
+                                    <field name="identity_id" />
+                                    <field name="conversation_ref" />
+                                    <field name="external_message_id" />
+                                </group>
+                                <group>
+                                    <field name="entry_point_source" />
+                                    <field name="entry_point_app" />
+                                    <field name="entry_point_delay_seconds" />
+                                    <field name="conversion_source" />
+                                    <field name="conversion_delay_seconds" />
+                                </group>
+                            </group>
+                        </page>
+                        <page string="Campaign">
+                            <group>
+                                <field name="source_url" />
+                                <field name="utm_source" />
+                                <field name="utm_medium" />
+                                <field name="utm_campaign" />
+                                <field name="utm_content" />
+                                <field name="utm_term" />
+                                <field name="creative_media_type" />
+                                <field name="show_ad_attribution" />
+                                <field name="always_show_ad_attribution" />
+                            </group>
+                        </page>
+                        <page string="External Identifiers">
+                            <field name="identifier_ids" nolabel="1">
+                                <tree create="0" edit="0" delete="0">
+                                    <field name="namespace" />
+                                    <field name="role" />
+                                    <field name="value" />
+                                    <field name="source_field" />
+                                    <field name="observed_at" />
+                                </tree>
+                            </field>
+                        </page>
+                        <page string="Technical Evidence">
+                            <field
+                                name="provider_extensions_json"
+                                nolabel="1"
+                                widget="contact_center_json_viewer"
+                            />
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record
+        id="action_contact_center_attribution_touchpoints"
+        model="ir.actions.act_window"
+    >
+        <field name="name">Attribution Touchpoints</field>
+        <field name="res_model">contact.center.attribution.touchpoint</field>
+        <field name="view_mode">tree,form</field>
+    </record>
+</odoo>

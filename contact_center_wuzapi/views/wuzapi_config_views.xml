@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="view_contact_center_connection_form_wuzapi" model="ir.ui.view">
+        <field name="name">contact.center.provider.connection.form.wuzapi</field>
+        <field name="model">contact.center.provider.connection</field>
+        <field
+            name="inherit_id"
+            ref="contact_center_base.view_contact_center_connection_form"
+        />
+        <field name="arch" type="xml">
+            <xpath
+                expr="//notebook[@name='provider_configuration_notebook']"
+                position="inside"
+            >
+                <page
+                    name="wuzapi_configuration"
+                    string="WuzAPI"
+                    attrs="{'invisible': [('adapter_key', '!=', 'wuzapi')]}"
+                >
+                    <group>
+                        <group string="Endpoint">
+                            <field
+                                name="wuzapi_base_url"
+                                placeholder="https://wuzapi.example.com"
+                                attrs="{'required': [('adapter_key', '=', 'wuzapi')]}"
+                            />
+                            <field name="wuzapi_provider_version" />
+                            <field name="wuzapi_provider_commit" />
+                        </group>
+                        <group string="Credentials">
+                            <field
+                                name="wuzapi_api_token"
+                                password="True"
+                                attrs="{'required': [('adapter_key', '=', 'wuzapi')]}"
+                            />
+                            <field
+                                name="wuzapi_hmac_secret"
+                                password="True"
+                                attrs="{'required': [('adapter_key', '=', 'wuzapi')], 'readonly': [('wuzapi_hmac_secret', '!=', False)]}"
+                            />
+                            <button
+                                name="action_wuzapi_rotate_hmac"
+                                type="object"
+                                string="Rotate HMAC"
+                                icon="fa-key"
+                                groups="contact_center_base.group_contact_center_admin"
+                                confirm="WuzAPI and Odoo will receive a newly generated webhook key. Continue?"
+                            />
+                            <field name="wuzapi_hmac_rotation_state" />
+                            <field name="wuzapi_hmac_rotated_at" />
+                            <field name="wuzapi_hmac_previous_valid_until" />
+                            <field
+                                name="wuzapi_hmac_rotation_last_error"
+                                attrs="{'invisible': [('wuzapi_hmac_rotation_state', '!=', 'error')]}"
+                            />
+                            <field name="wuzapi_webhook_key" password="True" />
+                            <field
+                                name="wuzapi_webhook_url"
+                                widget="CopyClipboardChar"
+                            />
+                        </group>
+                    </group>
+                    <group string="Webhook Events">
+                        <field
+                            name="wuzapi_webhook_event_ids"
+                            widget="many2many_tags"
+                            options="{'no_create': True, 'no_create_edit': True, 'no_open': True}"
+                            nolabel="1"
+                        />
+                        <div class="oe_button_box" name="wuzapi_webhook_buttons">
+                            <button
+                                name="action_wuzapi_apply_webhook"
+                                type="object"
+                                string="Apply and Verify"
+                                class="oe_highlight"
+                                icon="fa-cloud-upload"
+                                groups="contact_center_base.group_contact_center_admin"
+                            />
+                            <button
+                                name="action_wuzapi_refresh_webhook"
+                                type="object"
+                                string="Check WuzAPI"
+                                icon="fa-refresh"
+                                groups="contact_center_base.group_contact_center_admin"
+                            />
+                        </div>
+                        <group>
+                            <field name="wuzapi_webhook_sync_state" />
+                            <field name="wuzapi_webhook_url_matches" />
+                            <field name="wuzapi_webhook_last_sync_at" />
+                            <field
+                                name="wuzapi_webhook_last_error"
+                                attrs="{'invisible': [('wuzapi_webhook_sync_state', '!=', 'error')]}"
+                            />
+                        </group>
+                        <group string="Last Observed Selection">
+                            <field
+                                name="wuzapi_webhook_observed_events_json"
+                                widget="contact_center_json_viewer"
+                                nolabel="1"
+                            />
+                        </group>
+                    </group>
+                    <div class="alert alert-info" role="alert">
+                        Apply queues replacement of the event subscriptions on this
+                        WuzAPI instance and a verification read-back. Check WuzAPI queues
+                        only the read-back. Events not yet normalized by the adapter
+                        remain sanitized and auditable as unsupported Inbox events.
+                        High-volume synchronization or presence events should be enabled
+                        only for a deliberate test.
+                    </div>
+                </page>
+            </xpath>
+        </field>
+    </record>
+</odoo>

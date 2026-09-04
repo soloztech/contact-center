@@ -1,0 +1,60 @@
+{
+  "object": "page",
+  "entry": [
+    {
+      "id": "100000000000001",
+      "time": 1787603000000,
+      "messaging": [
+        {
+          "sender": {
+            "id": "900000000000020"
+          },
+          "recipient": {
+            "id": "100000000000001"
+          },
+          "timestamp": 1787603000100,
+          "message": {
+            "mid": "m_phase62_messenger_inbound",
+            "text": "Synthetic Messenger inbound",
+            "referral": {
+              "ref": "phase62-campaign-ref",
+              "source": "ADS",
+              "type": "OPEN_THREAD",
+              "ad_id": "phase62-meta-ad"
+            }
+          }
+        },
+        {
+          "sender": {
+            "id": "900000000000020"
+          },
+          "recipient": {
+            "id": "100000000000001"
+          },
+          "timestamp": 1787603000200,
+          "message": {
+            "mid": "m_phase62_messenger_reply",
+            "text": "Synthetic Messenger reply",
+            "reply_to": {
+              "mid": "m_phase62_messenger_inbound"
+            }
+          }
+        },
+        {
+          "sender": {
+            "id": "100000000000001"
+          },
+          "recipient": {
+            "id": "900000000000020"
+          },
+          "timestamp": 1787603000300,
+          "message": {
+            "mid": "m_phase62_messenger_echo",
+            "text": "Synthetic Messenger external-device echo",
+            "is_echo": true
+          }
+        }
+      ]
+    }
+  ]
+}

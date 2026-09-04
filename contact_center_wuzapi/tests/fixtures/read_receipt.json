@@ -1,0 +1,21 @@
+{
+  "type": "ReadReceipt",
+  "state": "Delivered",
+  "instanceName": "Lucas",
+  "userID": "instance-user-1",
+  "event": {
+    "Chat": "5511999999999@s.whatsapp.net",
+    "Sender": "5511999999999@s.whatsapp.net",
+    "IsFromMe": false,
+    "IsGroup": false,
+    "AddressingMode": "pn",
+    "SenderAlt": "100000000000001@lid",
+    "RecipientAlt": "100000000000002@lid",
+    "MessageIDs": [
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+    ],
+    "Timestamp": "2026-08-21T18:10:15Z",
+    "Type": "delivered"
+  }
+}

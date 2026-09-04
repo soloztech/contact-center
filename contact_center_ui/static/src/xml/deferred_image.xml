@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<templates xml:space="preserve">
+    <t t-name="contact_center_ui.DeferredImage" owl="1">
+        <img
+            t-ref="image"
+            t-att-class="imageClass"
+            t-att-src="state.activeSrc"
+            t-att-alt="altText"
+            t-att-aria-hidden="ariaHidden"
+            t-att-data-load-state="state.status"
+            t-att-width="imageWidth"
+            t-att-height="imageHeight"
+            loading="eager"
+            decoding="async"
+            fetchpriority="low"
+            t-on-load="onLoad"
+            t-on-error="onError"
+        />
+    </t>
+</templates>

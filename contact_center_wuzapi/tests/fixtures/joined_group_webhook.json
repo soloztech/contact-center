@@ -1,0 +1,37 @@
+{
+  "type": "JoinedGroup",
+  "instanceName": "Laboratorio",
+  "userID": "group-metadata-test",
+  "event": {
+    "Reason": "invite",
+    "Type": "",
+    "CreateKey": "",
+    "Sender": "15550101002@s.whatsapp.net",
+    "SenderPN": "15550101002@s.whatsapp.net",
+    "Notify": "Grupo de validação",
+    "JID": "120363000000901@g.us",
+    "OwnerJID": "15550101001@s.whatsapp.net",
+    "OwnerPN": "15550101001@s.whatsapp.net",
+    "Name": "Grupo de validação",
+    "NameSetAt": "2026-08-24T11:00:00Z",
+    "NameSetBy": "15550101001@s.whatsapp.net",
+    "NameSetByPN": "15550101001@s.whatsapp.net",
+    "GroupCreated": "2026-08-24T11:00:00Z",
+    "ParticipantVersionID": "1787572800002",
+    "Participants": [
+      {
+        "JID": "700000000000001@lid",
+        "PhoneNumber": "15550101001@s.whatsapp.net",
+        "LID": "700000000000001@lid",
+        "IsAdmin": true,
+        "IsSuperAdmin": true,
+        "DisplayName": "",
+        "Error": 0,
+        "AddRequest": null
+      }
+    ],
+    "ParticipantCount": 3,
+    "MemberAddMode": "admin_add",
+    "Suspended": false
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "type": "Message",
+  "instanceName": "Lucas",
+  "userID": "instance-user-1",
+  "event": {
+    "Info": {
+      "Chat": "100000000000001@lid",
+      "Sender": "100000000000001@lid",
+      "SenderAlt": "5511999999999@s.whatsapp.net",
+      "IsFromMe": false,
+      "IsGroup": false,
+      "ID": "AUD00000000000000000000000000001",
+      "PushName": "Pessoa de teste",
+      "Timestamp": "2026-08-21T18:10:02Z"
+    },
+    "Message": {
+      "audioMessage": {
+        "URL": "https://mmg.whatsapp.net/audio.enc",
+        "directPath": "/audio.enc",
+        "mediaKey": "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=",
+        "fileSHA256": "yMiacoP+EFg/CGGe0Z1oXaSjHS03jhXSSH5iRT8CIwU=",
+        "fileEncSHA256": "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=",
+        "fileLength": 13,
+        "mimetype": "audio/ogg; codecs=opus",
+        "PTT": true,
+        "seconds": 7,
+        "waveform": "waveform-must-not-persist",
+        "contextInfo": {}
+      }
+    }
+  }
+}

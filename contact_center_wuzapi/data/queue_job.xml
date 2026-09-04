@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo noupdate="0">
+    <record
+        id="queue_job_channel_contact_center_wuzapi_webhook"
+        model="queue.job.channel"
+    >
+        <field name="name">wuzapi_webhook</field>
+        <field
+            name="parent_id"
+            ref="contact_center_base.queue_job_channel_contact_center"
+        />
+    </record>
+
+    <record
+        id="queue_job_function_contact_center_wuzapi_webhook"
+        model="queue.job.function"
+    >
+        <field
+            name="model_id"
+            ref="contact_center_base.model_contact_center_provider_connection"
+        />
+        <field name="method">_job_wuzapi_sync_webhook</field>
+        <field
+            name="channel_id"
+            ref="queue_job_channel_contact_center_wuzapi_webhook"
+        />
+        <field
+            name="retry_pattern"
+            eval="{1: 10, 2: 30, 3: 60, 4: 120, 5: 300, 6: 600, 7: 1200, 8: 1800}"
+        />
+    </record>
+
+    <record
+        id="queue_job_function_contact_center_wuzapi_hmac_rotation"
+        model="queue.job.function"
+    >
+        <field
+            name="model_id"
+            ref="contact_center_base.model_contact_center_provider_connection"
+        />
+        <field name="method">_job_wuzapi_rotate_hmac</field>
+        <field
+            name="channel_id"
+            ref="queue_job_channel_contact_center_wuzapi_webhook"
+        />
+        <field
+            name="retry_pattern"
+            eval="{1: 10, 2: 30, 3: 60, 4: 120, 5: 300, 6: 600, 7: 1200, 8: 1800}"
+        />
+    </record>
+
+    <record
+        id="queue_job_function_contact_center_wuzapi_hmac_cleanup"
+        model="queue.job.function"
+    >
+        <field
+            name="model_id"
+            ref="contact_center_base.model_contact_center_provider_connection"
+        />
+        <field name="method">_job_wuzapi_expire_hmac_previous</field>
+        <field
+            name="channel_id"
+            ref="queue_job_channel_contact_center_wuzapi_webhook"
+        />
+    </record>
+
+    <record
+        id="queue_job_function_contact_center_wuzapi_onboarding"
+        model="queue.job.function"
+    >
+        <field
+            name="model_id"
+            ref="contact_center_base.model_contact_center_provider_connection"
+        />
+        <field name="method">_job_wuzapi_onboarding</field>
+        <field
+            name="channel_id"
+            ref="queue_job_channel_contact_center_wuzapi_webhook"
+        />
+        <field name="retry_pattern" eval="{1: 10, 2: 30, 3: 60, 4: 120, 5: 300}" />
+    </record>
+</odoo>

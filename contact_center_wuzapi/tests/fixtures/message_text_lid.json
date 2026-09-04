@@ -1,0 +1,28 @@
+{
+  "type": "Message",
+  "instanceName": "Lucas",
+  "userID": "instance-user-1",
+  "event": {
+    "Info": {
+      "Chat": "100000000000001@lid",
+      "Sender": "100000000000001:7@lid",
+      "IsFromMe": false,
+      "IsGroup": false,
+      "AddressingMode": "lid",
+      "SenderAlt": "5511999999999@s.whatsapp.net",
+      "RecipientAlt": "5511888888888@s.whatsapp.net",
+      "ID": "3EB0A1B2C3D4E5F60718293A4B5C6D7E",
+      "PushName": "Pessoa de teste",
+      "Timestamp": "2026-08-21T15:04:05-03:00"
+    },
+    "Message": {
+      "extendedTextMessage": {
+        "text": "Mensagem de teste 👍",
+        "contextInfo": {
+          "stanzaID": "3EB00000000000000000000000000000",
+          "participant": "5511999999999@s.whatsapp.net"
+        }
+      }
+    }
+  }
+}

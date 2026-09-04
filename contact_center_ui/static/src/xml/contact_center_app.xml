@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<templates xml:space="preserve">
+    <t t-name="contact_center_ui.ContactCenterApp" owl="1">
+        <div t-att-class="shellClass">
+            <t t-if="store.state.phase === 'loading'">
+                <main class="cc-foundation-state" aria-busy="true">
+                    <div class="cc-foundation-state__signal" aria-hidden="true">
+                        <span />
+                        <span />
+                        <span />
+                    </div>
+                    <p class="cc-kicker">Central de atendimento</p>
+                    <h1>Preparando sua mesa de operações…</h1>
+                    <p>Carregando contas, filas e permissões da API local.</p>
+                </main>
+            </t>
+            <t t-elif="store.state.phase === 'error'">
+                <main
+                    class="cc-foundation-state cc-foundation-state--error"
+                    role="alert"
+                >
+                    <span class="cc-foundation-state__code">API / indisponível</span>
+                    <h1>A caixa de entrada não respondeu.</h1>
+                    <p>Verifique o módulo base e tente carregar novamente.</p>
+                    <button
+                        type="button"
+                        class="cc-primary-button"
+                        t-on-click="() => store.loadBootstrap()"
+                    >
+                        Tentar novamente
+                    </button>
+                </main>
+            </t>
+            <t t-elif="store.state.phase === 'unsupported'">
+                <main
+                    class="cc-foundation-state cc-foundation-state--error"
+                    role="alert"
+                >
+                    <span class="cc-foundation-state__code">DTO / incompatível</span>
+                    <h1>A interface e a API usam contratos diferentes.</h1>
+                    <p>Atualize os addons do Contact Center em conjunto.</p>
+                </main>
+            </t>
+            <t t-else="">
+                <ConversationList store="store" state="store.state" />
+
+                <main class="cc-conversation-stage">
+                    <t t-if="selectedConversation">
+                        <header class="cc-conversation-header">
+                            <button
+                                type="button"
+                                class="cc-icon-button cc-mobile-back"
+                                aria-label="Voltar para conversas"
+                                t-on-click="() => store.showConversationList()"
+                            >
+                                <i class="fa fa-arrow-left" aria-hidden="true" />
+                            </button>
+                            <div class="cc-conversation-header__identity">
+                                <p class="cc-kicker">
+                                    <span t-esc="selectedConversation.platform" />
+                                    <t t-if="selectedConversation.provider"> · <span
+                                            t-esc="selectedConversation.provider"
+                                        /></t>
+                                    <span aria-hidden="true"> · </span>
+                                    <span
+                                        class="cc-conversation-header__inbox"
+                                        t-att-title="selectedInboxName"
+                                    >
+                                        <i class="fa fa-inbox" aria-hidden="true" />
+                                        <span t-esc="selectedInboxName" />
+                                    </span>
+                                </p>
+                                <div class="cc-conversation-header__title">
+                                    <h2 t-esc="selectedConversationName" />
+                                    <span
+                                        t-if="conversationPolicy.is_group"
+                                        class="cc-kind-badge"
+                                    >Grupo</span>
+                                </div>
+                                <button
+                                    t-if="store.hasConnectionHealth"
+                                    type="button"
+                                    t-attf-class="cc-mobile-fleet-status cc-mobile-fleet-status--#{fleetMeta.state}"
+                                    t-att-data-health-revision="store.state.connectionHealthRevision"
+                                    t-att-title="fleetMeta.description"
+                                    t-att-aria-label="fleetAriaLabel"
+                                    t-on-click="openConnectionHealth"
+                                >
+                                    <span
+                                        t-attf-class="cc-health-marker cc-health-marker--#{fleetMeta.state}"
+                                        aria-hidden="true"
+                                    />
+                                    <span t-esc="mobileFleetLabel" />
+                                </button>
+                            </div>
+                            <div class="cc-conversation-header__actions">
+                                <button
+                                    t-if="resolutionAction"
+                                    type="button"
+                                    t-attf-class="cc-resolution-action cc-resolution-action--#{resolutionAction.tone}"
+                                    t-att-disabled="ui.stateChanging"
+                                    t-on-click="applyResolutionAction"
+                                >
+                                    <i
+                                        t-attf-class="fa #{resolutionAction.icon}"
+                                        aria-hidden="true"
+                                    />
+                                    <span t-esc="resolutionAction.label" />
+                                </button>
+                                <button
+                                    t-if="!selectedConversation.responsible"
+                                    type="button"
+                                    class="cc-claim-button"
+                                    t-on-click="() => store.claimConversation()"
+                                >
+                                    <i class="fa fa-hand-paper-o" aria-hidden="true" />
+                                    <span>Assumir</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="cc-icon-button cc-details-toggle"
+                                    t-att-aria-pressed="store.state.detailsOpen ? 'true' : 'false'"
+                                    t-att-aria-label="store.state.detailsOpen ? 'Ocultar detalhes' : 'Mostrar detalhes'"
+                                    t-on-click="() => store.toggleDetails()"
+                                >
+                                    <i
+                                        class="fa fa-address-card-o"
+                                        aria-hidden="true"
+                                    />
+                                </button>
+                            </div>
+                        </header>
+                        <ConversationTimeline store="store" state="store.state" />
+                        <MessageComposer
+                            t-if="canShowComposer"
+                            store="store"
+                            state="store.state"
+                            conversation="selectedConversation"
+                        />
+                        <footer
+                            t-else=""
+                            class="cc-read-only-composer"
+                            role="status"
+                            aria-live="polite"
+                        >
+                            <span
+                                class="cc-read-only-composer__icon"
+                                aria-hidden="true"
+                            ><i class="fa fa-users" /></span>
+                            <span class="cc-read-only-composer__copy">
+                                <strong>Envio não habilitado</strong>
+                                <small
+                                >As mensagens do grupo chegam aqui; o envio pode ser liberado por caixa quando houver suporte do provider.</small>
+                            </span>
+                        </footer>
+                    </t>
+                    <section t-else="" class="cc-no-selection">
+                        <div class="cc-no-selection__glyph" aria-hidden="true">
+                            <span />
+                            <span />
+                            <span />
+                        </div>
+                        <p class="cc-kicker">Posto disponível</p>
+                        <h2>Escolha uma conversa para começar.</h2>
+                        <p>A timeline e o composer serão abertos neste espaço.</p>
+                    </section>
+                </main>
+
+                <ContactPanel
+                    t-if="selectedConversation"
+                    store="store"
+                    state="store.state"
+                    conversation="selectedConversation"
+                />
+            </t>
+        </div>
+    </t>
+</templates>

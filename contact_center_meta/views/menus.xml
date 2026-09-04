@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <menuitem
+        id="menu_contact_center_meta_webhooks"
+        name="Meta Webhooks"
+        parent="contact_center_base.menu_contact_center_technical_records"
+        sequence="90"
+        groups="base.group_system"
+    />
+    <menuitem
+        id="menu_contact_center_meta_webhook_endpoints"
+        name="Endpoints"
+        parent="menu_contact_center_meta_webhooks"
+        action="meta_webhook_base.action_meta_webhook_endpoint"
+        sequence="10"
+        groups="base.group_system"
+    />
+    <menuitem
+        id="menu_contact_center_meta_webhook_pages"
+        name="Pages and Assets"
+        parent="menu_contact_center_meta_webhooks"
+        action="meta_webhook_base.action_meta_webhook_page"
+        sequence="20"
+        groups="base.group_system"
+    />
+    <menuitem
+        id="menu_contact_center_meta_webhook_deliveries"
+        name="Deliveries"
+        parent="menu_contact_center_meta_webhooks"
+        action="meta_webhook_base.action_meta_webhook_delivery"
+        sequence="30"
+        groups="base.group_system"
+    />
+</odoo>

@@ -1,0 +1,21 @@
+{
+  "type": "Message",
+  "instanceName": "Laboratorio",
+  "userID": "group-test-instance",
+  "event": {
+    "Info": {
+      "Chat": "120363000000001@g.us",
+      "Sender": "5511800000000:3@s.whatsapp.net",
+      "SenderAlt": "300000000000001@lid",
+      "IsFromMe": true,
+      "IsGroup": true,
+      "AddressingMode": "lid",
+      "ID": "12345678123456781234567812345678",
+      "PushName": "Conta do laboratorio",
+      "Timestamp": "2026-08-24T12:03:04Z"
+    },
+    "Message": {
+      "conversation": "Texto enviado pelo proprio numero"
+    }
+  }
+}

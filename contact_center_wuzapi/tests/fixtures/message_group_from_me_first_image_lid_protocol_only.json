@@ -1,0 +1,26 @@
+{
+  "type": "Message",
+  "instanceName": "Instancia de teste",
+  "userID": "group-first-image-test-instance",
+  "event": {
+    "Info": {
+      "Chat": "120363888888888@g.us",
+      "Sender": "700000000000888:4@lid",
+      "SenderAlt": "999000000000888@s.whatsapp.net",
+      "IsFromMe": true,
+      "IsGroup": true,
+      "AddressingMode": "lid",
+      "ID": "F1E57A6E1234567890ABCDEF00000001",
+      "PushName": "Conta de teste",
+      "Timestamp": "2026-08-31T12:00:00Z"
+    },
+    "Message": {
+      "senderKeyDistributionMessage": {
+        "groupID": "120363888888888@g.us"
+      },
+      "messageContextInfo": {
+        "deviceListMetadataVersion": 2
+      }
+    }
+  }
+}

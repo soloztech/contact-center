@@ -1,0 +1,26 @@
+{
+  "type": "Message",
+  "instanceName": "Lucas",
+  "userID": "instance-user-1",
+  "event": {
+    "Info": {
+      "Chat": "5511999999999@s.whatsapp.net",
+      "Sender": "5511999999999@s.whatsapp.net",
+      "IsFromMe": false,
+      "IsGroup": false,
+      "ID": "DELETE-EVENT-0001",
+      "Timestamp": "2026-08-21T18:13:01Z"
+    },
+    "Message": {
+      "protocolMessage": {
+        "type": 0,
+        "key": {
+          "remoteJID": "5511999999999@s.whatsapp.net",
+          "fromMe": true,
+          "ID": "TARGET-MESSAGE-DELETE-0001",
+          "participant": "5511888888888@s.whatsapp.net"
+        }
+      }
+    }
+  }
+}

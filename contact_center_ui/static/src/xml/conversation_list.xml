@@ -1,0 +1,454 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<templates xml:space="preserve">
+    <t t-name="contact_center_ui.ConversationList" owl="1">
+        <aside class="cc-inbox-panel" aria-label="Conversas">
+            <header class="cc-inbox-header">
+                <div>
+                    <p class="cc-kicker">Soloz / atendimento</p>
+                    <div class="cc-inbox-title">
+                        <h1>Conversas</h1>
+                        <span t-esc="displayedCount" />
+                    </div>
+                </div>
+                <div class="cc-inbox-header__status">
+                    <button
+                        t-if="state.attention &amp;&amp; state.attention.available"
+                        type="button"
+                        t-attf-class="cc-attention-beacon cc-attention-beacon--#{attentionMeta.state}"
+                        t-att-title="attentionMeta.label"
+                        t-att-aria-label="attentionMeta.label"
+                        t-on-click="enableAttention"
+                    >
+                        <i t-att-class="attentionMeta.icon" aria-hidden="true" />
+                        <b
+                            t-if="state.attention.unseen"
+                            t-esc="state.attention.unseen"
+                            aria-hidden="true"
+                        />
+                    </button>
+                    <span
+                        t-attf-class="cc-realtime-status cc-realtime-status--#{realtimeMeta.state}"
+                        role="status"
+                        t-att-title="realtimeMeta.description"
+                        t-att-aria-label="realtimeMeta.description"
+                    >
+                        <i class="fa fa-bolt" aria-hidden="true" />
+                        <span t-esc="realtimeMeta.label" />
+                    </span>
+                    <ConnectionHealth
+                        t-if="store.hasConnectionHealth"
+                        store="store"
+                        state="state"
+                    />
+                    <button
+                        t-if="compactMode"
+                        type="button"
+                        class="cc-icon-button cc-compact-tools-toggle"
+                        t-att-aria-expanded="ui.compactToolsOpen ? 'true' : 'false'"
+                        aria-controls="cc-inbox-tools"
+                        t-att-title="ui.compactToolsOpen ? 'Ocultar filtros' : 'Mostrar filtros'"
+                        t-att-aria-label="ui.compactToolsOpen ? 'Ocultar filtros da lista' : 'Mostrar filtros da lista'"
+                        t-on-click="toggleCompactTools"
+                    >
+                        <i class="fa fa-filter" aria-hidden="true" />
+                    </button>
+                    <button
+                        type="button"
+                        class="cc-icon-button cc-inbox-density-toggle"
+                        t-att-title="densityButtonLabel"
+                        t-att-aria-label="densityButtonLabel"
+                        t-att-aria-pressed="compactMode ? 'true' : 'false'"
+                        t-on-click="toggleDensity"
+                    >
+                        <i
+                            t-attf-class="fa #{compactMode ? 'fa-angle-double-right' : 'fa-angle-double-left'}"
+                            aria-hidden="true"
+                        />
+                    </button>
+                </div>
+            </header>
+
+            <div
+                id="cc-inbox-tools"
+                t-attf-class="cc-inbox-tools #{compactMode &amp;&amp; !ui.compactToolsOpen ? 'is-compact-collapsed' : ''}"
+            >
+                <label class="cc-search-field">
+                    <i class="fa fa-search" aria-hidden="true" />
+                    <span class="sr-only">Buscar conversas</span>
+                    <input
+                        t-ref="search"
+                        type="search"
+                        placeholder="Nome, contato ou número"
+                        t-att-value="state.filters.query"
+                        t-on-input="onSearchInput"
+                    />
+                </label>
+
+                <div class="cc-triage-row">
+                    <div
+                        class="cc-responsibility-tabs"
+                        role="group"
+                        aria-label="Filtrar por responsável"
+                    >
+                        <button
+                            type="button"
+                            t-att-class="state.filters.responsibility === 'all' ? 'is-active' : ''"
+                            t-att-aria-pressed="state.filters.responsibility === 'all' ? 'true' : 'false'"
+                            t-on-click="() => this.setResponsibility('all')"
+                        >Todas</button>
+                        <button
+                            type="button"
+                            t-att-class="state.filters.responsibility === 'mine' ? 'is-active' : ''"
+                            t-att-aria-pressed="state.filters.responsibility === 'mine' ? 'true' : 'false'"
+                            t-on-click="() => this.setResponsibility('mine')"
+                        >Minhas</button>
+                        <button
+                            type="button"
+                            t-att-class="state.filters.responsibility === 'unassigned' ? 'is-active' : ''"
+                            t-att-aria-pressed="state.filters.responsibility === 'unassigned' ? 'true' : 'false'"
+                            t-on-click="() => this.setResponsibility('unassigned')"
+                        >Não atribuídas</button>
+                    </div>
+                    <div
+                        class="cc-list-view-switch"
+                        role="group"
+                        aria-label="Visualização"
+                    >
+                        <button
+                            type="button"
+                            t-att-class="ui.view === 'grouped' ? 'is-active' : ''"
+                            t-att-aria-pressed="ui.view === 'grouped' ? 'true' : 'false'"
+                            aria-label="Agrupar por caixa"
+                            title="Agrupar por caixa"
+                            t-on-click="() => this.setView('grouped')"
+                        ><i class="fa fa-sitemap" aria-hidden="true" /></button>
+                        <button
+                            type="button"
+                            t-att-class="ui.view === 'flat' ? 'is-active' : ''"
+                            t-att-aria-pressed="ui.view === 'flat' ? 'true' : 'false'"
+                            aria-label="Lista sem agrupamento"
+                            title="Lista sem agrupamento"
+                            t-on-click="() => this.setView('flat')"
+                        ><i class="fa fa-list-ul" aria-hidden="true" /></button>
+                    </div>
+                </div>
+
+                <div class="cc-inbox-tabs" role="group" aria-label="Filtrar por estado">
+                    <button
+                        type="button"
+                        t-att-class="!state.filters.state ? 'is-active' : ''"
+                        t-att-aria-pressed="!state.filters.state ? 'true' : 'false'"
+                        t-on-click="() => this.onStateClick(false)"
+                    >Todas</button>
+                    <button
+                        t-foreach="store.conversationStates"
+                        t-as="item"
+                        t-key="item.key"
+                        type="button"
+                        t-attf-class="cc-state-option cc-state-option--#{item.key} #{state.filters.state === item.key ? 'is-active' : ''}"
+                        t-att-aria-pressed="state.filters.state === item.key ? 'true' : 'false'"
+                        t-on-click="() => this.onStateClick(item.key)"
+                    >
+                        <span t-esc="item.label" />
+                    </button>
+                </div>
+
+                <div class="cc-secondary-filters" aria-label="Outros filtros">
+                    <button
+                        type="button"
+                        t-att-class="state.filters.unreadOnly ? 'cc-filter-chip is-active' : 'cc-filter-chip'"
+                        t-att-aria-pressed="state.filters.unreadOnly ? 'true' : 'false'"
+                        t-on-click="toggleUnreadOnly"
+                    >
+                        <i class="fa fa-envelope" aria-hidden="true" />
+                        <span>Não lidas</span>
+                    </button>
+                    <div
+                        class="cc-conversation-type-filter"
+                        role="group"
+                        aria-label="Tipo de conversa"
+                    >
+                        <button
+                            type="button"
+                            t-att-class="!state.filters.conversationType ? 'is-active' : ''"
+                            t-att-aria-pressed="!state.filters.conversationType ? 'true' : 'false'"
+                            t-on-click="() => this.setConversationType(false)"
+                        >Todas</button>
+                        <button
+                            type="button"
+                            t-att-class="state.filters.conversationType === 'direct' ? 'is-active' : ''"
+                            t-att-aria-pressed="state.filters.conversationType === 'direct' ? 'true' : 'false'"
+                            t-on-click="() => this.setConversationType('direct')"
+                        >Diretas</button>
+                        <button
+                            type="button"
+                            t-att-class="state.filters.conversationType === 'group' ? 'is-active' : ''"
+                            t-att-aria-pressed="state.filters.conversationType === 'group' ? 'true' : 'false'"
+                            t-on-click="() => this.setConversationType('group')"
+                        >Grupos</button>
+                    </div>
+                    <label t-if="store.tags.length" class="cc-tag-filter">
+                        <span class="sr-only">Filtrar por marcador</span>
+                        <i class="fa fa-tag" aria-hidden="true" />
+                        <select
+                            aria-label="Filtrar por marcador"
+                            t-on-change="onTagChange"
+                        >
+                            <option value="">Todos os marcadores</option>
+                            <option
+                                t-foreach="store.tags"
+                                t-as="tag"
+                                t-key="tag.id"
+                                t-att-value="tag.id"
+                                t-att-selected="state.filters.tagId === tag.id"
+                            ><t t-esc="tag.name" /></option>
+                        </select>
+                    </label>
+                    <label class="cc-activity-filter">
+                        <span class="sr-only">Filtrar pelos meus follow-ups</span>
+                        <i class="fa fa-clock-o" aria-hidden="true" />
+                        <select
+                            aria-label="Filtrar pelos meus follow-ups"
+                            t-on-change="onActivityTimingChange"
+                        >
+                            <option value="">Follow-up: sem filtro</option>
+                            <option
+                                value="overdue"
+                                t-att-selected="state.filters.activityTiming === 'overdue'"
+                            >Meus atrasados</option>
+                            <option
+                                value="today"
+                                t-att-selected="state.filters.activityTiming === 'today'"
+                            >Meus de hoje</option>
+                            <option
+                                value="planned"
+                                t-att-selected="state.filters.activityTiming === 'planned'"
+                            >Meus próximos</option>
+                        </select>
+                    </label>
+                </div>
+
+                <label
+                    t-if="store.accounts.length > 1 &amp;&amp; (ui.view === 'flat' || state.filters.accountId)"
+                    class="cc-account-filter"
+                >
+                    <span>Caixa</span>
+                    <select t-on-change="onAccountChange">
+                        <option value="">Todas</option>
+                        <option
+                            t-foreach="store.accounts"
+                            t-as="account"
+                            t-key="account.id"
+                            t-att-value="account.id"
+                            t-att-selected="state.filters.accountId === account.id"
+                        ><t t-esc="account.name" /></option>
+                    </select>
+                </label>
+            </div>
+
+            <div class="cc-conversation-list">
+                <div
+                    t-if="state.listPhase === 'loading'"
+                    class="cc-list-skeleton"
+                    aria-busy="true"
+                >
+                    <span t-foreach="[1, 2, 3, 4, 5]" t-as="line" t-key="line" />
+                </div>
+                <div
+                    t-elif="state.listPhase === 'error'"
+                    class="cc-list-state"
+                    role="alert"
+                >
+                    <strong>Não foi possível carregar as conversas.</strong>
+                    <button
+                        type="button"
+                        t-on-click="() => store.loadConversations({reset: true})"
+                    >Tentar novamente</button>
+                </div>
+                <div
+                    t-elif="ui.view === 'flat' &amp;&amp; !state.conversations.length"
+                    class="cc-list-state"
+                >
+                    <span class="cc-list-state__icon"><i
+                            class="fa fa-check"
+                            aria-hidden="true"
+                        /></span>
+                    <strong>Nenhuma conversa neste filtro.</strong>
+                    <p>Altere o estado ou a busca para ver outros atendimentos.</p>
+                </div>
+                <div
+                    t-elif="ui.view === 'flat' &amp;&amp; !filteredConversations.length"
+                    class="cc-list-state"
+                >
+                    <span class="cc-list-state__icon"><i
+                            class="fa fa-filter"
+                            aria-hidden="true"
+                        /></span>
+                    <strong>Nenhuma conversa neste recorte.</strong>
+                    <p>Escolha outro responsável ou altere os filtros acima.</p>
+                </div>
+                <t t-elif="ui.view === 'grouped' &amp;&amp; conversationGroups.length">
+                    <section
+                        t-foreach="conversationGroups"
+                        t-as="group"
+                        t-key="group.key"
+                        t-attf-class="cc-inbox-group #{inboxCollapsed(group.key) ? 'is-collapsed' : ''}"
+                    >
+                        <button
+                            type="button"
+                            class="cc-inbox-group__header"
+                            t-att-aria-expanded="inboxCollapsed(group.key) ? 'false' : 'true'"
+                            t-att-aria-controls="inboxPanelId(group)"
+                            t-att-title="inboxCountLabel(group)"
+                            t-on-click="() => this.toggleInbox(group.key)"
+                        >
+                            <span class="cc-inbox-group__chevron" aria-hidden="true">
+                                <i
+                                    t-attf-class="fa #{inboxCollapsed(group.key) ? 'fa-angle-right' : 'fa-angle-down'}"
+                                />
+                            </span>
+                            <span class="cc-inbox-group__glyph" aria-hidden="true">
+                                <i class="fa fa-inbox" />
+                            </span>
+                            <span class="cc-inbox-group__identity">
+                                <strong t-esc="group.name" />
+                                <small
+                                    t-esc="group.platform || 'Conta de atendimento'"
+                                />
+                            </span>
+                            <span class="cc-inbox-group__metrics">
+                                <b
+                                    t-if="group.unread_count"
+                                    t-att-aria-label="inboxUnreadLabel(group)"
+                                    t-esc="group.unread_count"
+                                />
+                                <span
+                                    t-att-aria-label="inboxCountLabel(group)"
+                                    t-esc="group.conversations.length"
+                                />
+                            </span>
+                        </button>
+                        <div
+                            t-att-id="inboxPanelId(group)"
+                            t-att-hidden="inboxCollapsed(group.key) ? true : false"
+                            class="cc-inbox-group__conversations"
+                        >
+                            <div
+                                t-if="!group.conversations.length"
+                                class="cc-inbox-group__empty"
+                            >Nenhuma conversa neste filtro.</div>
+                            <t
+                                t-foreach="group.conversations"
+                                t-as="conversation"
+                                t-key="conversation.channel_id"
+                            >
+                                <t t-call="contact_center_ui.ConversationListItem" />
+                            </t>
+                        </div>
+                    </section>
+                </t>
+                <div t-elif="ui.view === 'grouped'" class="cc-list-state">
+                    <span class="cc-list-state__icon"><i
+                            class="fa fa-check"
+                            aria-hidden="true"
+                        /></span>
+                    <strong>Nenhuma caixa disponível.</strong>
+                    <p>Solicite acesso a uma equipe de atendimento.</p>
+                </div>
+                <t t-else="">
+                    <t
+                        t-foreach="filteredConversations"
+                        t-as="conversation"
+                        t-key="conversation.channel_id"
+                    >
+                        <t t-call="contact_center_ui.ConversationListItem" />
+                    </t>
+                </t>
+                <button
+                    t-if="state.listPhase !== 'loading' &amp;&amp; state.listPhase !== 'error' &amp;&amp; state.conversationsHaveMore"
+                    type="button"
+                    class="cc-load-more"
+                    t-att-disabled="state.listPhase === 'loading_more'"
+                    t-on-click="() => store.loadMoreConversations()"
+                >
+                    <t t-if="state.listPhase === 'loading_more'">Carregando…</t>
+                    <t
+                        t-elif="state.filters.responsibility !== 'all'"
+                    >Carregar mais neste recorte</t>
+                    <t t-else="">Carregar mais</t>
+                </button>
+            </div>
+        </aside>
+    </t>
+
+    <t t-name="contact_center_ui.ConversationListItem" owl="1">
+        <button
+            type="button"
+            t-att-class="itemClass(conversation)"
+            t-att-aria-current="conversation.channel_id === state.selectedChannelId ? 'true' : false"
+            t-on-click="() => this.select(conversation)"
+        >
+            <span class="cc-conversation-item__trace" aria-hidden="true" />
+            <DeferredImage
+                t-if="avatarUrl(conversation)"
+                className="'cc-avatar cc-avatar--image'"
+                src="avatarUrl(conversation)"
+                alt="''"
+                ariaHidden="true"
+                priority="10"
+            />
+            <span
+                t-else=""
+                class="cc-avatar"
+                t-esc="initials(displayName(conversation))"
+            />
+            <span class="cc-conversation-item__body">
+                <span class="cc-conversation-item__line">
+                    <strong t-esc="displayName(conversation)" />
+                    <time t-esc="relativeDate(conversation.last_activity_at)" />
+                </span>
+                <span class="cc-conversation-item__line cc-conversation-item__preview">
+                    <span>
+                        <i
+                            t-if="deliveryIcon(conversation)"
+                            t-att-class="deliveryClass(conversation)"
+                            t-att-title="deliveryLabel(conversation)"
+                            t-esc="deliveryIcon(conversation)"
+                        />
+                        <t t-if="conversation.last_message">
+                            <span t-esc="preview(conversation)" />
+                        </t>
+                        <span t-else="">Conversa iniciada</span>
+                    </span>
+                    <b
+                        t-if="conversation.unread_count"
+                        t-esc="conversation.unread_count"
+                    />
+                </span>
+                <span class="cc-conversation-item__meta">
+                    <small
+                        class="cc-inbox-badge"
+                        t-att-title="inboxMetadata(conversation).name"
+                    >
+                        <i class="fa fa-inbox" aria-hidden="true" />
+                        <span t-esc="inboxMetadata(conversation).name" />
+                    </small>
+                    <small
+                        t-if="isGroup(conversation)"
+                        class="cc-kind-badge"
+                        t-esc="groupBadgeLabel(conversation)"
+                    />
+                    <small
+                        t-if="conversation.responsible"
+                        class="cc-responsible-badge"
+                        t-esc="conversation.responsible.name"
+                    />
+                    <small
+                        t-else=""
+                        class="cc-responsible-badge"
+                    >Sem responsável</small>
+                </span>
+            </span>
+        </button>
+    </t>
+</templates>

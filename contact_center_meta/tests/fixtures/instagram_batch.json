@@ -1,0 +1,25 @@
+{
+  "object": "instagram",
+  "entry": [
+    {
+      "id": "200000000000001",
+      "time": 1787601000000,
+      "messaging": [
+        {
+          "sender": {
+            "id": "800000000000001"
+          },
+          "recipient": {
+            "id": "200000000000001"
+          },
+          "timestamp": 1787601000100,
+          "message": {
+            "mid": "ig_synthetic_message",
+            "text": "Synthetic Instagram message",
+            "is_echo": false
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+{
+  "code": 200,
+  "success": true,
+  "data": {
+    "JID": "120363000000901@g.us",
+    "OwnerJID": "15550101001@s.whatsapp.net",
+    "OwnerPN": "15550101001@s.whatsapp.net",
+    "Name": "Grupo de validação",
+    "NameSetAt": "2026-08-24T12:00:00Z",
+    "NameSetBy": "15550101001@s.whatsapp.net",
+    "NameSetByPN": "15550101001@s.whatsapp.net",
+    "Topic": "",
+    "TopicID": "",
+    "TopicSetAt": "0001-01-01T00:00:00Z",
+    "TopicSetBy": "",
+    "TopicSetByPN": "",
+    "TopicDeleted": false,
+    "IsLocked": false,
+    "IsAnnounce": false,
+    "AnnounceVersionID": "1787572800001",
+    "IsEphemeral": false,
+    "DisappearingTimer": 0,
+    "IsIncognito": false,
+    "AddressingMode": "lid",
+    "GroupCreated": "2026-08-24T11:00:00Z",
+    "ParticipantVersionID": "1787572800002",
+    "Participants": [
+      {
+        "JID": "700000000000001@lid",
+        "PhoneNumber": "15550101001@s.whatsapp.net",
+        "LID": "700000000000001@lid",
+        "IsAdmin": true,
+        "IsSuperAdmin": true,
+        "DisplayName": "",
+        "Error": 0,
+        "AddRequest": null
+      },
+      {
+        "JID": "15550101002@s.whatsapp.net",
+        "PhoneNumber": "15550101002@s.whatsapp.net",
+        "LID": "700000000000002@lid",
+        "IsAdmin": true,
+        "IsSuperAdmin": false,
+        "DisplayName": "",
+        "Error": 0,
+        "AddRequest": null
+      },
+      {
+        "JID": "700000000000003@lid",
+        "PhoneNumber": "15550101003@s.whatsapp.net",
+        "LID": "700000000000003@lid",
+        "IsAdmin": false,
+        "IsSuperAdmin": false,
+        "DisplayName": "Pessoa anônima",
+        "Error": 0,
+        "AddRequest": null
+      }
+    ],
+    "ParticipantCount": 3,
+    "MemberAddMode": "admin_add",
+    "Suspended": false
+  }
+}

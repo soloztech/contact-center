@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo noupdate="0">
+    <record id="queue_job_channel_contact_center" model="queue.job.channel">
+        <field name="name">contact_center</field>
+        <field name="parent_id" ref="queue_job.channel_root" />
+    </record>
+    <record id="queue_job_channel_contact_center_inbox" model="queue.job.channel">
+        <field name="name">inbox</field>
+        <field name="parent_id" ref="queue_job_channel_contact_center" />
+    </record>
+    <record id="queue_job_channel_contact_center_outbox" model="queue.job.channel">
+        <field name="name">outbox</field>
+        <field name="parent_id" ref="queue_job_channel_contact_center" />
+    </record>
+    <record id="queue_job_channel_contact_center_media" model="queue.job.channel">
+        <field name="name">media</field>
+        <field name="parent_id" ref="queue_job_channel_contact_center" />
+    </record>
+    <record id="queue_job_channel_contact_center_health" model="queue.job.channel">
+        <field name="name">health</field>
+        <field name="parent_id" ref="queue_job_channel_contact_center" />
+    </record>
+    <record
+        id="queue_job_channel_contact_center_group_metadata"
+        model="queue.job.channel"
+    >
+        <field name="name">group_metadata</field>
+        <field name="parent_id" ref="queue_job_channel_contact_center" />
+    </record>
+    <record
+        id="queue_job_channel_contact_center_identity_avatar"
+        model="queue.job.channel"
+    >
+        <field name="name">identity_avatar</field>
+        <field name="parent_id" ref="queue_job_channel_contact_center" />
+    </record>
+    <record id="queue_job_channel_contact_center_attribution" model="queue.job.channel">
+        <field name="name">attribution</field>
+        <field name="parent_id" ref="queue_job_channel_contact_center" />
+    </record>
+    <record id="queue_job_channel_contact_center_scheduled" model="queue.job.channel">
+        <field name="name">scheduled</field>
+        <field name="parent_id" ref="queue_job_channel_contact_center" />
+    </record>
+
+    <record
+        id="queue_job_function_contact_center_inbox_process"
+        model="queue.job.function"
+    >
+        <field name="model_id" ref="model_contact_center_inbox_event" />
+        <field name="method">_job_process</field>
+        <field name="channel_id" ref="queue_job_channel_contact_center_inbox" />
+        <field
+            name="retry_pattern"
+            eval="{1: 5, 2: 10, 3: 20, 4: 40, 5: 80, 6: 160, 7: 320, 8: 640, 9: 1280, 10: 2560, 11: 3600}"
+        />
+    </record>
+    <record
+        id="queue_job_function_contact_center_onboarding_release"
+        model="queue.job.function"
+    >
+        <field name="model_id" ref="model_contact_center_provider_connection" />
+        <field name="method">_job_release_onboarding_inbox_events</field>
+        <field name="channel_id" ref="queue_job_channel_contact_center_inbox" />
+        <field name="retry_pattern" eval="{1: 2, 2: 5, 3: 15, 4: 30, 5: 60}" />
+    </record>
+    <record
+        id="queue_job_function_contact_center_outbox_process"
+        model="queue.job.function"
+    >
+        <field name="model_id" ref="model_contact_center_outbox_command" />
+        <field name="method">_job_process</field>
+        <field name="channel_id" ref="queue_job_channel_contact_center_outbox" />
+        <field
+            name="retry_pattern"
+            eval="{1: 5, 2: 10, 3: 20, 4: 40, 5: 80, 6: 160, 7: 320, 8: 640, 9: 1280, 10: 2560, 11: 3600}"
+        />
+        <field name="allow_commit" eval="True" />
+    </record>
+    <record
+        id="queue_job_function_contact_center_media_download"
+        model="queue.job.function"
+    >
+        <field name="model_id" ref="model_contact_center_media_binding" />
+        <field name="method">_job_download</field>
+        <field name="channel_id" ref="queue_job_channel_contact_center_media" />
+        <field
+            name="retry_pattern"
+            eval="{1: 5, 2: 10, 3: 20, 4: 40, 5: 80, 6: 160, 7: 320, 8: 640, 9: 1280, 10: 2560, 11: 3600}"
+        />
+    </record>
+    <record
+        id="queue_job_function_contact_center_connection_health"
+        model="queue.job.function"
+    >
+        <field name="model_id" ref="model_contact_center_provider_connection" />
+        <field name="method">_job_check_health</field>
+        <field name="channel_id" ref="queue_job_channel_contact_center_health" />
+        <field name="retry_pattern" eval="{1: 30, 2: 60, 3: 120, 4: 300, 5: 600}" />
+    </record>
+    <record
+        id="queue_job_function_contact_center_group_metadata"
+        model="queue.job.function"
+    >
+        <field name="model_id" ref="model_contact_center_group_profile" />
+        <field name="method">_job_sync_metadata</field>
+        <field
+            name="channel_id"
+            ref="queue_job_channel_contact_center_group_metadata"
+        />
+        <field
+            name="retry_pattern"
+            eval="{1: 10, 2: 30, 3: 60, 4: 120, 5: 300, 6: 600, 7: 1200, 8: 1800, 9: 3600, 10: 3600, 11: 3600}"
+        />
+    </record>
+    <record
+        id="queue_job_function_contact_center_identity_avatar"
+        model="queue.job.function"
+    >
+        <field name="model_id" ref="model_contact_center_channel_binding" />
+        <field name="method">_job_sync_identity_avatar</field>
+        <field
+            name="channel_id"
+            ref="queue_job_channel_contact_center_identity_avatar"
+        />
+        <field
+            name="retry_pattern"
+            eval="{1: 10, 2: 30, 3: 60, 4: 120, 5: 300, 6: 600, 7: 1200, 8: 1800, 9: 3600, 10: 3600, 11: 3600}"
+        />
+    </record>
+    <record
+        id="queue_job_function_contact_center_attribution_reconcile"
+        model="queue.job.function"
+    >
+        <field name="model_id" ref="model_contact_center_attribution_touchpoint" />
+        <field name="method">_job_reconcile_projection</field>
+        <field name="channel_id" ref="queue_job_channel_contact_center_attribution" />
+        <field name="retry_pattern" eval="{1: 10, 2: 30}" />
+    </record>
+    <record
+        id="queue_job_function_contact_center_scheduled_release"
+        model="queue.job.function"
+    >
+        <field name="model_id" ref="model_contact_center_scheduled_message" />
+        <field name="method">_job_release</field>
+        <field name="channel_id" ref="queue_job_channel_contact_center_scheduled" />
+        <field name="retry_pattern" eval="{1: 30, 2: 60, 3: 120, 4: 300, 5: 600}" />
+    </record>
+</odoo>

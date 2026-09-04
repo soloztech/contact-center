@@ -1,0 +1,36 @@
+{
+  "type": "GroupInfo",
+  "instanceName": "Laboratorio",
+  "userID": "group-metadata-test",
+  "event": {
+    "JID": "120363000000901@g.us",
+    "Notify": "",
+    "Sender": "700000000000002@lid",
+    "SenderPN": "15550101002@s.whatsapp.net",
+    "Timestamp": "2026-08-24T12:05:00Z",
+    "Name": {
+      "Name": "Grupo de validação",
+      "NameSetAt": "2026-08-24T12:05:00Z",
+      "NameSetBy": "700000000000002@lid",
+      "NameSetByPN": "15550101002@s.whatsapp.net"
+    },
+    "Topic": null,
+    "Locked": null,
+    "Announce": null,
+    "Ephemeral": null,
+    "MembershipApprovalMode": null,
+    "Delete": null,
+    "Link": null,
+    "Unlink": null,
+    "NewInviteLink": null,
+    "PrevParticipantVersionID": "1787572800001",
+    "ParticipantVersionID": "1787572800002",
+    "Join": null,
+    "Leave": null,
+    "Promote": null,
+    "Demote": null,
+    "Suspended": false,
+    "Unsuspended": false,
+    "UnknownChanges": null
+  }
+}

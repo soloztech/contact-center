@@ -1,0 +1,547 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="view_crm_stage_search_contact_center" model="ir.ui.view">
+        <field name="name">crm.stage.search.contact.center</field>
+        <field name="model">crm.stage</field>
+        <field name="inherit_id" ref="crm.crm_lead_stage_search" />
+        <field name="arch" type="xml">
+            <xpath expr="//search" position="inside">
+                <filter
+                    name="contact_center_archived"
+                    string="Archived"
+                    domain="[('active', '=', False)]"
+                />
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_cc_crm_team_binding_tree" model="ir.ui.view">
+        <field name="name">contact.center.crm.team.binding.tree</field>
+        <field name="model">contact.center.crm.team.binding</field>
+        <field name="arch" type="xml">
+            <tree>
+                <field name="company_id" invisible="1" />
+                <field name="contact_center_team_id" />
+                <field name="crm_team_id" />
+                <field name="company_id" groups="base.group_multi_company" />
+                <field name="active" widget="boolean_toggle" />
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_cc_crm_team_binding_form" model="ir.ui.view">
+        <field name="name">contact.center.crm.team.binding.form</field>
+        <field name="model">contact.center.crm.team.binding</field>
+        <field name="arch" type="xml">
+            <form>
+                <header>
+                    <button
+                        name="action_sync_roster"
+                        type="object"
+                        string="Sync Roster"
+                        class="oe_highlight"
+                        groups="contact_center_base.group_contact_center_admin"
+                        attrs="{'invisible': [('active', '=', False)]}"
+                    />
+                    <button
+                        name="action_open_crm_team"
+                        type="object"
+                        string="Open CRM Team"
+                    />
+                </header>
+                <sheet>
+                    <group>
+                        <field name="active" />
+                        <field name="company_id" invisible="1" />
+                        <field name="company_id" groups="base.group_multi_company" />
+                        <field name="contact_center_team_id" />
+                        <field name="crm_team_id" />
+                    </group>
+                    <div class="alert alert-info" role="alert">
+                        While active, the CRM sales team is the roster authority. Its
+                        leader becomes the Contact Center supervisor and its active
+                        members become agents. One CRM team can bind to only one
+                        Contact Center team; multiple inboxes may share that team.
+                    </div>
+                    <div class="alert alert-warning" role="alert">
+                        Synchronization grants the required Contact Center roles.
+                        Removing a CRM member revokes roles introduced only by this
+                        bridge, while roles explicitly kept in the standard Odoo user
+                        form remain manual. The CRM team leader receives the Supervisor
+                        capability for the accessible Contact Center scope. Archiving
+                        this lifecycle binding freezes the last projected roster for
+                        manual management. Bindings are deleted only on module
+                        uninstall. Case/lead stage integration continues through its
+                        independent pipeline binding.
+                    </div>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_cc_crm_team_bindings" model="ir.actions.act_window">
+        <field name="name">CRM Team Bindings</field>
+        <field name="res_model">contact.center.crm.team.binding</field>
+        <field name="view_mode">tree,form</field>
+    </record>
+
+    <record id="view_cc_crm_pipeline_binding_tree" model="ir.ui.view">
+        <field name="name">contact.center.crm.pipeline.binding.tree</field>
+        <field name="model">contact.center.crm.pipeline.binding</field>
+        <field name="arch" type="xml">
+            <tree>
+                <field name="company_id" invisible="1" />
+                <field name="pipeline_id" />
+                <field name="crm_team_id" />
+                <field name="company_id" groups="base.group_multi_company" />
+                <field name="active" widget="boolean_toggle" />
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_cc_crm_pipeline_binding_form" model="ir.ui.view">
+        <field name="name">contact.center.crm.pipeline.binding.form</field>
+        <field name="model">contact.center.crm.pipeline.binding</field>
+        <field name="arch" type="xml">
+            <form>
+                <header>
+                    <button
+                        name="action_sync_stage_catalog"
+                        type="object"
+                        string="Sync CRM Stages"
+                        class="oe_highlight"
+                    />
+                    <button
+                        name="action_open_crm_team"
+                        type="object"
+                        string="Open CRM Team"
+                    />
+                </header>
+                <sheet>
+                    <group>
+                        <field name="active" />
+                        <field name="company_id" invisible="1" />
+                        <field name="company_id" groups="base.group_multi_company" />
+                        <field name="pipeline_id" />
+                        <field name="crm_team_id" />
+                    </group>
+                    <div class="alert alert-info" role="alert">
+                        While active, CRM is authoritative for this pipeline stage
+                        catalog. Archive the lifecycle binding to stop synchronization;
+                        bindings are deleted only when the module is uninstalled.
+                    </div>
+                    <separator string="CRM-authoritative Stage Catalog" />
+                    <field name="stage_binding_ids" readonly="1">
+                        <tree create="0" delete="0">
+                            <field name="stage_id" />
+                            <field name="crm_stage_id" />
+                            <field name="active" />
+                        </tree>
+                    </field>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_cc_crm_pipeline_bindings" model="ir.actions.act_window">
+        <field name="name">CRM Pipeline Bindings</field>
+        <field name="res_model">contact.center.crm.pipeline.binding</field>
+        <field name="view_mode">tree,form</field>
+    </record>
+
+    <record id="view_contact_center_pipeline_tree_crm" model="ir.ui.view">
+        <field name="name">contact.center.pipeline.tree.crm</field>
+        <field name="model">contact.center.pipeline</field>
+        <field
+            name="inherit_id"
+            ref="contact_center_base.view_contact_center_pipeline_tree"
+        />
+        <field name="arch" type="xml">
+            <field name="code" position="after">
+                <field name="crm_team_id" optional="show" />
+            </field>
+        </field>
+    </record>
+
+    <record id="view_contact_center_pipeline_form_crm" model="ir.ui.view">
+        <field name="name">contact.center.pipeline.form.crm</field>
+        <field name="model">contact.center.pipeline</field>
+        <field
+            name="inherit_id"
+            ref="contact_center_base.view_contact_center_pipeline_form"
+        />
+        <field name="arch" type="xml">
+            <xpath
+                expr="//page[@name='stages']/field[@name='stage_ids']"
+                position="attributes"
+            >
+                <attribute
+                    name="attrs"
+                >{'readonly': [('crm_team_id', '!=', False)]}</attribute>
+            </xpath>
+            <xpath expr="//page[@name='stages']" position="after">
+                <page string="CRM Binding" name="crm_binding">
+                    <field name="crm_team_id" readonly="1" />
+                    <div class="alert alert-info" role="alert">
+                        When this binding is active, configure the stage catalog in
+                        CRM. Contact Center mirrors the effective global and sales-team
+                        stages.
+                    </div>
+                    <field name="crm_pipeline_binding_ids" readonly="1">
+                        <tree create="0" delete="0">
+                            <field name="crm_team_id" />
+                            <field name="active" />
+                        </tree>
+                    </field>
+                </page>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_contact_center_case_tree_crm" model="ir.ui.view">
+        <field name="name">contact.center.case.tree.crm</field>
+        <field name="model">contact.center.case</field>
+        <field
+            name="inherit_id"
+            ref="contact_center_base.view_contact_center_case_tree"
+        />
+        <field name="arch" type="xml">
+            <field name="stage_id" position="after">
+                <field
+                    name="crm_lead_id"
+                    optional="show"
+                    groups="sales_team.group_sale_salesman"
+                />
+            </field>
+        </field>
+    </record>
+
+    <record id="view_contact_center_case_form_crm" model="ir.ui.view">
+        <field name="name">contact.center.case.form.crm</field>
+        <field name="model">contact.center.case</field>
+        <field
+            name="inherit_id"
+            ref="contact_center_base.view_contact_center_case_form"
+        />
+        <field name="arch" type="xml">
+            <xpath expr="//header/field[@name='stage_id']" position="before">
+                <button
+                    name="action_create_crm_lead"
+                    type="object"
+                    string="Create Lead"
+                    class="oe_highlight"
+                    groups="sales_team.group_sale_salesman"
+                    attrs="{'invisible': [('crm_link_exists', '=', True)]}"
+                />
+                <button
+                    name="action_create_crm_opportunity"
+                    type="object"
+                    string="Create Opportunity"
+                    groups="sales_team.group_sale_salesman"
+                    attrs="{'invisible': [('crm_link_exists', '=', True)]}"
+                />
+                <button
+                    name="action_open_link_crm_lead_wizard"
+                    type="object"
+                    string="Link Existing"
+                    groups="sales_team.group_sale_salesman"
+                    attrs="{'invisible': [('crm_link_exists', '=', True)]}"
+                />
+            </xpath>
+            <field name="id" position="after">
+                <field name="crm_lead_count" invisible="1" />
+                <field name="crm_link_exists" invisible="1" />
+            </field>
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button
+                    name="action_open_crm_lead"
+                    type="object"
+                    class="oe_stat_button"
+                    icon="fa-handshake-o"
+                    groups="sales_team.group_sale_salesman"
+                    attrs="{'invisible': [('crm_lead_count', '=', 0)]}"
+                >
+                    <field name="crm_lead_count" widget="statinfo" string="CRM Lead" />
+                </button>
+                <button
+                    name="action_unlink_crm_lead"
+                    type="object"
+                    class="oe_stat_button"
+                    icon="fa-unlink"
+                    string="Unlink CRM"
+                    groups="sales_team.group_sale_salesman"
+                    attrs="{'invisible': [('crm_lead_count', '=', 0)]}"
+                />
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_cc_crm_case_link_tree" model="ir.ui.view">
+        <field name="name">contact.center.crm.case.link.tree</field>
+        <field name="model">contact.center.crm.case.link</field>
+        <field name="arch" type="xml">
+            <tree create="0" edit="0">
+                <field name="company_id" invisible="1" />
+                <field name="case_id" />
+                <field name="lead_id" />
+                <field name="original_lead_record_id_snapshot" optional="hide" />
+                <field name="original_lead_name_snapshot" optional="hide" />
+                <field name="lead_record_id_snapshot" optional="hide" />
+                <field name="lead_name_snapshot" />
+                <field name="state" />
+                <field name="origin" />
+                <field name="linked_by_id" />
+                <field name="linked_at" />
+                <field name="company_id" groups="base.group_multi_company" />
+            </tree>
+        </field>
+    </record>
+
+    <record id="view_cc_crm_case_link_form" model="ir.ui.view">
+        <field name="name">contact.center.crm.case.link.form</field>
+        <field name="model">contact.center.crm.case.link</field>
+        <field name="arch" type="xml">
+            <form create="0" edit="0">
+                <header>
+                    <button
+                        name="action_open_lead"
+                        type="object"
+                        string="Open CRM Lead"
+                        class="oe_highlight"
+                        attrs="{'invisible': [('state', '!=', 'active')]}"
+                    />
+                    <button
+                        name="action_unlink"
+                        type="object"
+                        string="Unlink"
+                        attrs="{'invisible': [('state', '!=', 'active')]}"
+                    />
+                </header>
+                <sheet>
+                    <group>
+                        <field name="company_id" invisible="1" />
+                        <field name="case_id" />
+                        <field name="lead_id" />
+                        <separator string="Original CRM Lead at Link Time" />
+                        <field name="original_lead_record_id_snapshot" />
+                        <field name="original_lead_name_snapshot" />
+                        <field name="original_lead_type_snapshot" />
+                        <field name="original_lead_team_name_snapshot" />
+                        <separator string="Latest Known CRM Lead" />
+                        <field name="lead_record_id_snapshot" />
+                        <field name="lead_name_snapshot" />
+                        <field name="lead_type_snapshot" />
+                        <field name="lead_team_name_snapshot" />
+                        <field name="state" />
+                        <field name="origin" />
+                        <field name="linked_by_id" />
+                        <field name="linked_at" />
+                        <field name="unlinked_at" />
+                        <field name="unlinked_by_id" />
+                        <field name="unlinked_reason" />
+                        <field name="company_id" groups="base.group_multi_company" />
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_cc_crm_case_links" model="ir.actions.act_window">
+        <field name="name">CRM Case Links</field>
+        <field name="res_model">contact.center.crm.case.link</field>
+        <field name="view_mode">tree,form</field>
+        <field name="view_id" ref="view_cc_crm_case_link_tree" />
+        <field name="context">{'create': False}</field>
+    </record>
+
+    <record id="view_cc_crm_link_wizard_form" model="ir.ui.view">
+        <field name="name">contact.center.crm.link.wizard.form</field>
+        <field name="model">contact.center.crm.link.wizard</field>
+        <field name="arch" type="xml">
+            <form string="Link CRM Lead">
+                <group>
+                    <field name="case_id" />
+                    <field name="company_id" invisible="1" />
+                    <field name="crm_team_id" />
+                    <field name="lead_id" options="{'no_create': True}" />
+                </group>
+                <footer>
+                    <button
+                        name="action_link"
+                        type="object"
+                        string="Link"
+                        class="btn-primary"
+                    />
+                    <button string="Cancel" special="cancel" class="btn-secondary" />
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_contact_center_team_form_crm" model="ir.ui.view">
+        <field name="name">contact.center.team.form.crm</field>
+        <field name="model">contact.center.team</field>
+        <field
+            name="inherit_id"
+            ref="contact_center_base.view_contact_center_team_form"
+        />
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='agent_ids']" position="attributes">
+                <attribute
+                    name="attrs"
+                >{'readonly': [('crm_team_id', '!=', False)]}</attribute>
+            </xpath>
+            <xpath expr="//field[@name='supervisor_ids']" position="attributes">
+                <attribute
+                    name="attrs"
+                >{'readonly': [('crm_team_id', '!=', False)]}</attribute>
+            </xpath>
+            <xpath expr="//notebook" position="inside">
+                <page string="CRM" name="contact_center_crm">
+                    <field name="crm_team_id" readonly="1" />
+                    <div
+                        class="alert alert-info"
+                        role="alert"
+                        attrs="{'invisible': [('crm_team_id', '=', False)]}"
+                    >
+                        This roster is managed by the linked CRM sales team. Change
+                        its leader or active members in CRM, or archive the binding
+                        before managing this team manually.
+                    </div>
+                    <field name="crm_team_binding_ids" readonly="1">
+                        <tree create="0" delete="0">
+                            <field name="crm_team_id" />
+                            <field name="active" />
+                        </tree>
+                    </field>
+                </page>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_mail_channel_form_contact_center_crm" model="ir.ui.view">
+        <field name="name">mail.channel.form.contact.center.crm</field>
+        <field name="model">mail.channel</field>
+        <field
+            name="inherit_id"
+            ref="contact_center_base.view_mail_channel_form_contact_center_cases"
+        />
+        <field name="arch" type="xml">
+            <xpath
+                expr="//field[@name='contact_center_case_ids']/tree/field[@name='stage_id']"
+                position="after"
+            >
+                <field name="crm_lead_id" groups="sales_team.group_sale_salesman" />
+            </xpath>
+        </field>
+    </record>
+    <record id="view_cc_crm_mapping_inventory_form" model="ir.ui.view">
+        <field name="name">contact.center.crm.mapping.inventory.form</field>
+        <field name="model">contact.center.crm.mapping.inventory</field>
+        <field name="arch" type="xml">
+            <form string="CRM Mapping Candidates" edit="1">
+                <header>
+                    <button
+                        name="action_refresh"
+                        type="object"
+                        string="Scan Candidates"
+                        class="oe_highlight"
+                    />
+                </header>
+                <sheet>
+                    <div class="alert alert-info" role="alert">
+                        This inventory is advisory and read-only. Access requires both
+                        Contact Center Administrator and CRM Sales Manager authority.
+                        Names, supervisors,
+                        roster overlap, and stage labels are evidence only; they never
+                        create a binding. An administrator must inspect and explicitly
+                        accept one candidate. Acceptance revalidates the current data
+                        and delegates to the authoritative binding models.
+                    </div>
+                    <group>
+                        <group>
+                            <field name="allowed_company_ids" invisible="1" />
+                            <field name="company_id" />
+                            <field name="include_inactive" />
+                            <field name="generated_at" />
+                        </group>
+                        <group string="Summary">
+                            <field name="source_count" />
+                            <field name="candidate_count" />
+                            <field name="ambiguous_source_count" />
+                            <field name="blocked_candidate_count" />
+                        </group>
+                    </group>
+                    <field name="line_ids" readonly="1">
+                        <tree
+                            create="0"
+                            edit="0"
+                            delete="0"
+                            decoration-success="candidate_state == 'candidate'"
+                            decoration-warning="candidate_state in ('ambiguous', 'reactivable')"
+                            decoration-danger="candidate_state == 'blocked'"
+                            decoration-muted="candidate_state in ('no_candidate', 'bound')"
+                        >
+                            <field name="mapping_kind" />
+                            <field name="source_name" />
+                            <field name="crm_team_id" />
+                            <field name="candidate_state" />
+                            <field name="candidate_count" />
+                            <field name="score" />
+                            <field name="snapshot_validity" />
+                            <field name="can_accept" invisible="1" />
+                            <button
+                                name="action_accept_candidate"
+                                type="object"
+                                string="Accept"
+                                class="oe_highlight"
+                                attrs="{'invisible': [('can_accept', '=', False)]}"
+                            />
+                        </tree>
+                        <form string="CRM Mapping Candidate">
+                            <header>
+                                <button
+                                    name="action_accept_candidate"
+                                    type="object"
+                                    string="Accept Candidate"
+                                    class="oe_highlight"
+                                    attrs="{'invisible': [('can_accept', '=', False)]}"
+                                />
+                            </header>
+                            <sheet>
+                                <group>
+                                    <group>
+                                        <field name="mapping_kind" />
+                                        <field name="contact_center_team_id" />
+                                        <field name="pipeline_id" />
+                                        <field name="crm_team_id" />
+                                    </group>
+                                    <group>
+                                        <field name="candidate_state" />
+                                        <field name="candidate_count" />
+                                        <field name="score" />
+                                        <field name="snapshot_validity" />
+                                        <field name="can_accept" invisible="1" />
+                                    </group>
+                                </group>
+                                <group>
+                                    <field name="evidence" nolabel="1" />
+                                    <field name="blockers" nolabel="1" />
+                                </group>
+                            </sheet>
+                        </form>
+                    </field>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_cc_crm_mapping_inventory" model="ir.actions.act_window">
+        <field name="name">CRM Mapping Candidates</field>
+        <field name="res_model">contact.center.crm.mapping.inventory</field>
+        <field name="view_mode">form</field>
+        <field name="view_id" ref="view_cc_crm_mapping_inventory_form" />
+        <field name="target">current</field>
+        <field name="context">{}</field>
+    </record>
+</odoo>

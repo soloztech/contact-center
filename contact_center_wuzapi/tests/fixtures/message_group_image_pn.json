@@ -1,0 +1,32 @@
+{
+  "type": "Message",
+  "instanceName": "Laboratorio",
+  "userID": "group-test-instance",
+  "event": {
+    "Info": {
+      "Chat": "120363000000001@g.us",
+      "Sender": "5511900000002:3@s.whatsapp.net",
+      "SenderAlt": "200000000000002@lid",
+      "IsFromMe": false,
+      "IsGroup": true,
+      "AddressingMode": "pn",
+      "ID": "GROUPIMAGE0000000000000000000001",
+      "PushName": "Outro participante",
+      "Timestamp": "2026-08-24T12:02:03Z"
+    },
+    "Message": {
+      "imageMessage": {
+        "URL": "https://mmg.whatsapp.net/group-image.enc",
+        "directPath": "/group-image.enc",
+        "mediaKey": "Z2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2c=",
+        "fileSHA256": "aGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGg=",
+        "fileEncSHA256": "aWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWk=",
+        "fileLength": 2048,
+        "mimetype": "image/jpeg",
+        "caption": "Imagem sanitizada do grupo",
+        "width": 800,
+        "height": 600
+      }
+    }
+  }
+}
