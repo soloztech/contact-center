@@ -3,7 +3,7 @@
 - Date: 2026-09-04
 - Target branch: `16.0`
 - Repository: `soloztech/contact-center`
-- Cross-repository candidate: `16.0.20260904.1-rc1`
+- Cross-repository candidate: `16.0.20260904.2-rc1`
 
 ## Applied laboratory baseline
 
