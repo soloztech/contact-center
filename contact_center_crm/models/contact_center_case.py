@@ -3,7 +3,7 @@ from psycopg2.errors import UniqueViolation
 from odoo import _, api, fields, models
 from odoo.exceptions import AccessError, ValidationError
 
-from odoo.addons.contact_center_base.services.tokens import (
+from odoo.addons.contact_center_kanban.services.tokens import (
     CONTACT_CENTER_CASE_TRANSITION_TOKEN,
 )
 

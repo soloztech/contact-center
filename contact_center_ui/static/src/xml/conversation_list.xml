@@ -135,12 +135,6 @@
 
                 <div class="cc-inbox-tabs" role="group" aria-label="Filtrar por estado">
                     <button
-                        type="button"
-                        t-att-class="!state.filters.state ? 'is-active' : ''"
-                        t-att-aria-pressed="!state.filters.state ? 'true' : 'false'"
-                        t-on-click="() => this.onStateClick(false)"
-                    >Todas</button>
-                    <button
                         t-foreach="store.conversationStates"
                         t-as="item"
                         t-key="item.key"
@@ -204,7 +198,10 @@
                             ><t t-esc="tag.name" /></option>
                         </select>
                     </label>
-                    <label class="cc-activity-filter">
+                    <label
+                        t-if="store.capabilities.followups === true"
+                        class="cc-activity-filter"
+                    >
                         <span class="sr-only">Filtrar pelos meus follow-ups</span>
                         <i class="fa fa-clock-o" aria-hidden="true" />
                         <select
@@ -405,7 +402,21 @@
             <span class="cc-conversation-item__body">
                 <span class="cc-conversation-item__line">
                     <strong t-esc="displayName(conversation)" />
-                    <time t-esc="relativeDate(conversation.last_activity_at)" />
+                    <span class="cc-conversation-item__signals">
+                        <i
+                            t-if="preference(conversation).pinned"
+                            class="fa fa-thumb-tack"
+                            title="Conversa fixada"
+                            aria-label="Conversa fixada"
+                        />
+                        <i
+                            t-if="preference(conversation).muted"
+                            class="fa fa-bell-slash"
+                            title="Conversa silenciada"
+                            aria-label="Conversa silenciada"
+                        />
+                        <time t-esc="relativeDate(conversation.last_activity_at)" />
+                    </span>
                 </span>
                 <span class="cc-conversation-item__line cc-conversation-item__preview">
                     <span>

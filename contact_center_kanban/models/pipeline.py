@@ -75,6 +75,10 @@ def _normalized_uuid(value, label):
         raise ValidationError(_("Invalid %s.", label)) from error
 
 
+def _positive_ids(values):
+    return sorted({int(value) for value in values or [] if value})
+
+
 def _relational_command_ids(commands):
     """Return existing IDs named by x2many commands without applying them."""
 
@@ -809,6 +813,80 @@ class ContactCenterTeamPipeline(models.Model):
 class ContactCenterAccountPipeline(models.Model):
     _inherit = "contact.center.account"
 
+    @api.model
+    def _contact_center_lock_access_topology(
+        self,
+        account_ids=None,
+        team_ids=None,
+        user_ids=None,
+        pipeline_ids=None,
+        channel_ids=None,
+        case_ids=None,
+    ):
+        """Extend the base lock graph with pipeline and case authorities.
+
+        The order is inbox, team, user, pipeline, conversation and case. Provider
+        connectors may append their own authority rows after this method returns.
+        """
+
+        pipeline_ids = _positive_ids(pipeline_ids)
+        case_ids = _positive_ids(case_ids)
+        if not pipeline_ids and not case_ids:
+            return super()._contact_center_lock_access_topology(
+                account_ids=account_ids,
+                team_ids=team_ids,
+                user_ids=user_ids,
+                channel_ids=channel_ids,
+            )
+
+        accounts = self._contact_center_lock_access_authority_rows(
+            account_ids=account_ids,
+            team_ids=team_ids,
+            user_ids=user_ids,
+        )
+        if pipeline_ids:
+            pipelines = (
+                self.env["contact.center.pipeline"]
+                .sudo()
+                .with_context(active_test=False)
+                .browse(pipeline_ids)
+            )
+            pipelines.flush_model(["topology_revision"])
+            self.env.cr.execute(
+                "SELECT id FROM contact_center_pipeline WHERE id = ANY(%s) "
+                "ORDER BY id FOR UPDATE",
+                [pipeline_ids],
+            )
+            self.env.cr.execute(
+                "UPDATE contact_center_pipeline "
+                "SET topology_revision = topology_revision + 1 "
+                "WHERE id = ANY(%s)",
+                [pipeline_ids],
+            )
+            pipelines.invalidate_recordset(["topology_revision"])
+
+        self._contact_center_lock_conversation_rows(channel_ids=channel_ids)
+        if case_ids:
+            cases = (
+                self.env["contact.center.case"]
+                .sudo()
+                .with_context(active_test=False)
+                .browse(case_ids)
+            )
+            cases.flush_model(["stage_revision"])
+            self.env.cr.execute(
+                "SELECT id FROM contact_center_case WHERE id = ANY(%s) "
+                "ORDER BY id FOR UPDATE",
+                [case_ids],
+            )
+            self.env.cr.execute(
+                "UPDATE contact_center_case SET stage_revision = stage_revision "
+                "WHERE id = ANY(%s)",
+                [case_ids],
+            )
+            cases.invalidate_recordset(["stage_revision"])
+        return accounts
+
     default_pipeline_id = fields.Many2one(
         "contact.center.pipeline",
         string="Default Pipeline",
@@ -1105,7 +1183,7 @@ class MailChannelCase(models.Model):
     def action_contact_center_cases(self):
         self.ensure_one()
         action = self.env["ir.actions.actions"]._for_xml_id(
-            "contact_center_base.action_contact_center_cases"
+            "contact_center_kanban.action_contact_center_cases"
         )
         action["domain"] = [("channel_id", "=", self.id)]
         action["context"] = {

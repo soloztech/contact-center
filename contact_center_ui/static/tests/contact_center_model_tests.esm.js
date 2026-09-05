@@ -17,6 +17,7 @@ import {
     contactCenterNotifications,
     conversationAvatarUrl,
     conversationDisplayName,
+    conversationPreference,
     conversationResolutionAction,
     conversationResponsibility,
     conversationStateMeta,
@@ -53,6 +54,7 @@ import {
 } from "@contact_center_ui/js/contact_center_model.esm";
 import {
     ContactCenterStore,
+    conversationFollowsCursor,
     formatOdooUtcDateTime,
     loadInboxDensityPreference,
     localDateTimeToOdooUtc,
@@ -171,6 +173,18 @@ function conversationActivityAt(position) {
         .toISOString()
         .slice(0, 19)
         .replace("T", " ");
+}
+
+function openConversation(overrides = {}) {
+    return {state: "open", ...overrides};
+}
+
+function activityConversationCursor(channelId, lastActivityAt) {
+    return {
+        segment: "activity",
+        channel_id: channelId,
+        last_activity_at: lastActivityAt,
+    };
 }
 
 QUnit.module("contact_center_ui > model", (hooks) => {
@@ -371,6 +385,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             store.state.conversations = [
                 {
                     channel_id: 31,
+                    state: "open",
                     name: "Leonardo Hirata",
                     identity: emptyIdentity,
                 },
@@ -501,8 +516,8 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             };
             store.state.selectedChannelId = 31;
             store.state.conversations = [
-                {channel_id: 31, identity: firstIdentity},
-                {channel_id: 32, identity: secondIdentity},
+                openConversation({channel_id: 31, identity: firstIdentity}),
+                openConversation({channel_id: 32, identity: secondIdentity}),
             ];
             assert.ok(store.openCompanyLinker("create"));
             const firstSubmit = store.createAndLinkPartnerCompany({
@@ -591,7 +606,9 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 capabilities: {link_company: true, create_company: true},
             };
             store.state.selectedChannelId = 31;
-            store.state.conversations = [{channel_id: 31, identity: firstIdentity}];
+            store.state.conversations = [
+                openConversation({channel_id: 31, identity: firstIdentity}),
+            ];
 
             assert.ok(store.openCompanyLinker("search"));
             assert.strictEqual(store.state.companyLinker.partnerId, 11);
@@ -607,7 +624,9 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 "the contact cannot be unlinked while its company write is pending"
             );
 
-            store.replaceConversation({channel_id: 31, identity: secondIdentity});
+            store.replaceConversation(
+                openConversation({channel_id: 31, identity: secondIdentity})
+            );
             assert.notOk(store.state.companyLinker.open);
             assert.ok(store.openCompanyLinker("search"));
             assert.strictEqual(store.state.companyLinker.partnerId, 12);
@@ -669,8 +688,8 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 capabilities: {link_company: true, create_company: true},
             };
             store.state.conversations = [
-                {channel_id: 31, identity: firstIdentity},
-                {channel_id: 32, identity: secondIdentity},
+                openConversation({channel_id: 31, identity: firstIdentity}),
+                openConversation({channel_id: 32, identity: secondIdentity}),
             ];
             store.state.selectedChannelId = 31;
             assert.ok(store.openCompanyLinker("search"));
@@ -791,6 +810,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             store.state.conversations = [
                 {
                     channel_id: 31,
+                    state: "open",
                     identity: {
                         id: 5,
                         name: "551532242610",
@@ -886,6 +906,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             store.state.conversations = [
                 {
                     channel_id: 32,
+                    state: "open",
                     identity: {
                         id: 6,
                         name: "5515999990000",
@@ -1029,11 +1050,15 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 partner: {id: 18, name: "Cadastro mais novo", is_company: false},
             };
             store.state.selectedChannelId = 31;
-            store.state.conversations = [{channel_id: 31, identity: firstIdentity}];
+            store.state.conversations = [
+                openConversation({channel_id: 31, identity: firstIdentity}),
+            ];
 
             const pending = store.unlinkPartner();
             assert.deepEqual(calls, [{method: "unlink_partner", args: [31, 17]}]);
-            store.replaceConversation({channel_id: 31, identity: replacementIdentity});
+            store.replaceConversation(
+                openConversation({channel_id: 31, identity: replacementIdentity})
+            );
             resolveUnlink({
                 schema_version: SUPPORTED_SCHEMA_VERSION,
                 identity: {
@@ -2565,12 +2590,14 @@ QUnit.module("contact_center_ui > model", (hooks) => {
         });
         const valid = {
             channel_id: 10,
+            state: "open",
             conversation_type: "group",
             name: "Legacy",
             group: canonicalGroup({token: "must-not-survive"}),
         };
         const direct = {
             channel_id: 20,
+            state: "open",
             conversation_type: "direct",
             name: "Direct unchanged",
             can_send: true,
@@ -2924,7 +2951,10 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             store.state.bootstrap = {user: {id: 7}};
             store.state.filters.responsibility = "mine";
             store.state.conversations = [
-                {channel_id: 20, responsible: {id: 7, name: "Lucas"}},
+                openConversation({
+                    channel_id: 20,
+                    responsible: {id: 7, name: "Lucas"},
+                }),
             ];
             store.state.selectedChannelId = 20;
             store.state.timelineChannelId = 20;
@@ -2935,6 +2965,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             assert.ok(
                 store.replaceConversation({
                     channel_id: 20,
+                    state: "open",
                     responsible: {id: 8, name: "Ana"},
                 })
             );
@@ -3977,6 +4008,11 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             label: "Resolvida",
             tone: "success",
         });
+        assert.deepEqual(conversationStateMeta("archived"), {
+            key: "archived",
+            label: "Arquivada",
+            tone: "muted",
+        });
         assert.deepEqual(conversationStateMeta("unexpected"), {
             key: "unexpected",
             label: "",
@@ -4002,9 +4038,151 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             icon: "fa-undo",
             tone: "reopen",
         });
+        assert.deepEqual(conversationResolutionAction({state: "archived"}), {
+            target: "open",
+            label: "Desarquivar",
+            icon: "fa-inbox",
+            tone: "reopen",
+        });
         assert.strictEqual(conversationResolutionAction({state: "pending"}), false);
         assert.strictEqual(conversationResolutionAction(null), false);
     });
+
+    QUnit.test("normalizes personal pin and mute preferences fail-closed", (assert) => {
+        assert.deepEqual(
+            conversationPreference({
+                preference: {
+                    pinned: true,
+                    pinned_at: "2026-09-04 12:00:00",
+                    muted: true,
+                },
+            }),
+            {
+                pinned: true,
+                pinned_at: "2026-09-04 12:00:00",
+                muted: true,
+            }
+        );
+        assert.deepEqual(conversationPreference({preference: {pinned: 1}}), {
+            pinned: false,
+            pinned_at: false,
+            muted: false,
+        });
+        assert.deepEqual(conversationPreference(false), {
+            pinned: false,
+            pinned_at: false,
+            muted: false,
+        });
+    });
+
+    QUnit.test(
+        "preserves cached tails across segmented conversation cursors",
+        (assert) => {
+            const pinnedCursor = {
+                segment: "pinned",
+                pinned_at: "2026-09-04 12:00:00",
+                channel_id: 20,
+            };
+            assert.ok(
+                conversationFollowsCursor(
+                    {
+                        channel_id: 30,
+                        preference: {
+                            pinned: true,
+                            pinned_at: "2026-09-04 11:59:59",
+                            muted: false,
+                        },
+                    },
+                    pinnedCursor
+                ),
+                "an older pinned row follows a pinned cursor"
+            );
+            assert.ok(
+                conversationFollowsCursor(
+                    {
+                        channel_id: 19,
+                        preference: {
+                            pinned: true,
+                            pinned_at: "2026-09-04 12:00:00",
+                            muted: false,
+                        },
+                    },
+                    pinnedCursor
+                ),
+                "the channel id is the deterministic pinned tie-breaker"
+            );
+            assert.ok(
+                conversationFollowsCursor(
+                    {
+                        channel_id: 99,
+                        last_activity_at: "2026-09-04 15:00:00",
+                        preference: {pinned: false, pinned_at: false, muted: false},
+                    },
+                    pinnedCursor
+                ),
+                "the activity segment always follows the pinned segment"
+            );
+            assert.notOk(
+                conversationFollowsCursor(
+                    {
+                        channel_id: 21,
+                        preference: {
+                            pinned: true,
+                            pinned_at: "2026-09-04 12:00:00",
+                            muted: false,
+                        },
+                    },
+                    pinnedCursor
+                ),
+                "a row before the pinned boundary is not restored"
+            );
+
+            const activityCursor = {
+                segment: "activity",
+                last_activity_at: "2026-09-04 10:00:00",
+                channel_id: 20,
+            };
+            assert.ok(
+                conversationFollowsCursor(
+                    {
+                        channel_id: 19,
+                        last_activity_at: "2026-09-04 10:00:00",
+                        preference: {pinned: false, pinned_at: false, muted: false},
+                    },
+                    activityCursor
+                )
+            );
+            assert.notOk(
+                conversationFollowsCursor(
+                    {
+                        channel_id: 1,
+                        last_activity_at: "2026-09-04 09:00:00",
+                        preference: {
+                            pinned: true,
+                            pinned_at: "2026-09-04 12:00:00",
+                            muted: false,
+                        },
+                    },
+                    activityCursor
+                ),
+                "a stale pinned row is not restored inside the activity segment"
+            );
+            assert.notOk(
+                conversationFollowsCursor(
+                    {
+                        channel_id: 19,
+                        last_activity_at: "2026-09-04 10:00:00",
+                        preference: {pinned: false, pinned_at: false, muted: false},
+                    },
+                    {
+                        last_activity_at: "2026-09-04 10:00:00",
+                        channel_id: 20,
+                    }
+                ),
+                "the obsolete unsegmented cursor shape fails closed"
+            );
+        }
+    );
 
     QUnit.test("persists inbox density and fails closed", (assert) => {
         const values = new Map();
@@ -4193,9 +4371,22 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             const patches = [];
             const reloads = [];
             store.state.filters.state = "open";
-            store.updateConversation = async (patch) => {
-                patches.push(patch);
-                return true;
+            store.state.selectedChannelId = 10;
+            store.state.conversations = [
+                openConversation({channel_id: 10, name: "Atendimento"}),
+            ];
+            store.call = async (method, args) => {
+                assert.strictEqual(method, "update_conversation");
+                assert.strictEqual(args[0], 10);
+                patches.push(args[1]);
+                return {
+                    schema_version: SUPPORTED_SCHEMA_VERSION,
+                    item: openConversation({
+                        channel_id: 10,
+                        name: "Atendimento",
+                        state: args[1].state,
+                    }),
+                };
             };
             store.loadConversations = async (options) => {
                 reloads.push(options);
@@ -4207,11 +4398,76 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             assert.deepEqual(reloads, [{reset: true, selectFirst: true}]);
 
             store.state.filters.state = false;
+            store.state.selectedChannelId = 10;
+            store.state.conversations = [
+                openConversation({
+                    channel_id: 10,
+                    name: "Atendimento",
+                    state: "resolved",
+                }),
+            ];
             assert.ok(await store.setConversationState("open"));
+            assert.deepEqual(patches, [{state: "resolved"}, {state: "open"}]);
             assert.strictEqual(
                 reloads.length,
                 1,
                 "the all-states filter keeps the row"
+            );
+        }
+    );
+
+    QUnit.test(
+        "updates personal pin and mute preferences through one contract",
+        async (assert) => {
+            const store = new ContactCenterStore({
+                orm: {},
+                busService: {},
+                notification: false,
+                inboxDensityStorage: false,
+            });
+            store.state.selectedChannelId = 10;
+            store.state.conversations = [
+                {
+                    channel_id: 10,
+                    state: "open",
+                    preference: {pinned: false, pinned_at: false, muted: false},
+                },
+            ];
+            const calls = [];
+            store.call = async (method, args) => {
+                calls.push({method, args});
+                return {
+                    schema_version: SUPPORTED_SCHEMA_VERSION,
+                    item: {
+                        channel_id: 10,
+                        state: "open",
+                        preference: {
+                            pinned: args[1].pinned === true,
+                            pinned_at:
+                                args[1].pinned === true ? "2026-09-04 12:00:00" : false,
+                            muted: args[1].muted === true,
+                        },
+                    },
+                };
+            };
+            const reloads = [];
+            store.loadConversations = async (options) => {
+                reloads.push(options);
+                return true;
+            };
+
+            assert.ok(await store.toggleConversationPinned());
+            assert.deepEqual(calls[0], {
+                method: "set_conversation_preference",
+                args: [10, {pinned: true}],
+            });
+            assert.ok(store.selectedConversation.preference.pinned);
+            assert.deepEqual(reloads, [{reset: true, silent: true}]);
+            assert.notOk(await store.setConversationPreference({muted: "yes"}));
+            assert.strictEqual(
+                calls.length,
+                1,
+                "invalid preference never reaches the RPC"
             );
         }
     );
@@ -4459,6 +4715,9 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             store.onNotification({detail: [notification("message_created")]});
             store.onNotification({detail: [notification("message_updated", 99)]});
             store.onNotification({detail: [notification("message_updated")]});
+            store.onNotification({
+                detail: [notification("conversation_preference_updated")],
+            });
             store.onNotification({detail: [notification("delivery_updated")]});
             store.onNotification({
                 detail: [notification("delivery_updated", 42, {refresh: true})],
@@ -4468,8 +4727,48 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 {reconnect: false, refreshTimeline: false},
                 {reconnect: false, refreshTimeline: true},
                 {reconnect: false, refreshTimeline: false},
+                {reconnect: false, refreshTimeline: false},
                 {reconnect: false, refreshTimeline: true},
             ]);
+        }
+    );
+
+    QUnit.test(
+        "muted conversations keep realtime but suppress personal attention",
+        (assert) => {
+            const received = [];
+            const attention = {
+                snapshot: () => ({
+                    available: true,
+                    permission: "granted",
+                    sound_enabled: true,
+                    unseen: 0,
+                }),
+                setStateListener() {
+                    return undefined;
+                },
+                receive: (payload) => received.push(payload),
+            };
+            const store = new ContactCenterStore({
+                orm: {},
+                busService: {},
+                notification: false,
+                attention,
+            });
+            store.state.conversations = [
+                {channel_id: 10, preference: {muted: true}},
+                {channel_id: 20, preference: {muted: false}},
+            ];
+
+            store.handleAttentionNotification({channel_id: 10, message_id: 1});
+            store.handleAttentionNotification({
+                channel_id: 20,
+                message_id: 2,
+                personal_attention: false,
+            });
+            store.handleAttentionNotification({channel_id: 20, message_id: 3});
+
+            assert.deepEqual(received, [{channel_id: 20, message_id: 3}]);
         }
     );
 
@@ -5204,6 +5503,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
         store.state.conversations = [
             {
                 channel_id: 10,
+                state: "open",
                 conversation_type: "direct",
                 name: "Identificador",
                 identity: {id: 7, name: "Identificador", persona_kind: "guest"},
@@ -6187,6 +6487,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             });
             const group = {
                 channel_id: 10,
+                state: "open",
                 conversation_type: "group",
                 can_send: true,
                 capabilities: {media: {image: {enabled: true}}, reply: true},
@@ -6218,6 +6519,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
 
             const direct = {
                 channel_id: 20,
+                state: "open",
                 conversation_type: "direct",
                 can_send: true,
                 capabilities: {media: {}},
@@ -6246,7 +6548,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             const existingTag = {id: 1, name: "Comercial", color: 2};
             const discoveredTag = {id: 7, name: "Prioridade", color: 5};
             store.state.bootstrap = {tags: [existingTag]};
-            store.state.conversations = [{channel_id: 60, tags: []}];
+            store.state.conversations = [openConversation({channel_id: 60, tags: []})];
             store.state.selectedChannelId = 60;
             let bootstrapLoads = 0;
             store.loadBootstrap = async () => {
@@ -6258,7 +6560,10 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 assert.deepEqual(args, [60]);
                 return {
                     schema_version: SUPPORTED_SCHEMA_VERSION,
-                    item: {channel_id: 60, tags: [discoveredTag]},
+                    item: openConversation({
+                        channel_id: 60,
+                        tags: [discoveredTag],
+                    }),
                 };
             };
 
@@ -6284,7 +6589,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                     {id: 1, name: "Duplicata antiga", color: 8},
                 ],
             };
-            store.state.conversations = [{channel_id: 60, tags: []}];
+            store.state.conversations = [openConversation({channel_id: 60, tags: []})];
             store.state.selectedChannelId = 60;
             const refreshedTags = [
                 {id: 1, name: "Versão atual", color: 4},
@@ -6294,7 +6599,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             ];
             store.call = async () => ({
                 schema_version: SUPPORTED_SCHEMA_VERSION,
-                item: {channel_id: 60, tags: refreshedTags},
+                item: openConversation({channel_id: 60, tags: refreshedTags}),
             });
 
             assert.ok(await store.refreshSelectedConversation({silent: true}));
@@ -6334,18 +6639,18 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             });
             const discoveredTag = {id: 12, name: "Retorno", color: 6};
             store.state.bootstrap = {tags: []};
-            store.state.conversations = [{channel_id: 60, tags: []}];
+            store.state.conversations = [openConversation({channel_id: 60, tags: []})];
             store.state.selectedChannelId = 60;
             store.call = async () => ({
                 schema_version: SUPPORTED_SCHEMA_VERSION,
-                item: {channel_id: 60, tags: [discoveredTag]},
+                item: openConversation({channel_id: 60, tags: [discoveredTag]}),
             });
             assert.ok(await store.refreshSelectedConversation({silent: true}));
 
             store.state.selectedChannelId = 61;
             store.applyConversationPage(
                 {
-                    items: [{channel_id: 61, tags: []}],
+                    items: [openConversation({channel_id: 61, tags: []})],
                     has_more: false,
                     next_cursor: false,
                     total: 1,
@@ -6354,7 +6659,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             );
             store.call = async () => ({
                 schema_version: SUPPORTED_SCHEMA_VERSION,
-                item: {channel_id: 61, tags: []},
+                item: openConversation({channel_id: 61, tags: []}),
             });
             assert.ok(await store.refreshSelectedConversation({silent: true}));
             assert.deepEqual(
@@ -6382,7 +6687,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 schema_version: SUPPORTED_SCHEMA_VERSION,
                 items: [{channel_id: 1, name: "Top page"}],
                 has_more: true,
-                next_cursor: {channel_id: 1, last_activity_at: "2026-08-21 12:00:00"},
+                next_cursor: activityConversationCursor(1, "2026-08-21 12:00:00"),
                 total: 60,
             });
 
@@ -6440,10 +6745,10 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 name: `Cached ${index + 1}`,
             }));
             store.state.conversationsHaveMore = true;
-            store.state.nextConversationCursor = {
-                channel_id: 120,
-                last_activity_at: "2026-08-21 10:00:00",
-            };
+            store.state.nextConversationCursor = activityConversationCursor(
+                120,
+                "2026-08-21 10:00:00"
+            );
             store.state.selectedChannelId = 110;
             const calls = [];
             store.call = async (_method, _args, kwargs) => {
@@ -6456,10 +6761,10 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                             name: `Fresh ${index + 1}`,
                         })),
                         has_more: true,
-                        next_cursor: {
-                            channel_id: 100,
-                            last_activity_at: "2026-08-21 11:00:00",
-                        },
+                        next_cursor: activityConversationCursor(
+                            100,
+                            "2026-08-21 11:00:00"
+                        ),
                         total: 180,
                     };
                 }
@@ -6470,10 +6775,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                         name: `Fresh ${index + 101}`,
                     })),
                     has_more: true,
-                    next_cursor: {
-                        channel_id: 120,
-                        last_activity_at: "2026-08-21 10:30:00",
-                    },
+                    next_cursor: activityConversationCursor(120, "2026-08-21 10:30:00"),
                     total: false,
                 };
             };
@@ -6486,16 +6788,16 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             assert.strictEqual(calls[0].limit, 100);
             assert.strictEqual(calls[0].cursor, false);
             assert.strictEqual(calls[1].limit, 20);
-            assert.deepEqual(calls[1].cursor, {
-                channel_id: 100,
-                last_activity_at: "2026-08-21 11:00:00",
-            });
+            assert.deepEqual(
+                calls[1].cursor,
+                activityConversationCursor(100, "2026-08-21 11:00:00")
+            );
             assert.strictEqual(store.state.conversations.length, 120);
             assert.strictEqual(store.state.conversations[119].channel_id, 120);
-            assert.deepEqual(store.state.nextConversationCursor, {
-                channel_id: 120,
-                last_activity_at: "2026-08-21 10:30:00",
-            });
+            assert.deepEqual(
+                store.state.nextConversationCursor,
+                activityConversationCursor(120, "2026-08-21 10:30:00")
+            );
             assert.strictEqual(store.state.conversationTotal, 180);
             assert.ok(store.state.conversationsHaveMore);
             assert.strictEqual(
@@ -6533,7 +6835,10 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                         name: `Fresh ${index + 1}`,
                     })),
                     has_more: true,
-                    next_cursor: {channel_id: kwargs.limit},
+                    next_cursor: activityConversationCursor(
+                        kwargs.limit,
+                        conversationActivityAt(kwargs.limit)
+                    ),
                     total: 500,
                 };
             };
@@ -6565,10 +6870,10 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 last_activity_at: conversationActivityAt(index + 1),
             }));
             store.state.conversationsHaveMore = true;
-            store.state.nextConversationCursor = {
-                channel_id: 250,
-                last_activity_at: conversationActivityAt(250),
-            };
+            store.state.nextConversationCursor = activityConversationCursor(
+                250,
+                conversationActivityAt(250)
+            );
             store.state.selectedChannelId = 225;
             const requestedLimits = [];
             store.call = async (_method, _args, kwargs) => {
@@ -6582,10 +6887,10 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                         last_activity_at: conversationActivityAt(start + index + 1),
                     })),
                     has_more: true,
-                    next_cursor: {
-                        channel_id: start + kwargs.limit,
-                        last_activity_at: conversationActivityAt(start + kwargs.limit),
-                    },
+                    next_cursor: activityConversationCursor(
+                        start + kwargs.limit,
+                        conversationActivityAt(start + kwargs.limit)
+                    ),
                     total: 500,
                 };
             };
@@ -6607,20 +6912,17 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             );
             assert.strictEqual(store.state.conversations[199].name, "Fresh 200");
             assert.strictEqual(store.state.conversations[200].name, "Cached 201");
-            assert.deepEqual(store.state.nextConversationCursor, {
-                channel_id: 250,
-                last_activity_at: conversationActivityAt(250),
-            });
+            assert.deepEqual(
+                store.state.nextConversationCursor,
+                activityConversationCursor(250, conversationActivityAt(250))
+            );
             assert.ok(store.state.conversationsHaveMore);
             assert.strictEqual(store.state.selectedChannelId, 225);
 
             store.call = async (_method, _args, kwargs) => {
                 assert.deepEqual(
                     kwargs.cursor,
-                    {
-                        channel_id: 250,
-                        last_activity_at: conversationActivityAt(250),
-                    },
+                    activityConversationCursor(250, conversationActivityAt(250)),
                     "load more continues after the preserved pagination frontier"
                 );
                 return {
@@ -6652,10 +6954,10 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 last_activity_at: conversationActivityAt(index + 1),
             }));
             store.state.conversationsHaveMore = true;
-            store.state.nextConversationCursor = {
-                channel_id: 250,
-                last_activity_at: conversationActivityAt(250),
-            };
+            store.state.nextConversationCursor = activityConversationCursor(
+                250,
+                conversationActivityAt(250)
+            );
             store.state.selectedChannelId = 250;
             let page = 0;
             store.call = async (_method, _args, kwargs) => {
@@ -6681,10 +6983,10 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                                 : conversationActivityAt(channelId),
                     })),
                     has_more: true,
-                    next_cursor: {
-                        channel_id: ids[ids.length - 1],
-                        last_activity_at: conversationActivityAt(ids[ids.length - 1]),
-                    },
+                    next_cursor: activityConversationCursor(
+                        ids[ids.length - 1],
+                        conversationActivityAt(ids[ids.length - 1])
+                    ),
                     total: page === 1 ? 501 : false,
                 };
             };
@@ -6700,10 +7002,10 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 Array.from({length: 250}, (_value, index) => index + 1),
                 "new rows precede the complete previously loaded frontier"
             );
-            assert.deepEqual(store.state.nextConversationCursor, {
-                channel_id: 250,
-                last_activity_at: conversationActivityAt(250),
-            });
+            assert.deepEqual(
+                store.state.nextConversationCursor,
+                activityConversationCursor(250, conversationActivityAt(250))
+            );
             assert.strictEqual(store.state.selectedChannelId, 250);
         }
     );
@@ -6722,10 +7024,10 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 last_activity_at: conversationActivityAt(index + 1),
             }));
             store.state.conversationsHaveMore = true;
-            store.state.nextConversationCursor = {
-                channel_id: 250,
-                last_activity_at: conversationActivityAt(250),
-            };
+            store.state.nextConversationCursor = activityConversationCursor(
+                250,
+                conversationActivityAt(250)
+            );
             const freshIds = [
                 ...Array.from({length: 49}, (_value, index) => index + 1),
                 ...Array.from({length: 151}, (_value, index) => index + 51),
@@ -6743,10 +7045,10 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                         last_activity_at: conversationActivityAt(channelId),
                     })),
                     has_more: true,
-                    next_cursor: {
-                        channel_id: ids[ids.length - 1],
-                        last_activity_at: conversationActivityAt(ids[ids.length - 1]),
-                    },
+                    next_cursor: activityConversationCursor(
+                        ids[ids.length - 1],
+                        conversationActivityAt(ids[ids.length - 1])
+                    ),
                     total: page === 1 ? 499 : false,
                 };
             };
@@ -6763,10 +7065,10 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             assert.strictEqual(store.state.conversations[199].channel_id, 201);
             assert.strictEqual(store.state.conversations[200].channel_id, 202);
             assert.strictEqual(store.state.conversations[248].channel_id, 250);
-            assert.deepEqual(store.state.nextConversationCursor, {
-                channel_id: 250,
-                last_activity_at: conversationActivityAt(250),
-            });
+            assert.deepEqual(
+                store.state.nextConversationCursor,
+                activityConversationCursor(250, conversationActivityAt(250))
+            );
         }
     );
 
@@ -6784,10 +7086,10 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 last_activity_at: conversationActivityAt(index + 1),
             }));
             store.state.conversationsHaveMore = true;
-            store.state.nextConversationCursor = {
-                channel_id: 250,
-                last_activity_at: conversationActivityAt(250),
-            };
+            store.state.nextConversationCursor = activityConversationCursor(
+                250,
+                conversationActivityAt(250)
+            );
             store.state.selectedChannelId = 220;
             const freshIds = [
                 ...Array.from({length: 199}, (_value, index) => index + 1),
@@ -6814,10 +7116,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                                 : conversationActivityAt(channelId),
                     })),
                     has_more: true,
-                    next_cursor: {
-                        channel_id: lastId,
-                        last_activity_at: lastActivityAt,
-                    },
+                    next_cursor: activityConversationCursor(lastId, lastActivityAt),
                     total: page === 1 ? 500 : false,
                 };
             };
@@ -6836,10 +7135,10 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 ],
                 "the moved row does not truncate IDs 200 through 229 from the tail"
             );
-            assert.deepEqual(store.state.nextConversationCursor, {
-                channel_id: 250,
-                last_activity_at: conversationActivityAt(250),
-            });
+            assert.deepEqual(
+                store.state.nextConversationCursor,
+                activityConversationCursor(250, conversationActivityAt(250))
+            );
             assert.strictEqual(store.state.selectedChannelId, 220);
         }
     );
@@ -6858,10 +7157,10 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 last_activity_at: conversationActivityAt(index + 250),
             }));
             store.state.conversationsHaveMore = true;
-            store.state.nextConversationCursor = {
-                channel_id: 250,
-                last_activity_at: conversationActivityAt(499),
-            };
+            store.state.nextConversationCursor = activityConversationCursor(
+                250,
+                conversationActivityAt(499)
+            );
             let page = 0;
             store.call = async (_method, _args, kwargs) => {
                 const start = page * 100;
@@ -6878,12 +7177,10 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                         last_activity_at: conversationActivityAt(start + index),
                     })),
                     has_more: true,
-                    next_cursor: {
-                        channel_id: ids[ids.length - 1],
-                        last_activity_at: conversationActivityAt(
-                            start + ids.length - 1
-                        ),
-                    },
+                    next_cursor: activityConversationCursor(
+                        ids[ids.length - 1],
+                        conversationActivityAt(start + ids.length - 1)
+                    ),
                     total: page === 1 ? 1000 : false,
                 };
             };
@@ -6896,10 +7193,10 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 store.state.conversations.map((item) => item.channel_id),
                 Array.from({length: 200}, (_value, index) => index + 1001)
             );
-            assert.deepEqual(store.state.nextConversationCursor, {
-                channel_id: 1200,
-                last_activity_at: conversationActivityAt(199),
-            });
+            assert.deepEqual(
+                store.state.nextConversationCursor,
+                activityConversationCursor(1200, conversationActivityAt(199))
+            );
             assert.ok(store.state.conversationsHaveMore);
         }
     );
@@ -6929,7 +7226,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 schema_version: SUPPORTED_SCHEMA_VERSION,
                 items: [{channel_id: 20, name: "Current"}],
                 has_more: true,
-                next_cursor: {channel_id: 20},
+                next_cursor: activityConversationCursor(20, "2026-08-21 12:00:00"),
                 total: 2,
             });
             assert.strictEqual(await currentLoad, true);
@@ -6953,7 +7250,10 @@ QUnit.module("contact_center_ui > model", (hooks) => {
 
             store.call = async (method, _args, kwargs) => {
                 assert.strictEqual(method, "list_conversations");
-                assert.deepEqual(kwargs.cursor, {channel_id: 20});
+                assert.deepEqual(
+                    kwargs.cursor,
+                    activityConversationCursor(20, "2026-08-21 12:00:00")
+                );
                 return {
                     schema_version: SUPPORTED_SCHEMA_VERSION,
                     items: [
@@ -6971,6 +7271,177 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 {channel_id: 30, name: "Next"},
             ]);
             assert.strictEqual(store.state.listPhase, "ready");
+        }
+    );
+
+    QUnit.test(
+        "anchors the initial timeline at the first unread and pages forward",
+        async (assert) => {
+            const store = new ContactCenterStore({
+                orm: {},
+                busService: {},
+                notification: false,
+            });
+            store.state.selectedChannelId = 10;
+            store.state.timelineChannelId = 10;
+            store.state.conversations = [
+                {channel_id: 10, unread_count: 47, first_unread_message_id: 101},
+            ];
+            const calls = [];
+            store.call = async (method, args, kwargs) => {
+                calls.push({method, args, kwargs});
+                if (calls.length === 1) {
+                    return {
+                        schema_version: SUPPORTED_SCHEMA_VERSION,
+                        channel_id: 10,
+                        items: [
+                            {message_id: 101, body_text: "First unread"},
+                            {message_id: 102, body_text: "Next unread"},
+                        ],
+                        anchor_message_id: 101,
+                        has_more: true,
+                        next_before_message_id: 101,
+                        has_more_forward: true,
+                        next_after_message_id: 102,
+                    };
+                }
+                return {
+                    schema_version: SUPPORTED_SCHEMA_VERSION,
+                    channel_id: 10,
+                    items: [{message_id: 103, body_text: "Newest unread"}],
+                    has_more: false,
+                    next_before_message_id: false,
+                    has_more_forward: false,
+                    next_after_message_id: 103,
+                };
+            };
+
+            assert.ok(await store.loadTimeline({reset: true}));
+            assert.deepEqual(calls[0], {
+                method: "get_timeline",
+                args: [10],
+                kwargs: {
+                    before_message_id: false,
+                    anchor_message_id: 101,
+                    limit: 50,
+                },
+            });
+            assert.strictEqual(store.state.timelineFirstUnreadMessageId, 101);
+            assert.ok(store.state.timelineHasMoreForward);
+            assert.strictEqual(store.state.nextAfterMessageId, 102);
+            assert.strictEqual(
+                calls.length,
+                1,
+                "opening does not mark the unread tail seen"
+            );
+
+            assert.ok(await store.loadNewerMessages());
+            assert.deepEqual(calls[1], {
+                method: "get_timeline",
+                args: [10],
+                kwargs: {
+                    before_message_id: false,
+                    after_message_id: 102,
+                    limit: 50,
+                },
+            });
+            assert.deepEqual(
+                store.state.messages.map((message) => message.message_id),
+                [101, 102, 103]
+            );
+            assert.notOk(store.state.timelineHasMoreForward);
+            assert.strictEqual(
+                store.timelineContiguousCursor,
+                103,
+                "forward paging advances the realtime continuity boundary"
+            );
+        }
+    );
+
+    QUnit.test(
+        "retries a failed seen pointer before clearing unread state",
+        async (assert) => {
+            const retryCallbacks = [];
+            const realtimeTimer = {
+                setTimeout(callback, delay) {
+                    retryCallbacks.push({callback, delay});
+                    return retryCallbacks.length;
+                },
+                clearTimeout() {
+                    return undefined;
+                },
+            };
+            const store = new ContactCenterStore({
+                orm: {},
+                busService: {},
+                notification: false,
+                realtimeTimer,
+            });
+            store.state.selectedChannelId = 10;
+            store.state.timelineChannelId = 10;
+            store.state.timelineFirstUnreadMessageId = 101;
+            store.state.messages = [{message_id: 101}, {message_id: 102}];
+            store.state.conversations = [
+                {
+                    channel_id: 10,
+                    state: "open",
+                    unread_count: 2,
+                    first_unread_message_id: 101,
+                },
+            ];
+            let calls = 0;
+            store.call = async (method, args) => {
+                assert.strictEqual(method, "mark_seen");
+                assert.deepEqual(args, [10, 102]);
+                calls += 1;
+                if (calls === 1) {
+                    throw new Error("temporary transport failure");
+                }
+                return {channel_id: 10, message_id: 102};
+            };
+
+            assert.notOk(await store.markSeen(102));
+            assert.strictEqual(store.selectedConversation.unread_count, 2);
+            assert.strictEqual(retryCallbacks.length, 1);
+            assert.strictEqual(retryCallbacks[0].delay, 1000);
+            await retryCallbacks[0].callback();
+            assert.strictEqual(calls, 2);
+            assert.strictEqual(store.selectedConversation.unread_count, 0);
+            assert.notOk(store.state.timelineFirstUnreadMessageId);
+        }
+    );
+
+    QUnit.test(
+        "removes a selected conversation that no longer matches the state tab",
+        async (assert) => {
+            const store = new ContactCenterStore({
+                orm: {},
+                busService: {},
+                notification: false,
+            });
+            store.state.filters.state = "open";
+            store.state.selectedChannelId = 10;
+            store.state.timelineChannelId = 10;
+            store.state.conversations = [{channel_id: 10, state: "open"}];
+            store.state.messages = [{message_id: 1}];
+            let listReloaded = false;
+            store.call = async (method) => {
+                assert.strictEqual(method, "get_conversation");
+                return {
+                    schema_version: SUPPORTED_SCHEMA_VERSION,
+                    item: {channel_id: 10, state: "resolved"},
+                };
+            };
+            store.loadConversations = async ({reset, selectFirst}) => {
+                listReloaded = reset && selectFirst;
+                return true;
+            };
+
+            assert.ok(await store.refreshSelectedConversation({silent: true}));
+            assert.notOk(store.state.selectedChannelId);
+            assert.deepEqual(store.state.conversations, []);
+            assert.deepEqual(store.state.messages, []);
+            assert.ok(listReloaded, "the active tab is reloaded after removal");
         }
     );
 
@@ -7624,6 +8095,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             store.state.conversations = [
                 {
                     channel_id: 10,
+                    state: "open",
                     conversation_type: "direct",
                     capabilities: {view_attribution: true},
                 },
@@ -7644,6 +8116,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
 
             store.replaceConversation({
                 channel_id: 10,
+                state: "open",
                 conversation_type: "direct",
                 capabilities: {view_attribution: false},
             });

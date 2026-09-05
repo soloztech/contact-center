@@ -15,7 +15,7 @@ normative project decisions remain in [`plan.md`](../plan.md).
 | [`wuzapi-event-coverage.md`](wuzapi-event-coverage.md)                           | Classifies every pinned WuzAPI webhook family as projected, intentionally unsupported or deferred, including the observability contract.              |
 | [`wuzapi-group-metadata.md`](wuzapi-group-metadata.md)                           | Records authoritative group metadata pulls, hint events, technical PN/LID rosters, complete/partial snapshots, avatar bounds and the aggregate UI.    |
 | [`inbox-owner-team-access.md`](inbox-owner-team-access.md)                       | Defines the union of direct inbox ownership and shared team access, including the optional authoritative CRM roster projection.                       |
-| [`service-pipeline-core.md`](service-pipeline-core.md)                           | Defines provider-neutral service pipelines and cases, immutable transitions, and the optional CRM bridge contracts.                                   |
+| [`service-pipeline-core.md`](service-pipeline-core.md)                           | Defines the optional Kanban addon's service pipelines and cases, immutable transitions, and CRM bridge contracts.                                     |
 | [`meta-click-to-whatsapp-attribution.md`](meta-click-to-whatsapp-attribution.md) | Audits Meta/CTWA webhook metadata and defines the provider-neutral DTO, immutable touchpoint ledger, dedupe/enrichment and future CRM bridge.         |
 | [`meta-messenger-instagram.md`](meta-messenger-instagram.md)                     | Records official Messenger/Instagram contracts and the implemented Phase 6.1–6.5 shared-runtime architecture, greenfield validation and future gates. |
 

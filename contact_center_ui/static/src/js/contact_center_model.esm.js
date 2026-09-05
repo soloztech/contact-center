@@ -263,6 +263,7 @@ const REALTIME_STATUS_METADATA = Object.freeze({
 const CONVERSATION_STATE_METADATA = Object.freeze({
     open: Object.freeze({key: "open", label: "Aberta", tone: "progress"}),
     resolved: Object.freeze({key: "resolved", label: "Resolvida", tone: "success"}),
+    archived: Object.freeze({key: "archived", label: "Arquivada", tone: "muted"}),
 });
 const CONVERSATION_RESOLUTION_ACTIONS = Object.freeze({
     open: Object.freeze({
@@ -277,7 +278,14 @@ const CONVERSATION_RESOLUTION_ACTIONS = Object.freeze({
         icon: "fa-undo",
         tone: "reopen",
     }),
+    archived: Object.freeze({
+        target: "open",
+        label: "Desarquivar",
+        icon: "fa-inbox",
+        tone: "reopen",
+    }),
 });
+
 const CONNECTION_HEALTH_METADATA = Object.freeze({
     connected: Object.freeze({
         state: "connected",
@@ -403,6 +411,21 @@ function isPlainObject(value) {
     } catch {
         return false;
     }
+}
+
+export function conversationPreference(conversation) {
+    const source =
+        isPlainObject(conversation) && isPlainObject(conversation.preference)
+            ? conversation.preference
+            : {};
+    return {
+        pinned: source.pinned === true,
+        pinned_at:
+            typeof source.pinned_at === "string" && source.pinned_at.trim()
+                ? source.pinned_at.trim()
+                : false,
+        muted: source.muted === true,
+    };
 }
 
 function positiveInteger(value) {

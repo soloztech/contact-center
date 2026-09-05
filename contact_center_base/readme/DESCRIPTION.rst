@@ -6,11 +6,16 @@ bindings, durable inbox/outbox ledgers and a stable local API for a dedicated fr
 The ledgers preserve domain state and audit evidence; OCA ``queue_job`` provides the
 actual asynchronous executor, concurrency control and retry schedule.
 
-Canonical conversations use only ``open`` and ``resolved`` operational states.  Each
-logical inbox may optionally reopen a resolved conversation when a genuinely new
-inbound message is accepted after provider deduplication.  Webhook replays, receipts,
-mutations and self-side echoes do not reopen it, and the existing responsible agent is
-preserved.
+Canonical conversations use only ``open``, ``resolved`` and ``archived`` operational
+states. A genuinely new inbound message accepted after provider deduplication always
+reopens a resolved conversation, while an archived conversation deliberately remains
+archived. Webhook replays, receipts, mutations and self-side echoes do not change its
+lifecycle, and the existing responsible agent is preserved.
+
+Pinning and muting are sparse preferences scoped to one user and conversation. Pinning
+changes only that user's list order. Muting suppresses only that user's browser
+attention signal; the message, unread state and realtime invalidation are still
+persisted and delivered normally.
 
 Remote participants remain ``mail.guest`` records until an agent explicitly links
 their identity to an existing or newly created contact.

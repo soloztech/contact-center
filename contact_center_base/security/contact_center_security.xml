@@ -60,6 +60,14 @@
             <field name="groups" eval="[(4, ref('group_contact_center_agent'))]" />
             <field name="domain_force">[('company_id', 'in', company_ids)]</field>
         </record>
+        <record id="rule_contact_center_conversation_preference_self" model="ir.rule">
+            <field name="name">Contact Center personal conversation preferences</field>
+            <field name="model_id" ref="model_contact_center_conversation_preference" />
+            <field name="groups" eval="[(4, ref('group_contact_center_agent'))]" />
+            <field
+                name="domain_force"
+            >[('user_id', '=', user.id), ('company_id', 'in', company_ids), ('channel_id.channel_member_ids.partner_id', '=', user.partner_id.id)]</field>
+        </record>
         <record id="rule_contact_center_account_company" model="ir.rule">
             <field name="name">Contact Center accounts by operational scope</field>
             <field name="model_id" ref="model_contact_center_account" />

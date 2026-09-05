@@ -376,11 +376,15 @@ DTOs, an adapter registry, persistent guest identities and aliases, transport
 bindings, durable inbox/outbox ledgers and a stable local API for a dedicated frontend.
 The ledgers preserve domain state and audit evidence; OCA <tt class="docutils literal">queue_job</tt> provides the
 actual asynchronous executor, concurrency control and retry schedule.</p>
-<p>Canonical conversations use only <tt class="docutils literal">open</tt> and <tt class="docutils literal">resolved</tt> operational states.  Each
-logical inbox may optionally reopen a resolved conversation when a genuinely new
-inbound message is accepted after provider deduplication.  Webhook replays, receipts,
-mutations and self-side echoes do not reopen it, and the existing responsible agent is
-preserved.</p>
+<p>Canonical conversations use only <tt class="docutils literal">open</tt>, <tt class="docutils literal">resolved</tt> and <tt class="docutils literal">archived</tt> operational
+states. A genuinely new inbound message accepted after provider deduplication always
+reopens a resolved conversation, while an archived conversation deliberately remains
+archived. Webhook replays, receipts, mutations and self-side echoes do not change its
+lifecycle, and the existing responsible agent is preserved.</p>
+<p>Pinning and muting are sparse preferences scoped to one user and conversation. Pinning
+changes only that user’s list order. Muting suppresses only that user’s browser
+attention signal; the message, unread state and realtime invalidation are still
+persisted and delivered normally.</p>
 <p>Remote participants remain <tt class="docutils literal">mail.guest</tt> records until an agent explicitly links
 their identity to an existing or newly created contact.</p>
 <p>Identity linking is person-first.  The normal flow accepts a personal
@@ -420,7 +424,7 @@ provider fields to the core.</p>
 <li><a class="reference internal" href="#group-metadata" id="toc-entry-2">Group metadata</a></li>
 <li><a class="reference internal" href="#provider-configuration" id="toc-entry-3">Provider configuration</a></li>
 <li><a class="reference internal" href="#queue-runtime" id="toc-entry-4">Queue runtime</a></li>
-<li><a class="reference internal" href="#cases-pipelines-and-productivity" id="toc-entry-5">Cases, pipelines and productivity</a></li>
+<li><a class="reference internal" href="#operational-productivity" id="toc-entry-5">Operational productivity</a></li>
 <li><a class="reference internal" href="#bug-tracker" id="toc-entry-6">Bug Tracker</a></li>
 <li><a class="reference internal" href="#credits" id="toc-entry-7">Credits</a><ul>
 <li><a class="reference internal" href="#authors" id="toc-entry-8">Authors</a></li>
@@ -496,25 +500,13 @@ active job. An outbox record that has crossed the durable dispatch boundary is n
 blindly requeued: a resumed execution is classified as <tt class="docutils literal">uncertain</tt> for manual
 reconciliation.</p>
 </div>
-<div class="section" id="cases-pipelines-and-productivity">
-<h1><a class="toc-backref" href="#toc-entry-5">Cases, pipelines and productivity</a></h1>
-<p>Each conversation owns one canonical service case. Pipelines and stages are
-provider-neutral operational state: inboxes and teams select which pipelines are
-available, transitions are idempotent and revision-checked, and the immutable
-transition ledger records both effective moves and deliberate no-ops. Default
-pipelines and canonical conversation cases cannot be archived; other records use
-explicit archive services that reject live references and open follow-ups.</p>
-<p>The core lock order is account, team, user, pipeline, channel and case. Topology
-revisions fence concurrent roster, routing, pipeline and case changes. Optional
-bridges must extend this order through the documented case hook instead of taking
-their own authority locks before or after the core graph arbitrarily.</p>
-<p>Operational productivity reuses native Odoo records behind durable Contact Center
-receipts:</p>
+<div class="section" id="operational-productivity">
+<h1><a class="toc-backref" href="#toc-entry-5">Operational productivity</a></h1>
+<p>The provider-neutral base exposes productivity features which do not require a
+business workflow addon:</p>
 <ul class="simple">
 <li>internal notes are immutable <tt class="docutils literal">mail.message</tt> comments with <tt class="docutils literal">mail.mt_note</tt> and
 never create an outbox;</li>
-<li>follow-ups are native <tt class="docutils literal">mail.activity</tt> records on the canonical case, with
-company, assignee and conversation-scope validation;</li>
 <li>scheduled external messages are provider-neutral, cancelable intents dispatched
 by OCA <tt class="docutils literal">queue_job</tt> only after their due time and a fresh authorization check; the
 immutable <tt class="docutils literal">outbound_request_id</tt> preserves the exact request that was admitted; and</li>
@@ -526,6 +518,9 @@ wins.</li>
 <p>There is intentionally no automatic backfill for historical <tt class="docutils literal">mail.shortcode</tt> rows.
 Administrators opt each reusable text into an audience explicitly, which keeps a new
 or upgraded installation fail-closed.</p>
+<p>Install <tt class="docutils literal">contact_center_kanban</tt> when service cases, configurable pipelines, Kanban
+stages, transition history or case-scoped follow-ups are required. The base addon has
+no models, fields, hooks or database assumptions from that optional workflow.</p>
 </div>
 <div class="section" id="bug-tracker">
 <h1><a class="toc-backref" href="#toc-entry-6">Bug Tracker</a></h1>

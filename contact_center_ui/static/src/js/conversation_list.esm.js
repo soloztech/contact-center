@@ -4,6 +4,7 @@ import {Component, onWillDestroy, useRef, useState} from "@odoo/owl";
 import {
     conversationAvatarUrl,
     conversationDisplayName,
+    conversationPreference,
     filterConversationsByResponsibility,
     groupMetadataUi,
     initials,
@@ -296,7 +297,18 @@ export class ConversationList extends Component {
         if (conversation.unread_count) {
             classes.push("has-unread");
         }
+        const preference = conversationPreference(conversation);
+        if (preference.pinned) {
+            classes.push("is-pinned");
+        }
+        if (preference.muted) {
+            classes.push("is-muted");
+        }
         return classes.join(" ");
+    }
+
+    preference(conversation) {
+        return conversationPreference(conversation);
     }
 
     relativeDate(value) {

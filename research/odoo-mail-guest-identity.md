@@ -264,12 +264,12 @@ linked partners.
 
 These concepts must remain separate:
 
-| Native Odoo state                     | External platform state                    |
-| ------------------------------------- | ------------------------------------------ |
-| `mail.channel.member.seen_message_id` | Provider receipt: delivered/read           |
-| `message_unread_counter`              | External participant unread state          |
-| Discuss typing indicator              | WhatsApp/Telegram presence or typing event |
-| Discuss pin/fold state                | Contact-center open/pending/resolved state |
+| Native Odoo state                     | External platform state                     |
+| ------------------------------------- | ------------------------------------------- |
+| `mail.channel.member.seen_message_id` | Provider receipt: delivered/read            |
+| `message_unread_counter`              | External participant unread state           |
+| Discuss typing indicator              | WhatsApp/Telegram presence or typing event  |
+| Discuss pin/fold state                | Contact-center open/resolved/archived state |
 
 External receipts belong to `contact.center.delivery.event`. They must not update a
 guest or agent member's native seen pointer.

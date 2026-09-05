@@ -30,11 +30,16 @@ bindings, durable inbox/outbox ledgers and a stable local API for a dedicated fr
 The ledgers preserve domain state and audit evidence; OCA ``queue_job`` provides the
 actual asynchronous executor, concurrency control and retry schedule.
 
-Canonical conversations use only ``open`` and ``resolved`` operational states.  Each
-logical inbox may optionally reopen a resolved conversation when a genuinely new
-inbound message is accepted after provider deduplication.  Webhook replays, receipts,
-mutations and self-side echoes do not reopen it, and the existing responsible agent is
-preserved.
+Canonical conversations use only ``open``, ``resolved`` and ``archived`` operational
+states. A genuinely new inbound message accepted after provider deduplication always
+reopens a resolved conversation, while an archived conversation deliberately remains
+archived. Webhook replays, receipts, mutations and self-side echoes do not change its
+lifecycle, and the existing responsible agent is preserved.
+
+Pinning and muting are sparse preferences scoped to one user and conversation. Pinning
+changes only that user's list order. Muting suppresses only that user's browser
+attention signal; the message, unread state and realtime invalidation are still
+persisted and delivered normally.
 
 Remote participants remain ``mail.guest`` records until an agent explicitly links
 their identity to an existing or newly created contact.
@@ -153,28 +158,14 @@ active job. An outbox record that has crossed the durable dispatch boundary is n
 blindly requeued: a resumed execution is classified as ``uncertain`` for manual
 reconciliation.
 
-Cases, pipelines and productivity
-=================================
+Operational productivity
+========================
 
-Each conversation owns one canonical service case. Pipelines and stages are
-provider-neutral operational state: inboxes and teams select which pipelines are
-available, transitions are idempotent and revision-checked, and the immutable
-transition ledger records both effective moves and deliberate no-ops. Default
-pipelines and canonical conversation cases cannot be archived; other records use
-explicit archive services that reject live references and open follow-ups.
-
-The core lock order is account, team, user, pipeline, channel and case. Topology
-revisions fence concurrent roster, routing, pipeline and case changes. Optional
-bridges must extend this order through the documented case hook instead of taking
-their own authority locks before or after the core graph arbitrarily.
-
-Operational productivity reuses native Odoo records behind durable Contact Center
-receipts:
+The provider-neutral base exposes productivity features which do not require a
+business workflow addon:
 
 * internal notes are immutable ``mail.message`` comments with ``mail.mt_note`` and
   never create an outbox;
-* follow-ups are native ``mail.activity`` records on the canonical case, with
-  company, assignee and conversation-scope validation;
 * scheduled external messages are provider-neutral, cancelable intents dispatched
   by OCA ``queue_job`` only after their due time and a fresh authorization check; the
   immutable ``outbound_request_id`` preserves the exact request that was admitted; and
@@ -186,6 +177,10 @@ receipts:
 There is intentionally no automatic backfill for historical ``mail.shortcode`` rows.
 Administrators opt each reusable text into an audience explicitly, which keeps a new
 or upgraded installation fail-closed.
+
+Install ``contact_center_kanban`` when service cases, configurable pipelines, Kanban
+stages, transition history or case-scoped follow-ups are required. The base addon has
+no models, fields, hooks or database assumptions from that optional workflow.
 
 Bug Tracker
 ===========

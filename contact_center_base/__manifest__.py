@@ -1,7 +1,7 @@
 {
     "name": "Contact Center Base",
     "summary": "Provider-neutral contact center foundation",
-    "version": "16.0.1.43.5",
+    "version": "16.0.1.0.0",
     "category": "Productivity/Discuss",
     "author": "Soloz Technologies",
     "website": "https://github.com/soloztech/contact-center",
@@ -10,7 +10,7 @@
     "data": [
         "security/contact_center_security.xml",
         "security/ir.model.access.csv",
-        "security/contact_center_pipeline_security.xml",
+        "security/contact_center_productivity_security.xml",
         "data/queue_job.xml",
         "data/queue_recovery_cron.xml",
         "data/connection_health_cron.xml",
@@ -24,7 +24,6 @@
         "views/media_views.xml",
         "views/attribution_views.xml",
         "views/menus.xml",
-        "views/pipeline_views.xml",
     ],
     "assets": {
         "web.assets_backend": [
@@ -40,5 +39,4 @@
     },
     "installable": True,
     "application": False,
-    "post_init_hook": "post_init_hook",
 }

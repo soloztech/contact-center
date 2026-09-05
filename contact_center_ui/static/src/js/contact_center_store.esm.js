@@ -3,6 +3,7 @@
 import {
     CONNECTION_HEALTH_EVENT_TYPE,
     contactCenterNotifications,
+    conversationPreference,
     conversationStateMeta,
     conversationUiPolicy,
     filterConversationsByResponsibility,
@@ -29,7 +30,8 @@ const REALTIME_REFRESH_LIMIT = 200;
 const TIMELINE_LIMIT = 50;
 const TIMELINE_REFRESH_LIMIT = 100;
 const TIMELINE_FORWARD_MAX_PAGES = 20;
-const TIMELINE_MODES = new Set(["reset", "older", "refresh_latest"]);
+const TIMELINE_MODES = new Set(["reset", "older", "newer", "refresh_latest"]);
+const SEEN_RETRY_DELAYS = Object.freeze([1000, 3000, 10000]);
 const CONNECTION_HEALTH_INVALIDATION_DELAY = 160;
 const INBOX_DENSITY_STORAGE_KEY = "contact_center_ui.inbox_density.v1";
 const INBOX_DENSITIES = new Set(["comfortable", "compact"]);
@@ -43,6 +45,7 @@ const CONNECTION_HEALTH_REFRESH_DELAYS = Object.freeze([
 ]);
 const SYNCHRONIZING_EVENTS = new Set([
     "conversation_updated",
+    "conversation_preference_updated",
     "delivery_updated",
     "identity_updated",
     "message_created",
@@ -67,6 +70,34 @@ const OPERATION_JOURNAL_TTL_MS = 24 * 60 * 60 * 1000;
 const OPERATION_FINGERPRINT_PATTERN = /^[0-9a-f]{32}$/;
 const UUID_PATTERN =
     /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+function timelineLoadingPhase(mode) {
+    if (mode === "reset") {
+        return "loading";
+    }
+    return mode === "newer" ? "loading_newer" : "loading_more";
+}
+
+function initialUnreadMessageId(mode, conversation) {
+    const messageId = conversation && conversation.first_unread_message_id;
+    return mode === "reset" && Number.isSafeInteger(messageId) && messageId > 0
+        ? messageId
+        : false;
+}
+
+function timelineQuery(mode, limit, beforeMessageId, afterMessageId, anchorMessageId) {
+    const query = {
+        before_message_id: mode === "older" ? beforeMessageId : false,
+        limit,
+    };
+    if (mode === "newer") {
+        query.after_message_id = afterMessageId;
+    }
+    if (anchorMessageId) {
+        query.anchor_message_id = anchorMessageId;
+    }
+    return query;
+}
 
 function isPlainRecord(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -549,27 +580,68 @@ function normalizedConversationItems(items) {
     return result;
 }
 
-function conversationFollowsCursor(item, cursor) {
-    const activityAt =
-        item && typeof item.last_activity_at === "string"
-            ? item.last_activity_at.trim()
-            : "";
-    const cursorActivityAt =
-        cursor && typeof cursor.last_activity_at === "string"
-            ? cursor.last_activity_at.trim()
-            : "";
+function cursorText(value) {
+    return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizedConversationCursor(item, cursor) {
+    const channelId = Number(item && item.channel_id);
     const cursorChannelId = Number(cursor && cursor.channel_id);
+    const segment = cursor && cursor.segment;
     if (
-        !activityAt ||
-        !cursorActivityAt ||
+        !Number.isSafeInteger(channelId) ||
+        channelId <= 0 ||
         !Number.isSafeInteger(cursorChannelId) ||
-        cursorChannelId <= 0
+        cursorChannelId <= 0 ||
+        !["pinned", "activity"].includes(segment)
     ) {
         return false;
     }
-    return (
-        activityAt < cursorActivityAt ||
-        (activityAt === cursorActivityAt && item.channel_id < cursorChannelId)
+    return {
+        channelId,
+        cursorChannelId,
+        segment,
+        pinnedAt: cursorText(item && item.preference && item.preference.pinned_at),
+        cursorPinnedAt: cursorText(cursor && cursor.pinned_at),
+        activityAt: cursorText(item && item.last_activity_at),
+        cursorActivityAt: cursorText(cursor && cursor.last_activity_at),
+    };
+}
+
+function orderedValueFollows(value, itemId, cursorValue, cursorId) {
+    return Boolean(
+        value &&
+            cursorValue &&
+            (value < cursorValue || (value === cursorValue && itemId < cursorId))
+    );
+}
+
+export function conversationFollowsCursor(item, cursor) {
+    const boundary = normalizedConversationCursor(item, cursor);
+    if (!boundary) {
+        return false;
+    }
+    const preference = conversationPreference(item);
+    if (boundary.segment === "pinned") {
+        if (!preference.pinned) {
+            // Every activity-sorted row follows the complete pinned segment.
+            return true;
+        }
+        return orderedValueFollows(
+            boundary.pinnedAt,
+            boundary.channelId,
+            boundary.cursorPinnedAt,
+            boundary.cursorChannelId
+        );
+    }
+    if (preference.pinned) {
+        return false;
+    }
+    return orderedValueFollows(
+        boundary.activityAt,
+        boundary.channelId,
+        boundary.cursorActivityAt,
+        boundary.cursorChannelId
     );
 }
 
@@ -797,6 +869,9 @@ export class ContactCenterStore {
             messages: [],
             timelineHasMore: false,
             nextBeforeMessageId: false,
+            timelineHasMoreForward: false,
+            nextAfterMessageId: false,
+            timelineFirstUnreadMessageId: false,
             attribution: {
                 channelId: false,
                 phase: "idle",
@@ -874,6 +949,8 @@ export class ContactCenterStore {
         this.timelineForwardPageCount = 0;
         this.timelineContiguousChannelId = false;
         this.timelineContiguousCursor = false;
+        this.seenRetryTimer = null;
+        this.seenRetryToken = 0;
         this.attributionRequest = 0;
         this.searchTimer = null;
         this.contactSearchTimer = null;
@@ -1212,6 +1289,7 @@ export class ContactCenterStore {
 
     destroy() {
         this.destroyed = true;
+        this.cancelSeenRetry();
         this.started = false;
         this.busService.removeEventListener("notification", this.onNotification);
         this.busService.removeEventListener("connect", this.onConnect);
@@ -1465,6 +1543,7 @@ export class ContactCenterStore {
     }
 
     clearConversationSelection({closePanes = false} = {}) {
+        this.cancelSeenRetry();
         this.timelineRequest += 1;
         this.resetTimelineContinuity();
         this.resetAttribution();
@@ -1475,6 +1554,9 @@ export class ContactCenterStore {
         this.state.messages = [];
         this.state.timelineHasMore = false;
         this.state.nextBeforeMessageId = false;
+        this.state.timelineHasMoreForward = false;
+        this.state.nextAfterMessageId = false;
+        this.state.timelineFirstUnreadMessageId = false;
         this.state.timelinePhase = "idle";
         this.state.replyTo = false;
         this.closeContactLinker();
@@ -1782,6 +1864,7 @@ export class ContactCenterStore {
         }
         this.state.selectedChannelId = channelId;
         if (changedConversation) {
+            this.cancelSeenRetry();
             // A latest-page bus refresh can overtake the initial reset request.
             // Clear the previous channel projection immediately and stamp the
             // empty timeline so that no response can merge two conversations.
@@ -1791,6 +1874,9 @@ export class ContactCenterStore {
             this.state.messages = [];
             this.state.timelineHasMore = false;
             this.state.nextBeforeMessageId = false;
+            this.state.timelineHasMoreForward = false;
+            this.state.nextAfterMessageId = false;
+            this.state.timelineFirstUnreadMessageId = false;
             this.state.timelinePhase = "idle";
             this.resetAttribution(channelId);
             this.resetProductivity(channelId);
@@ -2377,12 +2463,49 @@ export class ContactCenterStore {
         );
     }
 
+    applyNewerTimelinePage(payload, incomingPage, existing, channelId) {
+        this.state.messages = mergeTimelineItems(existing, incomingPage, {
+            prepend: false,
+        });
+        this.state.timelineChannelId = channelId;
+        this.advanceTimelineContinuity(channelId, payload.next_after_message_id);
+        this.state.timelineHasMoreForward = Boolean(payload.has_more_forward);
+        this.state.nextAfterMessageId = payload.next_after_message_id || false;
+        this.state.timelinePhase = "ready";
+        this.reconcileReplySelection();
+    }
+
+    applyTimelineCursors(payload, mode, hadMessages, reanchorLatest) {
+        if (mode !== "refresh_latest" || !hadMessages || reanchorLatest) {
+            this.state.timelineHasMore = Boolean(payload.has_more);
+            this.state.nextBeforeMessageId = payload.next_before_message_id || false;
+        }
+        if (mode !== "reset") {
+            return;
+        }
+        this.state.timelineHasMoreForward = Boolean(payload.has_more_forward);
+        this.state.nextAfterMessageId = payload.next_after_message_id || false;
+        this.state.timelineFirstUnreadMessageId =
+            Number.isSafeInteger(payload.anchor_message_id) &&
+            payload.anchor_message_id > 0
+                ? payload.anchor_message_id
+                : false;
+    }
+
     applyTimelinePage(payload, mode, channelId, {markSeen = true} = {}) {
         const incoming = Array.isArray(payload.items) ? payload.items : [];
         const incomingPage = mergeTimelineItems([], incoming, {prepend: false});
         const ownsTimeline = this.state.timelineChannelId === channelId;
         const existing = ownsTimeline ? this.state.messages : [];
         const hadMessages = Boolean(existing.length);
+        if (mode === "newer") {
+            return this.applyNewerTimelinePage(
+                payload,
+                incomingPage,
+                existing,
+                channelId
+            );
+        }
         // Message IDs from mail.message are global and may contain arbitrary
         // gaps. Equality with at least one real ID is the only safe proof that
         // both pages form one continuous loaded window.
@@ -2419,14 +2542,16 @@ export class ContactCenterStore {
         // bus notification cannot discard the agent's pagination position. If
         // there is no real overlap, reanchor and expose the newest page's cursor
         // instead of presenting two disconnected history islands as continuous.
-        if (mode !== "refresh_latest" || !hadMessages || reanchorLatest) {
-            this.state.timelineHasMore = Boolean(payload.has_more);
-            this.state.nextBeforeMessageId = payload.next_before_message_id || false;
-        }
+        this.applyTimelineCursors(payload, mode, hadMessages, reanchorLatest);
         this.state.timelinePhase = "ready";
         this.reconcileReplySelection();
         const latest = this.state.messages[this.state.messages.length - 1];
-        if (latest && mode !== "refresh_latest" && markSeen) {
+        if (
+            latest &&
+            mode !== "refresh_latest" &&
+            markSeen &&
+            !this.state.timelineFirstUnreadMessageId
+        ) {
             this.markSeen(latest.message_id);
         }
     }
@@ -2625,6 +2750,7 @@ export class ContactCenterStore {
         mode = reset ? "reset" : "older",
         silent = false,
         limit = TIMELINE_LIMIT,
+        anchorUnread = true,
     } = {}) {
         const channelId = this.state.selectedChannelId;
         if (!channelId || this.destroyed) {
@@ -2635,14 +2761,20 @@ export class ContactCenterStore {
         }
         const request = ++this.timelineRequest;
         if (!silent) {
-            this.state.timelinePhase = mode === "reset" ? "loading" : "loading_more";
+            this.state.timelinePhase = timelineLoadingPhase(mode);
         }
         try {
-            const payload = await this.call("get_timeline", [channelId], {
-                before_message_id:
-                    mode === "older" ? this.state.nextBeforeMessageId : false,
+            const firstUnreadMessageId = anchorUnread
+                ? initialUnreadMessageId(mode, this.selectedConversation)
+                : false;
+            const query = timelineQuery(
+                mode,
                 limit,
-            });
+                this.state.nextBeforeMessageId,
+                this.state.nextAfterMessageId,
+                firstUnreadMessageId
+            );
+            const payload = await this.call("get_timeline", [channelId], query);
             validateEnvelope(payload);
             if (!this.isCurrentTimelineRequest(request, channelId)) {
                 return false;
@@ -2675,7 +2807,25 @@ export class ContactCenterStore {
         return this.loadTimeline({reset: false});
     }
 
+    loadNewerMessages() {
+        if (
+            this.state.timelinePhase === "loading_newer" ||
+            !this.state.timelineHasMoreForward ||
+            !this.state.nextAfterMessageId
+        ) {
+            return Promise.resolve(false);
+        }
+        return this.loadTimeline({reset: false, mode: "newer"});
+    }
+
+    jumpToLatest() {
+        return this.loadTimeline({reset: true, anchorUnread: false});
+    }
+
     refreshLatestTimeline() {
+        if (this.state.timelineHasMoreForward) {
+            return Promise.resolve(false);
+        }
         return this.loadTimeline({
             mode: "refresh_latest",
             silent: true,
@@ -2683,20 +2833,76 @@ export class ContactCenterStore {
         });
     }
 
-    async markSeen(messageId) {
-        const channelId = this.state.selectedChannelId;
-        if (!channelId) {
-            return;
+    cancelSeenRetry() {
+        this.seenRetryToken += 1;
+        if (this.seenRetryTimer !== null) {
+            this.realtimeTimer.clearTimeout(this.seenRetryTimer);
+            this.seenRetryTimer = null;
         }
-        const conversation = this.selectedConversation;
-        if (conversation) {
-            conversation.unread_count = 0;
+    }
+
+    scheduleSeenRetry(channelId, messageId, token, attempt) {
+        if (
+            this.destroyed ||
+            token !== this.seenRetryToken ||
+            channelId !== this.state.selectedChannelId
+        ) {
+            return false;
         }
+        if (attempt >= SEEN_RETRY_DELAYS.length) {
+            this.scheduleSynchronization(false, false);
+            return false;
+        }
+        this.seenRetryTimer = this.realtimeTimer.setTimeout(async () => {
+            this.seenRetryTimer = null;
+            await this.persistSeenPointer(channelId, messageId, token, attempt + 1);
+        }, SEEN_RETRY_DELAYS[attempt]);
+        return true;
+    }
+
+    async persistSeenPointer(channelId, messageId, token, attempt) {
         try {
             await this.call("mark_seen", [channelId, messageId]);
+            if (
+                this.destroyed ||
+                token !== this.seenRetryToken ||
+                channelId !== this.state.selectedChannelId
+            ) {
+                return false;
+            }
+            const latest = this.state.messages[this.state.messages.length - 1];
+            if (
+                !this.state.timelineHasMoreForward &&
+                (!latest || latest.message_id <= messageId)
+            ) {
+                const conversation = this.selectedConversation;
+                if (conversation) {
+                    conversation.unread_count = 0;
+                    conversation.first_unread_message_id = false;
+                }
+                this.state.timelineFirstUnreadMessageId = false;
+            } else {
+                this.scheduleSynchronization(false, false);
+            }
+            return true;
         } catch (_error) {
-            // The next list/timeline synchronization will retry the pointer.
+            this.scheduleSeenRetry(channelId, messageId, token, attempt);
+            return false;
         }
+    }
+
+    markSeen(messageId) {
+        const channelId = this.state.selectedChannelId;
+        if (
+            !channelId ||
+            !Number.isSafeInteger(messageId) ||
+            messageId <= 0 ||
+            this.destroyed
+        ) {
+            return Promise.resolve(false);
+        }
+        this.cancelSeenRetry();
+        return this.persistSeenPointer(channelId, messageId, this.seenRetryToken, 0);
     }
 
     setReply(message) {
@@ -3002,6 +3208,16 @@ export class ContactCenterStore {
         if (!isRenderableConversation(normalizedItem)) {
             return false;
         }
+        const stateFilter = this.state.filters.state;
+        if (stateFilter && normalizedItem.state !== stateFilter) {
+            this.state.conversations = this.state.conversations.filter(
+                (conversation) => conversation.channel_id !== normalizedItem.channel_id
+            );
+            if (normalizedItem.channel_id === this.state.selectedChannelId) {
+                this.clearConversationSelection({closePanes: true});
+            }
+            return true;
+        }
         const index = this.state.conversations.findIndex(
             (conversation) =>
                 isRenderableConversation(conversation) &&
@@ -3037,11 +3253,7 @@ export class ContactCenterStore {
             if (payload.item) {
                 this.replaceConversation(payload.item);
             }
-            if (
-                payload.removed_from_conversation ||
-                (this.state.filters.responsibility !== "all" &&
-                    !this.state.selectedChannelId)
-            ) {
+            if (payload.removed_from_conversation || !this.state.selectedChannelId) {
                 await this.loadConversations({reset: true, selectFirst: true});
             }
             return true;
@@ -3055,11 +3267,53 @@ export class ContactCenterStore {
     }
 
     async setConversationState(state) {
-        const updated = await this.updateConversation({state});
-        if (updated && this.state.filters.state && this.state.filters.state !== state) {
-            await this.loadConversations({reset: true, selectFirst: true});
+        return this.updateConversation({state});
+    }
+
+    async setConversationPreference(patch) {
+        const channelId = this.state.selectedChannelId;
+        if (
+            !channelId ||
+            !isPlainRecord(patch) ||
+            !Object.keys(patch).length ||
+            Object.keys(patch).some(
+                (key) =>
+                    !["pinned", "muted"].includes(key) ||
+                    typeof patch[key] !== "boolean"
+            )
+        ) {
+            return false;
         }
-        return updated;
+        try {
+            const payload = await this.call("set_conversation_preference", [
+                channelId,
+                patch,
+            ]);
+            validateEnvelope(payload);
+            if (!payload.item || !this.replaceConversation(payload.item)) {
+                throw new TypeError(
+                    "A preferência retornada pelo servidor é inválida."
+                );
+            }
+            await this.loadConversations({reset: true, silent: true});
+            return true;
+        } catch (error) {
+            this.notify(errorMessage(error), {
+                type: "danger",
+                title: "Preferência não atualizada",
+            });
+            return false;
+        }
+    }
+
+    toggleConversationPinned() {
+        const preference = conversationPreference(this.selectedConversation);
+        return this.setConversationPreference({pinned: !preference.pinned});
+    }
+
+    toggleConversationMuted() {
+        const preference = conversationPreference(this.selectedConversation);
+        return this.setConversationPreference({muted: !preference.muted});
     }
 
     setResponsible(responsibleId) {
@@ -3488,10 +3742,7 @@ export class ContactCenterStore {
             if (channelId === this.state.selectedChannelId) {
                 this.reconcileTagCatalog(payload.item && payload.item.tags);
                 this.replaceConversation(payload.item);
-                if (
-                    this.state.filters.responsibility !== "all" &&
-                    !this.state.selectedChannelId
-                ) {
+                if (!this.state.selectedChannelId) {
                     await this.loadConversations({reset: true, selectFirst: true});
                 }
             }
@@ -3987,7 +4238,14 @@ export class ContactCenterStore {
     }
 
     handleAttentionNotification(payload) {
-        if (this.attention) {
+        const conversation = this.state.conversations.find(
+            (item) => item.channel_id === payload.channel_id
+        );
+        if (
+            this.attention &&
+            payload.personal_attention !== false &&
+            !conversationPreference(conversation).muted
+        ) {
             this.attention.receive(payload);
         }
     }
@@ -4019,6 +4277,31 @@ export class ContactCenterStore {
         return true;
     }
 
+    handleConnectionHealthNotification(payload) {
+        if (payload.event_type !== CONNECTION_HEALTH_EVENT_TYPE) {
+            return false;
+        }
+        this.connectionHealthBusRevision += 1;
+        if (payload.connection_health) {
+            this.applyConnectionHealth(payload.connection_health);
+        } else if (!payload.item || !this.applyConnectionHealthItem(payload.item)) {
+            this.scheduleConnectionHealthRefresh();
+        }
+        return true;
+    }
+
+    synchronizeNotification(payload) {
+        this.handleDeliveryNotification(payload);
+        if (!SYNCHRONIZING_EVENTS.has(payload.event_type)) {
+            return;
+        }
+        const refreshTimeline =
+            payload.channel_id === this.state.selectedChannelId &&
+            payload.event_type !== "conversation_preference_updated" &&
+            (payload.event_type !== "delivery_updated" || payload.refresh === true);
+        this.scheduleSynchronization(false, refreshTimeline);
+    }
+
     onNotification(event) {
         const detail = event && event.detail;
         if (Array.isArray(detail) && detail.length) {
@@ -4033,16 +4316,7 @@ export class ContactCenterStore {
         }
         for (const payload of notifications) {
             this.handleAttentionNotification(payload);
-            if (payload.event_type === CONNECTION_HEALTH_EVENT_TYPE) {
-                this.connectionHealthBusRevision += 1;
-                if (payload.connection_health) {
-                    this.applyConnectionHealth(payload.connection_health);
-                } else if (
-                    !payload.item ||
-                    !this.applyConnectionHealthItem(payload.item)
-                ) {
-                    this.scheduleConnectionHealthRefresh();
-                }
+            if (this.handleConnectionHealthNotification(payload)) {
                 continue;
             }
             if (this.handleAttributionNotification(payload)) {
@@ -4051,14 +4325,7 @@ export class ContactCenterStore {
             if (this.handleProductivityNotification(payload)) {
                 continue;
             }
-            this.handleDeliveryNotification(payload);
-            if (!SYNCHRONIZING_EVENTS.has(payload.event_type)) {
-                continue;
-            }
-            const refreshTimeline =
-                payload.channel_id === this.state.selectedChannelId &&
-                (payload.event_type !== "delivery_updated" || payload.refresh === true);
-            this.scheduleSynchronization(false, refreshTimeline);
+            this.synchronizeNotification(payload);
         }
     }
 

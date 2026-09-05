@@ -4,6 +4,7 @@ from . import application_outbound
 from . import ui_api
 from . import attribution
 from . import channel
+from . import conversation_preference
 from . import delivery_watermark
 from . import group
 from . import group_delivery
@@ -16,5 +17,4 @@ from . import onboarding
 from . import control_events
 from . import queue
 from . import read_receipt
-from . import pipeline
 from . import productivity

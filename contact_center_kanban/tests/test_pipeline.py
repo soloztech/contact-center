@@ -6,7 +6,9 @@ from odoo.exceptions import AccessError, ValidationError
 from odoo.tests.common import SavepointCase
 from odoo.tools import mute_logger
 
-from ..services.tokens import CONTACT_CENTER_MEMBERSHIP_TOKEN
+from odoo.addons.contact_center_base.services.tokens import (
+    CONTACT_CENTER_MEMBERSHIP_TOKEN,
+)
 
 
 class TestContactCenterPipeline(SavepointCase):

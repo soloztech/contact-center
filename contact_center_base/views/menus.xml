@@ -212,15 +212,6 @@
         groups="base.group_system"
     />
     <menuitem
-        id="menu_contact_center_followup_requests"
-        name="Follow-up Receipts"
-        parent="menu_contact_center_technical_records"
-        action="action_contact_center_followup_requests"
-        sequence="70"
-        groups="base.group_system"
-    />
-
-    <menuitem
         id="menu_contact_center_configuration"
         name="Configuration"
         parent="menu_contact_center_root"

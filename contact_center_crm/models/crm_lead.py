@@ -1,7 +1,7 @@
 from odoo import _, api, fields, models
 from odoo.exceptions import ValidationError
 
-from odoo.addons.contact_center_base.services.tokens import (
+from odoo.addons.contact_center_kanban.services.tokens import (
     CONTACT_CENTER_CASE_TRANSITION_TOKEN,
 )
 
@@ -277,7 +277,7 @@ class CrmLead(models.Model):
         self.check_access_rule("read")
         cases = self.contact_center_case_link_ids.mapped("case_id")
         action = self.env["ir.actions.actions"]._for_xml_id(
-            "contact_center_base.action_contact_center_cases"
+            "contact_center_kanban.action_contact_center_cases"
         )
         action.update(
             {

@@ -1,3 +1,7 @@
+Contact Center CRM depends on the optional ``contact_center_kanban`` addon because it
+synchronizes service cases, pipelines and stages with native CRM. The provider-neutral
+``contact_center_base`` remains independent of both workflow addons.
+
 Contact Center CRM keeps conversations and CRM documents separate while linking them
 through explicit, company-safe bindings. CRM is authoritative for stages of linked
 cases and, while a team binding is active, for the linked Contact Center roster. The

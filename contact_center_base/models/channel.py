@@ -179,7 +179,7 @@ class MailChannel(models.Model):
         domain="[('share', '=', False)]",
     )
     contact_center_state = fields.Selection(
-        [("open", "Open"), ("resolved", "Resolved")],
+        [("open", "Open"), ("resolved", "Resolved"), ("archived", "Archived")],
         default=False,
         index=True,
     )

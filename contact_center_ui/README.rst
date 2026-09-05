@@ -26,8 +26,9 @@ The inbox provides:
 * deferred image loading with reserved layout space and a two-request concurrency cap;
 * keyboard-, touch-, and screen-reader-accessible reply, reaction, edit, delete, and
   media actions, including focus restoration when the viewer closes;
-* only ``open`` and ``resolved`` operational states, with one contextual *Resolve* or
-  *Reopen* action;
+* ``open``, ``resolved``, and ``archived`` operational states, with contextual
+  *Resolve*, *Reopen*, *Archive*, and *Unarchive* actions; a new inbound message
+  reopens a resolved conversation, while an archived conversation remains archived;
 * a read-only inbox team plus responsible-user, claim, and tag actions;
 * guest/contact details and all observed external aliases;
 * person-first contact search, creation, linking, and unlinking, followed by safe

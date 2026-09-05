@@ -178,6 +178,60 @@ class ContactCenterUiApi(models.AbstractModel):
         return text if len(text) <= limit else "%s…" % text[: limit - 1].rstrip()
 
     @api.model
+    def _conversation_preference(self, channel):
+        return self.env["contact.center.conversation.preference"].search(
+            [
+                ("channel_id", "=", channel.id),
+                ("user_id", "=", self.env.user.id),
+            ],
+            limit=1,
+        )
+
+    @api.model
+    def _serialize_conversation_preference(self, preference):
+        return {
+            "pinned": bool(preference and preference.pinned_at),
+            "pinned_at": (
+                fields.Datetime.to_string(preference.pinned_at)
+                if preference and preference.pinned_at
+                else False
+            ),
+            "muted": bool(preference and preference.muted),
+        }
+
+    @api.model
+    def _first_unread_message_id(self, channel, member):
+        if not member:
+            return False
+        self._flush_first_unread_dependencies()
+        self.env.cr.execute(
+            """
+                SELECT MIN(message.id)
+                  FROM mail_message AS message
+                 WHERE message.model = 'mail.channel'
+                   AND message.res_id = %s
+                   AND message.id > %s
+                   AND message.message_type NOT IN (
+                       'notification', 'user_notification'
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1
+                         FROM contact_center_internal_note_request AS note_request
+                        WHERE note_request.message_id = message.id
+                   )
+            """,
+            [channel.id, member.seen_message_id.id or 0],
+        )
+        return self.env.cr.fetchone()[0] or False
+
+    @api.model
+    def _flush_first_unread_dependencies(self):
+        """Make the unread anchor agree with the operational unread counter."""
+
+        self.env["mail.message"].flush_model(["model", "res_id", "message_type"])
+        self.env["contact.center.internal.note.request"].flush_model(["message_id"])
+
+    @api.model
     def _serialize_author(self, message):
         if message.author_guest_id:
             return {
@@ -1312,6 +1366,18 @@ class ContactCenterUiApi(models.AbstractModel):
             if "partner_company" in prefetched
             else self._serialize_identity(identity, binding=binding)
         )
+        preference = (
+            prefetched.get(
+                "preference", self.env["contact.center.conversation.preference"]
+            )
+            if "preference" in prefetched
+            else self._conversation_preference(channel)
+        )
+        first_unread_message_id = (
+            prefetched.get("first_unread_message_id", False)
+            if "first_unread_message_id" in prefetched
+            else self._first_unread_message_id(channel, member)
+        )
         return {
             "channel_id": channel.id,
             "conversation_type": conversation_type,
@@ -1326,6 +1392,8 @@ class ContactCenterUiApi(models.AbstractModel):
             ),
             "state": channel.contact_center_state,
             "unread_count": member.message_unread_counter or 0,
+            "first_unread_message_id": first_unread_message_id,
+            "preference": self._serialize_conversation_preference(preference),
             "last_activity_at": fields.Datetime.to_string(
                 channel.contact_center_last_message_at
                 or (last_message.date if last_message else channel.create_date)
@@ -1563,6 +1631,7 @@ class ContactCenterUiApi(models.AbstractModel):
                 "conversation": [
                     {"key": "open", "label": _("Aberta")},
                     {"key": "resolved", "label": _("Resolvida")},
+                    {"key": "archived", "label": _("Arquivada")},
                 ]
             },
         }
@@ -1612,7 +1681,7 @@ class ContactCenterUiApi(models.AbstractModel):
         ]
         state = filters.get("state")
         if state:
-            if state not in ("open", "resolved"):
+            if state not in ("open", "resolved", "archived"):
                 raise ValidationError(_("Unsupported conversation state."))
             domain.append(("contact_center_state", "=", state))
         account_id = filters.get("account_id")
@@ -1676,6 +1745,74 @@ class ContactCenterUiApi(models.AbstractModel):
         ]
 
     @api.model
+    def _conversation_list_cursor(self, cursor):
+        """Parse the canonical segment-aware conversation cursor."""
+
+        if not isinstance(cursor, dict):
+            raise ValidationError(_("The conversation cursor is invalid."))
+        segment = cursor.get("segment")
+        if segment not in ("pinned", "activity"):
+            raise ValidationError(_("The conversation cursor segment is invalid."))
+        channel_id = self._positive_id(cursor.get("channel_id"), _("cursor channel ID"))
+        if segment == "pinned":
+            try:
+                pinned_at = fields.Datetime.to_datetime(cursor.get("pinned_at"))
+            except (TypeError, ValueError) as error:
+                raise ValidationError(
+                    _("The pinned conversation cursor date is invalid.")
+                ) from error
+            if not pinned_at:
+                raise ValidationError(
+                    _("The pinned conversation cursor date is required.")
+                )
+            return {
+                "segment": segment,
+                "channel_id": channel_id,
+                "pinned_at": pinned_at,
+            }
+        # Reuse the established activity validation and normalize its date once.
+        self._conversation_list_cursor_domain(cursor)
+        return {
+            "segment": segment,
+            "channel_id": channel_id,
+            "last_activity_at": fields.Datetime.to_datetime(
+                cursor.get("last_activity_at")
+            ),
+        }
+
+    @api.model
+    def _ordered_pinned_conversations(self, domain, cursor=False):
+        preferences = self.env["contact.center.conversation.preference"].search(
+            [
+                ("user_id", "=", self.env.user.id),
+                ("pinned_at", "!=", False),
+            ],
+            order="pinned_at desc, channel_id desc",
+        )
+        if not preferences:
+            return self.env["mail.channel"], {}
+        channels = self.env["mail.channel"].search(
+            expression.AND([domain, [("id", "in", preferences.channel_id.ids)]])
+        )
+        channel_by_id = {channel.id: channel for channel in channels}
+        preference_by_channel = {
+            preference.channel_id.id: preference
+            for preference in preferences
+            if preference.channel_id.id in channel_by_id
+        }
+        ordered = self.env["mail.channel"]
+        for preference in preferences:
+            channel = channel_by_id.get(preference.channel_id.id)
+            if not channel:
+                continue
+            if cursor and cursor["segment"] == "pinned":
+                key = (preference.pinned_at, channel.id)
+                if key >= (cursor["pinned_at"], cursor["channel_id"]):
+                    continue
+            ordered |= channel
+        return ordered, preference_by_channel
+
+    @api.model
     def _conversation_list_prefetch(self, channels):
         """Load every list projection dependency in bounded, shared queries."""
 
@@ -1698,6 +1835,47 @@ class ContactCenterUiApi(models.AbstractModel):
             ]
         )
         member_by_channel = {member.channel_id.id: member for member in members}
+        preferences = self.env["contact.center.conversation.preference"].search(
+            [
+                ("channel_id", "in", channels.ids),
+                ("user_id", "=", self.env.user.id),
+            ]
+        )
+        preference_by_channel = {
+            preference.channel_id.id: preference for preference in preferences
+        }
+        first_unread_by_channel = {}
+        if members:
+            self._flush_first_unread_dependencies()
+            seen_by_channel = {
+                member.channel_id.id: member.seen_message_id.id or 0
+                for member in members
+            }
+            self.env.cr.execute(
+                """
+                    SELECT scoped.channel_id, MIN(message.id)
+                      FROM mail_message AS message
+                      JOIN unnest(%s::int[], %s::int[])
+                        AS scoped(channel_id, seen_message_id)
+                        ON message.res_id = scoped.channel_id
+                       AND message.id > scoped.seen_message_id
+                     WHERE message.model = 'mail.channel'
+                       AND message.message_type NOT IN (
+                           'notification', 'user_notification'
+                       )
+                       AND NOT EXISTS (
+                           SELECT 1
+                             FROM contact_center_internal_note_request AS note_request
+                            WHERE note_request.message_id = message.id
+                       )
+                  GROUP BY scoped.channel_id
+                """,
+                [
+                    list(seen_by_channel),
+                    list(seen_by_channel.values()),
+                ],
+            )
+            first_unread_by_channel = dict(self.env.cr.fetchall())
 
         last_message_by_channel = {}
         for channel in channels:
@@ -1731,6 +1909,8 @@ class ContactCenterUiApi(models.AbstractModel):
         return {
             "binding_by_channel": binding_by_channel,
             "member_by_channel": member_by_channel,
+            "preference_by_channel": preference_by_channel,
+            "first_unread_by_channel": first_unread_by_channel,
             "last_message_by_channel": last_message_by_channel,
             "last_binding_by_message": last_binding_by_message,
             "last_outbox_by_binding": last_outbox_by_binding,
@@ -1792,6 +1972,13 @@ class ContactCenterUiApi(models.AbstractModel):
                             else None
                         ),
                         "compact_last_message": True,
+                        "preference": prefetched["preference_by_channel"].get(
+                            channel.id,
+                            self.env["contact.center.conversation.preference"],
+                        ),
+                        "first_unread_message_id": prefetched[
+                            "first_unread_by_channel"
+                        ].get(channel.id, False),
                         "partner_company": (
                             prefetched["partner_company_by_identity"].get(
                                 binding.identity_id.id, empty_partner
@@ -1821,27 +2008,65 @@ class ContactCenterUiApi(models.AbstractModel):
             offset, default=0, minimum=0, maximum=100000, label=_("offset")
         )
         domain = self._conversation_list_domain(filters)
-        if cursor:
-            domain.extend(self._conversation_list_cursor_domain(cursor))
-            offset = 0
-        channels = self.env["mail.channel"].search(
-            domain,
-            order="contact_center_last_message_at desc, id desc",
-            limit=limit + 1,
-            offset=offset,
+        parsed_cursor = self._conversation_list_cursor(cursor) if cursor else False
+        (
+            pinned_channels,
+            pinned_preference_by_channel,
+        ) = self._ordered_pinned_conversations(domain, parsed_cursor)
+        all_pinned_ids = (
+            self.env["contact.center.conversation.preference"]
+            .search(
+                [
+                    ("user_id", "=", self.env.user.id),
+                    ("pinned_at", "!=", False),
+                ]
+            )
+            .channel_id.ids
         )
+        pinned_offset = 0
+        activity_offset = 0
+        if not parsed_cursor:
+            pinned_offset = min(offset, len(pinned_channels))
+            activity_offset = max(offset - len(pinned_channels), 0)
+        elif parsed_cursor["segment"] == "activity":
+            pinned_channels = self.env["mail.channel"]
+            activity_offset = 0
+        pinned_page = pinned_channels[pinned_offset : pinned_offset + limit + 1]
+        remaining = max(limit + 1 - len(pinned_page), 0)
+        activity_domain = expression.AND(
+            [domain, [("id", "not in", all_pinned_ids or [0])]]
+        )
+        if parsed_cursor and parsed_cursor["segment"] == "activity":
+            activity_domain = expression.AND(
+                [activity_domain, self._conversation_list_cursor_domain(cursor)]
+            )
+        activity_page = self.env["mail.channel"].search(
+            activity_domain,
+            order="contact_center_last_message_at desc, id desc",
+            limit=remaining,
+            offset=activity_offset,
+        )
+        channels = pinned_page | activity_page
         has_more = len(channels) > limit
         channels = channels[:limit]
-        items = self._serialize_conversation_list_items(
-            channels, self._conversation_list_prefetch(channels)
-        )
+        prefetched = self._conversation_list_prefetch(channels)
+        prefetched["preference_by_channel"].update(pinned_preference_by_channel)
+        items = self._serialize_conversation_list_items(channels, prefetched)
         next_cursor = False
         if has_more and items:
             last_item = items[-1]
-            next_cursor = {
-                "last_activity_at": last_item["last_activity_at"],
-                "channel_id": last_item["channel_id"],
-            }
+            if last_item["preference"]["pinned"]:
+                next_cursor = {
+                    "segment": "pinned",
+                    "pinned_at": last_item["preference"]["pinned_at"],
+                    "channel_id": last_item["channel_id"],
+                }
+            else:
+                next_cursor = {
+                    "segment": "activity",
+                    "last_activity_at": last_item["last_activity_at"],
+                    "channel_id": last_item["channel_id"],
+                }
         return {
             "schema_version": SCHEMA_VERSION,
             "items": items,
@@ -1908,18 +2133,20 @@ class ContactCenterUiApi(models.AbstractModel):
         before_message_id=None,
         limit=50,
         after_message_id=None,
+        anchor_message_id=None,
     ):
-        """Return a chronological history page or a bounded forward delta."""
+        """Return history, a bounded forward delta, or an anchor-first page."""
 
-        channel, _member = self._authorized_channel(channel_id)
+        channel, member = self._authorized_channel(channel_id)
         limit = self._bounded_int(
             limit, default=50, minimum=1, maximum=100, label=_("limit")
         )
         has_before_cursor = before_message_id not in (None, False, "")
         has_after_cursor = after_message_id not in (None, False, "")
-        if has_before_cursor and has_after_cursor:
+        has_anchor = anchor_message_id not in (None, False, "")
+        if sum((has_before_cursor, has_after_cursor, has_anchor)) > 1:
             raise ValidationError(
-                _("The before and after message cursors are mutually exclusive.")
+                _("Timeline cursors and the message anchor are mutually exclusive.")
             )
         before_cursor = (
             self._positive_id(before_message_id, _("message cursor"))
@@ -1931,7 +2158,12 @@ class ContactCenterUiApi(models.AbstractModel):
             if has_after_cursor
             else False
         )
-        forward_mode = bool(after_cursor)
+        anchor_cursor = (
+            self._positive_id(anchor_message_id, _("message anchor"))
+            if has_anchor
+            else False
+        )
+        forward_mode = bool(after_cursor or anchor_cursor)
         domain = [
             ("model", "=", "mail.channel"),
             ("res_id", "=", channel.id),
@@ -1941,6 +2173,15 @@ class ContactCenterUiApi(models.AbstractModel):
             domain.append(("id", "<", before_cursor))
         elif after_cursor:
             domain.append(("id", ">", after_cursor))
+        elif anchor_cursor:
+            anchor = self.env["mail.message"].search(
+                domain + [("id", "=", anchor_cursor)], limit=1
+            )
+            if not anchor:
+                raise ValidationError(
+                    _("The message anchor does not belong to this conversation.")
+                )
+            domain.append(("id", ">=", anchor.id))
         messages = self.env["mail.message"].search(
             domain,
             order="id asc" if forward_mode else "id desc",
@@ -1948,6 +2189,22 @@ class ContactCenterUiApi(models.AbstractModel):
         )
         page_has_more = len(messages) > limit
         messages = messages[:limit]
+        has_older_than_anchor = bool(
+            anchor_cursor
+            and self.env["mail.message"].search(
+                [
+                    ("model", "=", "mail.channel"),
+                    ("res_id", "=", channel.id),
+                    (
+                        "message_type",
+                        "not in",
+                        ("notification", "user_notification"),
+                    ),
+                    ("id", "<", anchor_cursor),
+                ],
+                limit=1,
+            )
+        )
         bindings = self.env["contact.center.message.binding"].search(
             [("message_id", "in", messages.ids)]
         )
@@ -2000,16 +2257,92 @@ class ContactCenterUiApi(models.AbstractModel):
             "schema_version": SCHEMA_VERSION,
             "channel_id": channel.id,
             "items": items,
-            "has_more": page_has_more if not forward_mode else False,
+            "anchor_message_id": anchor_cursor or False,
+            "first_unread_message_id": self._first_unread_message_id(channel, member),
+            "has_more": (
+                has_older_than_anchor
+                if anchor_cursor
+                else (page_has_more if not forward_mode else False)
+            ),
             "next_before_message_id": (
-                messages[-1].id
-                if not forward_mode and page_has_more and messages
-                else False
+                anchor_cursor
+                if anchor_cursor and has_older_than_anchor
+                else (
+                    messages[-1].id
+                    if not forward_mode and page_has_more and messages
+                    else False
+                )
             ),
             "has_more_forward": page_has_more if forward_mode else False,
             "next_after_message_id": (
                 messages[-1].id if forward_mode and messages else False
             ),
+        }
+
+    @api.model
+    def set_conversation_preference(self, channel_id, patch):
+        """Update the current user's sparse pin/mute preference atomically."""
+
+        channel, member = self._authorized_channel(channel_id)
+        if not isinstance(patch, dict) or not patch:
+            raise ValidationError(_("The conversation preference must be an object."))
+        unknown = set(patch) - {"pinned", "muted"}
+        if unknown:
+            raise ValidationError(
+                _(
+                    "Unsupported conversation preferences: %s",
+                    ", ".join(sorted(unknown)),
+                )
+            )
+        if any(type(value) is not bool for value in patch.values()):  # noqa: E721
+            raise ValidationError(_("Conversation preferences must be booleans."))
+
+        # The member row is the canonical user/conversation scope and serializes
+        # simultaneous toggles without introducing an unrelated global lock.
+        self.env.cr.execute(
+            "SELECT id FROM mail_channel_member WHERE id = %s FOR UPDATE", [member.id]
+        )
+        preference_model = self.env["contact.center.conversation.preference"]
+        preference = preference_model.search(
+            [
+                ("channel_id", "=", channel.id),
+                ("user_id", "=", self.env.user.id),
+            ],
+            limit=1,
+        )
+        values = {}
+        if "pinned" in patch:
+            values["pinned_at"] = (
+                preference.pinned_at
+                if patch["pinned"] and preference and preference.pinned_at
+                else (fields.Datetime.now() if patch["pinned"] else False)
+            )
+        if "muted" in patch:
+            values["muted"] = patch["muted"]
+        if preference:
+            preference.write(values)
+        elif values.get("pinned_at") or values.get("muted"):
+            preference = preference_model.create(
+                {
+                    "channel_id": channel.id,
+                    "user_id": self.env.user.id,
+                    **values,
+                }
+            )
+        if preference and not preference.pinned_at and not preference.muted:
+            preference.unlink()
+            preference = preference_model
+
+        serialized_preference = self._serialize_conversation_preference(preference)
+        self._application()._notify_ui(
+            channel,
+            "conversation_preference_updated",
+            {"preference": serialized_preference},
+            partner_ids=[self.env.user.partner_id.id],
+        )
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "item": self._serialize_conversation(channel, member=member),
         }
 
     @api.model
@@ -2130,7 +2463,7 @@ class ContactCenterUiApi(models.AbstractModel):
     def _conversation_update_values(self, channel, patch, access_users):
         values = {}
         if "state" in patch:
-            if patch["state"] not in ("open", "resolved"):
+            if patch["state"] not in ("open", "resolved", "archived"):
                 raise ValidationError(_("Unsupported conversation state."))
             values["contact_center_state"] = patch["state"]
 

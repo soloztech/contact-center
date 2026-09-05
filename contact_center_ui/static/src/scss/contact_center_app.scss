@@ -982,6 +982,11 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
     background: var(--cc-signal-soft);
 }
 
+.cc-inbox-tabs .cc-state-option--archived.is-active {
+    color: #5c6670;
+    background: #e9edef;
+}
+
 .cc-account-filter {
     display: grid;
     grid-template-columns: auto 1fr;
@@ -1154,6 +1159,14 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
         background: var(--cc-cobalt);
         box-shadow: 0 0 0 0.2rem rgba(36, 95, 158, 0.12);
     }
+
+    &.is-pinned .cc-conversation-item__trace::after {
+        background: var(--cc-signal);
+    }
+
+    &.is-muted:not(.has-unread) .cc-conversation-item__preview {
+        color: #89969c;
+    }
 }
 
 .cc-conversation-item__trace {
@@ -1233,6 +1246,22 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
         color: var(--cc-steel);
         font-family: "SFMono-Regular", Consolas, monospace;
         font-size: 0.61rem;
+    }
+}
+
+.cc-conversation-item__signals {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    color: var(--cc-steel);
+    gap: 0.3rem;
+
+    i {
+        font-size: 0.62rem;
+    }
+
+    .fa-thumb-tack {
+        color: var(--cc-signal);
     }
 }
 
@@ -1403,7 +1432,8 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
 }
 
 .cc-load-more,
-.cc-load-older {
+.cc-load-older,
+.cc-load-newer {
     display: block;
     margin: 0.8rem auto;
     padding: 0.42rem 0.72rem;
@@ -1491,6 +1521,12 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
     min-width: 0;
     align-items: center;
     gap: 0.5rem;
+}
+
+.cc-conversation-preference.is-active {
+    border-color: rgba(36, 95, 158, 0.35);
+    color: var(--cc-cobalt-deep);
+    background: var(--cc-cobalt-soft);
 }
 
 .cc-resolution-action {
@@ -1627,6 +1663,24 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
         height: 1px;
         flex: 1;
         background: rgba(120, 140, 147, 0.24);
+        content: "";
+    }
+}
+
+.cc-unread-divider {
+    display: flex;
+    align-items: center;
+    margin: 1rem 0 0.85rem;
+    color: var(--cc-cobalt);
+    font-size: 0.68rem;
+    font-weight: 750;
+    gap: 0.65rem;
+
+    &::before,
+    &::after {
+        height: 1px;
+        flex: 1;
+        background: rgba(53, 91, 155, 0.42);
         content: "";
     }
 }
@@ -4937,7 +4991,8 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
     }
 
     .cc-load-more,
-    .cc-load-older {
+    .cc-load-older,
+    .cc-load-newer {
         font-size: 13px;
     }
 

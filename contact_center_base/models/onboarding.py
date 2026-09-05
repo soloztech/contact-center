@@ -575,13 +575,6 @@ class ContactCenterAccountSetupWizard(models.TransientModel):
     )
     outbound_signature_enabled = fields.Boolean(string="Sign Agent Messages")
     mark_read_enabled = fields.Boolean(string="Mark Messages as Read")
-    reopen_resolved_on_inbound = fields.Boolean(
-        string="Reopen Resolved Conversations on New Messages",
-        help=(
-            "Move a resolved conversation back to Open when a genuinely new "
-            "inbound message is received."
-        ),
-    )
     show_deleted_message_content = fields.Boolean(
         help=(
             "Keep deleted content visible to agents with a deletion marker and "
@@ -857,7 +850,6 @@ class ContactCenterAccountSetupWizard(models.TransientModel):
                     "auto_assignment_user_id": self.auto_assignment_user_id.id,
                     "outbound_signature_enabled": self.outbound_signature_enabled,
                     "mark_read_enabled": self.mark_read_enabled,
-                    "reopen_resolved_on_inbound": self.reopen_resolved_on_inbound,
                     "show_deleted_message_content": (self.show_deleted_message_content),
                     "group_inbound_enabled": self.group_inbound_enabled,
                     "group_outbound_enabled": self.group_outbound_enabled,

@@ -686,6 +686,16 @@ class ContactCenterAccount(models.Model):
             "configuration."
         ),
     )
+    inbound_projection_revision = fields.Integer(
+        required=True,
+        default=0,
+        readonly=True,
+        copy=False,
+        help=(
+            "Internal monotonic fence that makes concurrent inbox projections "
+            "restart with a fresh PostgreSQL snapshot."
+        ),
+    )
     company_id = fields.Many2one(
         "res.company",
         required=True,
@@ -784,15 +794,6 @@ class ContactCenterAccount(models.Model):
             "are still enforced. Disabled by default."
         ),
     )
-    reopen_resolved_on_inbound = fields.Boolean(
-        string="Reopen Resolved Conversations on New Messages",
-        default=False,
-        help=(
-            "Automatically move a resolved conversation back to Open when a new "
-            "inbound message is received. Duplicate provider events, delivery "
-            "receipts, and message mutations never reopen a conversation."
-        ),
-    )
     show_deleted_message_content = fields.Boolean(
         default=False,
         help=(
@@ -841,14 +842,21 @@ class ContactCenterAccount(models.Model):
             "check(access_topology_revision >= 0)",
             "The access topology revision cannot be negative.",
         ),
+        (
+            "inbound_projection_revision_nonnegative",
+            "check(inbound_projection_revision >= 0)",
+            "The inbound projection revision cannot be negative.",
+        ),
     ]
 
     @api.model_create_multi
     def create(self, vals_list):
-        if any("access_topology_revision" in values for values in vals_list):
-            raise AccessError(
-                _("The Contact Center access topology revision is internal.")
-            )
+        internal_revision_fields = {
+            "access_topology_revision",
+            "inbound_projection_revision",
+        }
+        if any(internal_revision_fields.intersection(values) for values in vals_list):
+            raise AccessError(_("Contact Center concurrency revisions are internal."))
         team_ids = {
             int(values["default_team_id"])
             for values in vals_list
@@ -934,41 +942,14 @@ class ContactCenterAccount(models.Model):
         ]
 
     @api.model
-    def _contact_center_lock_access_topology(
-        self,
-        account_ids=None,
-        team_ids=None,
-        user_ids=None,
-        pipeline_ids=None,
-        channel_ids=None,
-        case_ids=None,
+    def _contact_center_lock_access_authority_rows(
+        self, *, account_ids=None, team_ids=None, user_ids=None
     ):
-        """Fence affected access/case-topology rows in one deterministic order.
-
-        Odoo runs at PostgreSQL REPEATABLE READ.  Row locks alone do not refresh an
-        already established snapshot, so each locked row also receives a monotonic
-        write.  A concurrent roster, inbox-assignment or provider-topology change then
-        raises a serialization failure and is retried with a fresh snapshot instead of
-        allowing write skew.
-
-        The canonical core order is account -> team -> user -> pipeline -> channel ->
-        case -> provider connection.  Only IDs in the affected aggregate are locked;
-        there is deliberately no company-wide or table-wide lock.  The provider
-        topology helper appends connection locks only after calling this method.
-
-        Pipeline rows carry a dedicated revision.  Channels and cases already have
-        stable authority rows, so a no-value MVCC update is enough to make a waiter
-        with an old REPEATABLE READ snapshot serialize and retry.  ``FOR UPDATE``
-        alone would not provide that guarantee when the conflicting transaction only
-        inserted or removed a related row.
-        """
+        """Fence inbox, team and user access authorities in canonical order."""
 
         account_ids = sorted({int(value) for value in account_ids or [] if value})
         team_ids = sorted({int(value) for value in team_ids or [] if value})
         user_ids = sorted({int(value) for value in user_ids or [] if value})
-        pipeline_ids = sorted({int(value) for value in pipeline_ids or [] if value})
-        channel_ids = sorted({int(value) for value in channel_ids or [] if value})
-        case_ids = sorted({int(value) for value in case_ids or [] if value})
         accounts = self.sudo().with_context(active_test=False).browse(account_ids)
         teams = (
             self.env["contact.center.team"]
@@ -1022,26 +1003,13 @@ class ContactCenterAccount(models.Model):
                 [user_ids],
             )
             users.invalidate_recordset(["contact_center_access_topology_revision"])
-        if pipeline_ids:
-            pipelines = (
-                self.env["contact.center.pipeline"]
-                .sudo()
-                .with_context(active_test=False)
-                .browse(pipeline_ids)
-            )
-            pipelines.flush_model(["topology_revision"])
-            self.env.cr.execute(
-                "SELECT id FROM contact_center_pipeline WHERE id = ANY(%s) "
-                "ORDER BY id FOR UPDATE",
-                [pipeline_ids],
-            )
-            self.env.cr.execute(
-                "UPDATE contact_center_pipeline "
-                "SET topology_revision = topology_revision + 1 "
-                "WHERE id = ANY(%s)",
-                [pipeline_ids],
-            )
-            pipelines.invalidate_recordset(["topology_revision"])
+        return accounts
+
+    @api.model
+    def _contact_center_lock_conversation_rows(self, *, channel_ids=None):
+        """Fence conversation authority rows after their access authorities."""
+
+        channel_ids = sorted({int(value) for value in channel_ids or [] if value})
         if channel_ids:
             channels = (
                 self.env["mail.channel"]
@@ -1060,25 +1028,26 @@ class ContactCenterAccount(models.Model):
                 [channel_ids],
             )
             channels.invalidate_recordset(["write_date"])
-        if case_ids:
-            cases = (
-                self.env["contact.center.case"]
-                .sudo()
-                .with_context(active_test=False)
-                .browse(case_ids)
-            )
-            cases.flush_model(["stage_revision"])
-            self.env.cr.execute(
-                "SELECT id FROM contact_center_case WHERE id = ANY(%s) "
-                "ORDER BY id FOR UPDATE",
-                [case_ids],
-            )
-            self.env.cr.execute(
-                "UPDATE contact_center_case SET stage_revision = stage_revision "
-                "WHERE id = ANY(%s)",
-                [case_ids],
-            )
-            cases.invalidate_recordset(["stage_revision"])
+        return True
+
+    @api.model
+    def _contact_center_lock_access_topology(
+        self, account_ids=None, team_ids=None, user_ids=None, channel_ids=None
+    ):
+        """Fence the provider-neutral access graph in deterministic order.
+
+        Odoo runs at PostgreSQL REPEATABLE READ. Row locks alone do not refresh an
+        established snapshot, so each authority receives an MVCC-visible write.
+        Optional addons extend the order through explicit model overrides instead of
+        leaking their tables or fields into the provider-neutral base.
+        """
+
+        accounts = self._contact_center_lock_access_authority_rows(
+            account_ids=account_ids,
+            team_ids=team_ids,
+            user_ids=user_ids,
+        )
+        self._contact_center_lock_conversation_rows(channel_ids=channel_ids)
         return accounts
 
     def _contact_center_validate_live_route_access(self):
@@ -1348,10 +1317,11 @@ class ContactCenterAccount(models.Model):
         return changed_fields
 
     def write(self, values):
-        if "access_topology_revision" in values:
-            raise AccessError(
-                _("The Contact Center access topology revision is internal.")
-            )
+        if {
+            "access_topology_revision",
+            "inbound_projection_revision",
+        }.intersection(values):
+            raise AccessError(_("Contact Center concurrency revisions are internal."))
         immutable_fields = {"company_id", "external_ref", "platform"} & set(values)
         for account in self:
             for field_name in immutable_fields:

@@ -108,6 +108,42 @@
                                     <span t-esc="resolutionAction.label" />
                                 </button>
                                 <button
+                                    type="button"
+                                    t-attf-class="cc-icon-button cc-conversation-preference #{conversationPreference.pinned ? 'is-active' : ''}"
+                                    t-att-disabled="ui.preferenceChanging"
+                                    t-att-aria-pressed="conversationPreference.pinned ? 'true' : 'false'"
+                                    t-att-title="conversationPreference.pinned ? 'Desafixar conversa' : 'Fixar conversa no topo'"
+                                    t-att-aria-label="conversationPreference.pinned ? 'Desafixar conversa' : 'Fixar conversa no topo'"
+                                    t-on-click="togglePinned"
+                                >
+                                    <i class="fa fa-thumb-tack" aria-hidden="true" />
+                                </button>
+                                <button
+                                    type="button"
+                                    t-attf-class="cc-icon-button cc-conversation-preference #{conversationPreference.muted ? 'is-active' : ''}"
+                                    t-att-disabled="ui.preferenceChanging"
+                                    t-att-aria-pressed="conversationPreference.muted ? 'true' : 'false'"
+                                    t-att-title="conversationPreference.muted ? 'Ativar notificações' : 'Silenciar conversa'"
+                                    t-att-aria-label="conversationPreference.muted ? 'Ativar notificações da conversa' : 'Silenciar notificações da conversa'"
+                                    t-on-click="toggleMuted"
+                                >
+                                    <i
+                                        t-attf-class="fa #{conversationPreference.muted ? 'fa-bell-slash' : 'fa-bell-o'}"
+                                        aria-hidden="true"
+                                    />
+                                </button>
+                                <button
+                                    t-if="canArchiveConversation"
+                                    type="button"
+                                    class="cc-icon-button cc-conversation-preference"
+                                    t-att-disabled="ui.stateChanging"
+                                    title="Arquivar conversa"
+                                    aria-label="Arquivar conversa"
+                                    t-on-click="archiveConversation"
+                                >
+                                    <i class="fa fa-archive" aria-hidden="true" />
+                                </button>
+                                <button
                                     t-if="!selectedConversation.responsible"
                                     type="button"
                                     class="cc-claim-button"

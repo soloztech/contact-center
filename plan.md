@@ -9,9 +9,10 @@ Centralizar conversas externas no Odoo sem acoplar o domínio ao provider nem à
 plataforma. O mesmo core deverá atender WhatsApp, Instagram, Messenger, Telegram e
 outros canais.
 
-O escopo atual possui cinco addons:
+O escopo atual possui seis addons:
 
 - `contact_center_base`
+- `contact_center_kanban`
 - `contact_center_wuzapi`
 - `contact_center_meta`
 - `contact_center_crm`
@@ -30,7 +31,7 @@ WAHA e Evolution entrarão depois como novos adapters do mesmo contrato.
 - [Atribuição Meta Click-to-WhatsApp](research/meta-click-to-whatsapp-attribution.md)
 - [Mensagens Meta: Messenger e Instagram](research/meta-messenger-instagram.md)
 - [Acesso da caixa: dono individual e equipe](research/inbox-owner-team-access.md)
-- [Pipeline de atendimento no core](research/service-pipeline-core.md)
+- [Pipeline de atendimento no addon opcional](research/service-pipeline-core.md)
 - [Disposição native-first, roadmap e UX de 2026-09-02](reviews/2026-09-02-native-first-roadmap-and-ux-disposition.md)
 - [OCA: contato com posições em várias empresas parceiras](https://github.com/OCA/partner-contact/tree/16.0/partner_contact_in_several_companies)
 
@@ -240,9 +241,8 @@ Regras:
 - Timeline e replies sobre os modelos nativos de `mail`; mídia em bindings/uploads
   privados e reaction/edit/delete em ledger de mutações com projeção nativa.
 - Equipes, responsável, tags e estados do atendimento.
-- Pipelines, etapas e casos de atendimento independentes do estado operacional da
-  conversa. Uma conversa possui um caso padrão e pode possuir outros casos para
-  assuntos/propostas distintos.
+- Respostas rápidas, notas internas e mensagens agendadas, sem depender de casos ou
+  pipelines.
 - Saúde provider-neutral da conexão, scheduler que apenas enfileira jobs OCA, métricas,
   ordenação durável de observações e retomada segura da outbox na reconexão.
 - Views administrativas. O menu `Técnico`, exclusivo de administradores do sistema,
@@ -251,6 +251,19 @@ Regras:
   tracking e atividades) dos ledgers próprios da Central. Os atalhos reutilizam as
   actions nativas; não duplicam modelos, actions nem views do Odoo.
 - Testes comuns que todo adapter deve cumprir.
+
+### `contact_center_kanban`
+
+- Addon opcional, dependente somente de `contact_center_base`, que instala pipelines,
+  etapas, casos, Kanban e o ledger imutável de transições.
+- Acrescenta `default_pipeline_id` às caixas/equipes e os casos às conversas por
+  extensões `_inherit`; o base permanece instalável sem esses campos ou modelos.
+- Uma conversa recebe um caso padrão e pode possuir outros casos para assuntos ou
+  propostas independentes.
+- Follow-ups de casos reutilizam `mail.activity` e seu receipt auditável dentro deste
+  addon, pois não existem sem o aggregate `contact.center.case`.
+- `contact_center_crm` depende deste addon e é a ponte opcional para catálogo de etapas,
+  equipes e leads do CRM.
 
 ### `contact_center_wuzapi`
 
@@ -533,8 +546,8 @@ um `connection_id` do bus que não existia no snapshot atual.
 ## Modelos do core
 
 - `contact.center.account` — conta lógica e estável da plataforma, com empresa,
-  plataforma, identidade própria, dono individual/equipe de acesso opcionais e pipeline
-  padrão. Trocar WuzAPI por WAHA/Evolution não troca esta conta nem seus aliases.
+  plataforma, identidade própria e dono individual/equipe de acesso opcionais. Trocar
+  WuzAPI por WAHA/Evolution não troca esta conta nem seus aliases.
 - `contact.center.provider.connection` — conexão substituível com um adapter, conta,
   configuração, estado, health, capabilities e revisão monotônica da configuração de
   health. Somente uma conexão fica ativa para outbound por conta; conexões antigas
@@ -548,13 +561,6 @@ um `connection_id` do bus que não existia no snapshot atual.
 - `mail.channel` — conversa canônica com `channel_type = 'contact_center'`, empresa,
   projeção do dono/equipe da caixa, responsável e estado. Não existe um segundo marcador
   de conversa persistido.
-- `contact.center.pipeline` e `contact.center.pipeline.stage` — catálogo de fluxos e
-  etapas de atendimento por empresa, neutro em relação a CRM/Helpdesk.
-- `contact.center.case` — assunto operacional dentro de uma conversa, com pipeline,
-  etapa, responsável, prioridade e revisão monotônica. Uma conversa pode conter vários
-  casos; exatamente um é o caso padrão criado automaticamente.
-- `contact.center.case.transition` — histórico imutável e idempotente de mudanças de
-  etapa do caso.
 - `contact.center.channel.binding` — vínculo lógico entre canal, conta e tipo de
   conversa. Em conversa direta, aponta para a identity remota; pode redirecionar para um
   binding sobrevivente após consolidação. No MVP há um único binding por canal,
@@ -589,6 +595,20 @@ um `connection_id` do bus que não existia no snapshot atual.
 - `contact.center.outbox.command` — comando, idempotência, tentativas de domínio, estado
   de dispatch, evidência de incerteza e UUID do `queue.job`, ligado à conexão escolhida
   para o envio.
+
+## Modelos opcionais do Kanban
+
+Instalados exclusivamente por `contact_center_kanban`:
+
+- `contact.center.pipeline` e `contact.center.pipeline.stage` — catálogo de fluxos e
+  etapas de atendimento por empresa, neutro em relação a CRM/Helpdesk.
+- `contact.center.case` — assunto operacional dentro de uma conversa, com pipeline,
+  etapa, responsável, prioridade e revisão monotônica. Uma conversa pode conter vários
+  casos; exatamente um é o caso padrão criado automaticamente pelo plugin.
+- `contact.center.case.transition` — histórico imutável e idempotente de mudanças de
+  etapa do caso.
+- `contact.center.followup.request` — receipt imutável da criação e conclusão de
+  `mail.activity` vinculada a um caso.
 
 Constraints mínimas:
 
@@ -1116,13 +1136,13 @@ Contrato funcional preservado pelo backend aceito:
 - Client action Owl próprio com lista paginada, busca, filtros de conta/estado,
   timeline, unread/seen, replies, composer de texto, origem/provider/plataforma e
   estados de entrega/dispatch.
-- Ações operacionais para `open/pending/resolved`, assumir, equipe, responsável e tags;
+- Ações operacionais para `open/resolved/archived`, assumir, equipe, responsável e tags;
   painel de identidade com aliases e criação/vínculo/desvínculo explícito de contato.
 - Layouts desktop e mobile próprios, com drawer de detalhes fora da navegação quando
   fechado; bundles minificado e `debug=assets` validados pelo domínio público.
 - Refinamento visual: rail decorativo removido, status real do bus explícito, escala
   desktop de 11–15 px, timeline curta ancorada ao composer, avatar inbound alinhado e
-  estados `Aberta/Pendente/Resolvida` traduzidos e diferenciados por cor.
+  estados operacionais traduzidos e diferenciados por cor.
 - A UiDTO v1 aplica ACL, membership e empresa, pagina por chegada local, publica apenas
   eventos de bus do Contact Center e torna o envio idempotente por UUID do composer.
 - Nenhum patch/import privado de Discuss ou `im_livechat`; `mail.channel` e

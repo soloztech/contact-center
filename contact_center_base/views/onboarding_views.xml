@@ -157,10 +157,6 @@
                                 <field name="outbound_signature_enabled" />
                                 <field name="mark_read_enabled" />
                                 <field
-                                    name="reopen_resolved_on_inbound"
-                                    string="Reabrir conversa ao receber mensagem"
-                                />
-                                <field
                                     name="show_deleted_message_content"
                                     string="Manter conteúdo riscado ao apagar"
                                 />

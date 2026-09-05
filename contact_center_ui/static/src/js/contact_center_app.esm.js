@@ -4,6 +4,7 @@ import {Component, onWillDestroy, onWillStart, useState} from "@odoo/owl";
 import {
     connectionFleetMeta,
     conversationDisplayName,
+    conversationPreference,
     conversationResolutionAction,
     conversationUiPolicy,
 } from "./contact_center_model.esm";
@@ -26,7 +27,7 @@ export function conversationComposerAvailable(policy, capabilities) {
 
 export class ContactCenterApp extends Component {
     setup() {
-        this.ui = useState({stateChanging: false});
+        this.ui = useState({stateChanging: false, preferenceChanging: false});
         this.attention = new BrowserAttention();
         this.store = new ContactCenterStore({
             orm: useService("orm"),
@@ -97,6 +98,16 @@ export class ContactCenterApp extends Component {
         return conversationResolutionAction(this.selectedConversation);
     }
 
+    get conversationPreference() {
+        return conversationPreference(this.selectedConversation);
+    }
+
+    get canArchiveConversation() {
+        return Boolean(
+            this.selectedConversation && this.selectedConversation.state !== "archived"
+        );
+    }
+
     get fleetMeta() {
         return connectionFleetMeta(this.store.connectionHealth);
     }
@@ -134,6 +145,42 @@ export class ContactCenterApp extends Component {
             return await this.store.setConversationState(action.target);
         } finally {
             this.ui.stateChanging = false;
+        }
+    }
+
+    async archiveConversation() {
+        if (!this.canArchiveConversation || this.ui.stateChanging) {
+            return false;
+        }
+        this.ui.stateChanging = true;
+        try {
+            return await this.store.setConversationState("archived");
+        } finally {
+            this.ui.stateChanging = false;
+        }
+    }
+
+    async togglePinned() {
+        if (this.ui.preferenceChanging) {
+            return false;
+        }
+        this.ui.preferenceChanging = true;
+        try {
+            return await this.store.toggleConversationPinned();
+        } finally {
+            this.ui.preferenceChanging = false;
+        }
+    }
+
+    async toggleMuted() {
+        if (this.ui.preferenceChanging) {
+            return false;
+        }
+        this.ui.preferenceChanging = true;
+        try {
+            return await this.store.toggleConversationMuted();
+        } finally {
+            this.ui.preferenceChanging = false;
         }
     }
 }

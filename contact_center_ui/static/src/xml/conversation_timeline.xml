@@ -60,9 +60,19 @@
                             >
                             <span t-esc="dayLabel(message.date)" />
                         </div>
+                        <div
+                                t-if="state.timelineFirstUnreadMessageId === message.message_id"
+                                class="cc-unread-divider"
+                                t-att-data-unread-boundary="message.message_id"
+                                role="separator"
+                                aria-label="Mensagens não lidas"
+                            >
+                            <span>Mensagens não lidas</span>
+                        </div>
                         <article
                                 t-if="isControlMessage(message)"
                                 t-att-class="messageClass(message, message_index)"
+                                t-att-data-message-id="message.message_id"
                                 role="note"
                                 t-att-aria-label="controlAriaLabel(message)"
                             >
@@ -82,6 +92,7 @@
                         <article
                                 t-else=""
                                 t-att-class="messageClass(message, message_index)"
+                                t-att-data-message-id="message.message_id"
                             >
                             <span
                                     t-if="isRunContinuation(message, message_index)"
@@ -391,6 +402,18 @@
                             </div>
                         </article>
                     </t>
+                    <button
+                            t-if="state.timelineHasMoreForward"
+                            type="button"
+                            class="cc-load-newer"
+                            t-att-disabled="state.timelinePhase === 'loading_newer'"
+                            t-on-click="loadNewer"
+                        >
+                        <t
+                                t-if="state.timelinePhase === 'loading_newer'"
+                            >Carregando mensagens…</t>
+                        <t t-else="">Ver mensagens mais recentes</t>
+                    </button>
                 </t>
                 </div>
             </section>

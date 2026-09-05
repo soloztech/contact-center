@@ -145,9 +145,6 @@ class TestContactCenterAutoAssignment(SavepointCase):
         _message, channel = self._process(self.connection, uuid.uuid4().hex)
 
         self.assertEqual(channel.contact_center_responsible_id, self.primary_agent)
-        default_case = channel.contact_center_case_ids.filtered("is_default")
-        self.assertEqual(len(default_case), 1)
-        self.assertEqual(default_case.responsible_user_id, self.primary_agent)
 
     def test_next_inbound_assigns_an_existing_unassigned_conversation(self):
         conversation_key = uuid.uuid4().hex
@@ -275,32 +272,32 @@ class TestContactCenterAutoAssignment(SavepointCase):
             1,
         )
 
-    def test_resolved_conversation_stays_resolved_by_default(self):
-        conversation_key = uuid.uuid4().hex
-        _message, channel = self._process(self.connection, conversation_key)
-        self.env["contact.center.ui.api"].with_user(
-            self.primary_agent
-        ).update_conversation(channel.id, {"state": "resolved"})
-
-        self._process(self.connection, conversation_key)
-        channel.invalidate_recordset(["contact_center_state"])
-
-        self.assertFalse(self.account.reopen_resolved_on_inbound)
-        self.assertEqual(channel.contact_center_state, "resolved")
-
-    def test_new_inbound_reopens_resolved_conversation_when_enabled(self):
+    def test_new_inbound_always_reopens_resolved_conversation(self):
         conversation_key = uuid.uuid4().hex
         self.account.write({"auto_assignment_user_id": self.primary_agent.id})
         _message, channel = self._process(self.connection, conversation_key)
         self.env["contact.center.ui.api"].with_user(
             self.primary_agent
         ).update_conversation(channel.id, {"state": "resolved"})
-        self.account.write({"reopen_resolved_on_inbound": True})
 
         self._process(self.connection, conversation_key)
         channel.invalidate_recordset(["contact_center_state"])
 
         self.assertEqual(channel.contact_center_state, "open")
+        self.assertEqual(channel.contact_center_responsible_id, self.primary_agent)
+
+    def test_new_inbound_keeps_archived_conversation_archived(self):
+        conversation_key = uuid.uuid4().hex
+        self.account.write({"auto_assignment_user_id": self.primary_agent.id})
+        _message, channel = self._process(self.connection, conversation_key)
+        self.env["contact.center.ui.api"].with_user(
+            self.primary_agent
+        ).update_conversation(channel.id, {"state": "archived"})
+
+        self._process(self.connection, conversation_key)
+        channel.invalidate_recordset(["contact_center_state"])
+
+        self.assertEqual(channel.contact_center_state, "archived")
         self.assertEqual(channel.contact_center_responsible_id, self.primary_agent)
 
     def test_duplicate_inbound_does_not_reopen_resolved_conversation(self):
@@ -312,7 +309,6 @@ class TestContactCenterAutoAssignment(SavepointCase):
         self.env["contact.center.ui.api"].with_user(
             self.primary_agent
         ).update_conversation(channel.id, {"state": "resolved"})
-        self.account.write({"reopen_resolved_on_inbound": True})
 
         replayed_message, replayed_channel = self._process(
             self.connection, conversation_key, message_key=message_key

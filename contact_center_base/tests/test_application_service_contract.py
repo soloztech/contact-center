@@ -39,6 +39,7 @@ class TestApplicationServiceContract(TransactionCase):
             "mark_fetched",
             "mark_seen",
             "update_conversation",
+            "set_conversation_preference",
             "claim_conversation",
             "search_partners",
             "link_partner",

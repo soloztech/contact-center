@@ -3023,6 +3023,7 @@ class TestContactCenter(SavepointCase):
         self.assertEqual(
             first_page["next_cursor"],
             {
+                "segment": "activity",
                 "last_activity_at": fields.Datetime.to_string(
                     dated_channels[1][1].create_date.replace(microsecond=0)
                 ),
@@ -3659,6 +3660,7 @@ class TestContactCenter(SavepointCase):
             [
                 {"key": "open", "label": "Aberta"},
                 {"key": "resolved", "label": "Resolvida"},
+                {"key": "archived", "label": "Arquivada"},
             ],
         )
         with self.assertRaises(ValidationError):

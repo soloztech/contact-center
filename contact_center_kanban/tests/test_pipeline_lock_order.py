@@ -3,7 +3,9 @@ from unittest import mock
 
 from odoo.tests.common import SavepointCase
 
-from ..services.tokens import CONTACT_CENTER_MEMBERSHIP_TOKEN
+from odoo.addons.contact_center_base.services.tokens import (
+    CONTACT_CENTER_MEMBERSHIP_TOKEN,
+)
 
 
 class TestContactCenterPipelineLockOrder(SavepointCase):

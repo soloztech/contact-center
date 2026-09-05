@@ -154,7 +154,7 @@
         <field name="model">contact.center.pipeline</field>
         <field
             name="inherit_id"
-            ref="contact_center_base.view_contact_center_pipeline_tree"
+            ref="contact_center_kanban.view_contact_center_pipeline_tree"
         />
         <field name="arch" type="xml">
             <field name="code" position="after">
@@ -168,7 +168,7 @@
         <field name="model">contact.center.pipeline</field>
         <field
             name="inherit_id"
-            ref="contact_center_base.view_contact_center_pipeline_form"
+            ref="contact_center_kanban.view_contact_center_pipeline_form"
         />
         <field name="arch" type="xml">
             <xpath
@@ -203,7 +203,7 @@
         <field name="model">contact.center.case</field>
         <field
             name="inherit_id"
-            ref="contact_center_base.view_contact_center_case_tree"
+            ref="contact_center_kanban.view_contact_center_case_tree"
         />
         <field name="arch" type="xml">
             <field name="stage_id" position="after">
@@ -221,7 +221,7 @@
         <field name="model">contact.center.case</field>
         <field
             name="inherit_id"
-            ref="contact_center_base.view_contact_center_case_form"
+            ref="contact_center_kanban.view_contact_center_case_form"
         />
         <field name="arch" type="xml">
             <xpath expr="//header/field[@name='stage_id']" position="before">
@@ -424,7 +424,7 @@
         <field name="model">mail.channel</field>
         <field
             name="inherit_id"
-            ref="contact_center_base.view_mail_channel_form_contact_center_cases"
+            ref="contact_center_kanban.view_mail_channel_form_contact_center_cases"
         />
         <field name="arch" type="xml">
             <xpath

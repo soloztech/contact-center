@@ -75,9 +75,10 @@ Each inbox may optionally select one `auto_assignment_user_id`. The selector is 
 to the same effective `owner_user_id ∪ access-team roster` used for authorization; it is
 not a second access grant and never makes an otherwise unauthorized user eligible.
 
-When enabled, a newly created conversation is assigned before its default service case
-is projected. An existing unassigned conversation is assigned only when a genuinely new
-inbound message is accepted. Exact webhook replays return before assignment, an existing
+When enabled, a newly created conversation is assigned before optional downstream
+projections run. If `contact_center_kanban` is installed, this includes its default
+case. An existing unassigned conversation is assigned only when a genuinely new inbound
+message is accepted. Exact webhook replays return before assignment, an existing
 responsible is never overwritten, and enabling the option does not bulk-change
 historical conversations. The rule is provider-neutral and applies equally to direct and
 group conversations supported by the account.

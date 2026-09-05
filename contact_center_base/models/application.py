@@ -167,22 +167,16 @@ class ContactCenterApplication(models.AbstractModel):
         return binding
 
     def _lock_inbound_account_scope(self, account):
-        """Keep inbox assignment/access configuration stable during projection.
+        """Serialize the first identity/conversation projection for one inbox.
 
         Access writers take the account lock before touching conversation rows. The
-        aggregate lock here follows that same order and prevents an automatic
-        assignee from being revoked between eligibility validation and the channel
-        write.  It is exclusive because first-channel case provisioning later
-        advances the account topology revision in this transaction.
+        aggregate lock here follows that same order, prevents duplicate first-seen
+        identity/channel projections from racing on their unique keys, and keeps an
+        automatic assignee from being revoked between eligibility validation and the
+        channel write.
         """
 
         account.ensure_one()
-        # Creating the first channel also provisions its default case, whose
-        # topology fence updates this same account row.  Taking only ``FOR SHARE``
-        # here would make two cold-start workers both hold a shared lock and then
-        # try to upgrade it, producing a deterministic PostgreSQL deadlock.  Own
-        # the aggregate exclusively from the beginning so the second worker gets
-        # a normal serialization retry with a fresh snapshot.
         self.env.cr.execute(
             "SELECT id FROM contact_center_account WHERE id = %s FOR UPDATE",
             [account.id],
@@ -195,26 +189,49 @@ class ContactCenterApplication(models.AbstractModel):
                 "owner_user_id",
                 "default_team_id",
                 "auto_assignment_user_id",
-                "reopen_resolved_on_inbound",
             ]
         )
         return account
 
-    def _reopen_resolved_inbound_conversation(self, binding):
-        """Reopen one resolved conversation for a genuinely new inbound message.
+    def _advance_inbound_projection_revision(self, account):
+        """Fence a first-seen projection against an older PostgreSQL snapshot.
+
+        A row lock alone does not refresh an Odoo REPEATABLE READ snapshot. Update
+        this dedicated revision only before creating canonical identity/routing
+        data, so a concurrent waiter restarts instead of acting on stale absence
+        while established conversations keep their normal throughput.
+        """
+
+        account.ensure_one()
+        account.flush_model(["inbound_projection_revision"])
+        self.env.cr.execute(
+            """
+            UPDATE contact_center_account
+               SET inbound_projection_revision = inbound_projection_revision + 1
+             WHERE id = %s
+         RETURNING id
+            """,
+            [account.id],
+        )
+        if not self.env.cr.fetchone():
+            raise ValidationError(_("The Contact Center inbox no longer exists."))
+        account.invalidate_recordset(["inbound_projection_revision"])
+        return account
+
+    def _apply_inbound_conversation_lifecycle(self, binding):
+        """Apply lifecycle invariants after one genuinely new inbound message.
 
         The caller owns the canonical binding/channel projection lock and invokes
         this only after provider-message deduplication. Consequently, a webhook
-        replay, receipt, mutation, or self-side message cannot reopen a case.
+        replay, receipt, mutation, or self-side message cannot reopen a conversation. A
+        resolved conversation always reopens; an archived conversation deliberately
+        remains archived, mirroring the persistent archive semantics of WhatsApp.
         """
 
         binding.ensure_one()
         channel = binding.channel_id
         channel.invalidate_recordset(["contact_center_state"])
-        if (
-            not binding.account_id.reopen_resolved_on_inbound
-            or channel.contact_center_state != "resolved"
-        ):
+        if channel.contact_center_state != "resolved":
             return False
         channel.sudo().with_context(
             contact_center_membership_token=CONTACT_CENTER_MEMBERSHIP_TOKEN
@@ -2254,6 +2271,7 @@ class ContactCenterApplication(models.AbstractModel):
         if identities:
             identity = identities[0]
         else:
+            self._advance_inbound_projection_revision(account)
             identity_model = self.env["contact.center.identity"]
             observed_name = identity_model._contact_center_clean_observed_name(
                 actor.display_name
@@ -2323,6 +2341,7 @@ class ContactCenterApplication(models.AbstractModel):
                 if updates:
                     alias.write(updates)
                 continue
+            self._advance_inbound_projection_revision(account)
             role = (
                 address.role
                 if address.role in dict(alias_model._fields["role"].selection)
@@ -2363,6 +2382,7 @@ class ContactCenterApplication(models.AbstractModel):
         if binding:
             return binding
 
+        self._advance_inbound_projection_revision(account)
         team = account.default_team_id
         channel = self.env["mail.channel"]._contact_center_create_channel(
             account=account,
@@ -2401,6 +2421,7 @@ class ContactCenterApplication(models.AbstractModel):
                 )
             return binding
 
+        self._advance_inbound_projection_revision(account)
         group_name = event.extensions.get("conversation_name") or event.extensions.get(
             "group_name"
         )
@@ -2468,6 +2489,7 @@ class ContactCenterApplication(models.AbstractModel):
                 if updates:
                     alias.write(updates)
                 continue
+            self._advance_inbound_projection_revision(binding.account_id)
             role = (
                 address.role
                 if address.role in dict(alias_model._fields["role"].selection)
@@ -2567,7 +2589,7 @@ class ContactCenterApplication(models.AbstractModel):
                 )
             return existing.message_id
 
-        self._reopen_resolved_inbound_conversation(binding)
+        self._apply_inbound_conversation_lifecycle(binding)
         self._auto_assign_inbound_conversation(binding)
 
         current_guest_members = binding.channel_id.sudo().channel_member_ids.guest_id
@@ -2798,7 +2820,7 @@ class ContactCenterApplication(models.AbstractModel):
 
     def _notify_ui(self, channel, event_type, payload, partner_ids=None):
         channel.ensure_one()
-        data = {
+        common_data = {
             "schema_version": SCHEMA_VERSION,
             "event_type": event_type,
             "channel_id": channel.id,
@@ -2809,9 +2831,36 @@ class ContactCenterApplication(models.AbstractModel):
             if partner_ids is not None
             else channel.sudo().channel_member_ids.filtered("partner_id").partner_id
         )
-        notifications = [
-            (partner, "contact_center/event", data) for partner in partners
-        ]
+        muted_partner_ids = set()
+        if (
+            event_type == "message_created"
+            and payload.get("direction") == "inbound"
+            and partners
+        ):
+            muted_preferences = (
+                self.env["contact.center.conversation.preference"]
+                .sudo()
+                .search(
+                    [
+                        ("channel_id", "=", channel.id),
+                        ("muted", "=", True),
+                        ("user_id.partner_id", "in", partners.ids),
+                    ]
+                )
+            )
+            muted_partner_ids = set(muted_preferences.user_id.partner_id.ids)
+        notifications = []
+        for partner in partners:
+            data = common_data
+            if (
+                event_type == "message_created"
+                and payload.get("direction") == "inbound"
+            ):
+                data = {
+                    **common_data,
+                    "personal_attention": partner.id not in muted_partner_ids,
+                }
+            notifications.append((partner, "contact_center/event", data))
         if notifications:
             try:
                 with self.env.cr.savepoint():

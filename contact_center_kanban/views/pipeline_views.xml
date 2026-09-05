@@ -382,7 +382,10 @@
     <record id="view_contact_center_team_form_pipeline" model="ir.ui.view">
         <field name="name">contact.center.team.form.pipeline</field>
         <field name="model">contact.center.team</field>
-        <field name="inherit_id" ref="view_contact_center_team_form" />
+        <field
+            name="inherit_id"
+            ref="contact_center_base.view_contact_center_team_form"
+        />
         <field name="arch" type="xml">
             <xpath expr="//notebook" position="inside">
                 <page string="Pipelines" name="pipelines">
@@ -398,7 +401,10 @@
     <record id="view_contact_center_account_form_pipeline" model="ir.ui.view">
         <field name="name">contact.center.account.form.pipeline</field>
         <field name="model">contact.center.account</field>
-        <field name="inherit_id" ref="view_contact_center_account_form" />
+        <field
+            name="inherit_id"
+            ref="contact_center_base.view_contact_center_account_form"
+        />
         <field name="arch" type="xml">
             <field name="default_team_id" position="after">
                 <field name="default_pipeline_id" />
@@ -409,7 +415,10 @@
     <record id="view_mail_channel_form_contact_center_cases" model="ir.ui.view">
         <field name="name">mail.channel.form.contact.center.cases</field>
         <field name="model">mail.channel</field>
-        <field name="inherit_id" ref="view_mail_channel_form_contact_center" />
+        <field
+            name="inherit_id"
+            ref="contact_center_base.view_mail_channel_form_contact_center"
+        />
         <field name="arch" type="xml">
             <xpath expr="//page[@name='contact_center']/group" position="before">
                 <button
@@ -442,7 +451,7 @@
     <menuitem
         id="menu_contact_center_cases"
         name="Service Cases"
-        parent="menu_contact_center_root"
+        parent="contact_center_base.menu_contact_center_root"
         action="action_contact_center_cases"
         sequence="15"
         groups="contact_center_base.group_contact_center_agent"
@@ -450,7 +459,7 @@
     <menuitem
         id="menu_contact_center_pipelines"
         name="Service Pipelines"
-        parent="menu_contact_center_configuration"
+        parent="contact_center_base.menu_contact_center_configuration"
         action="action_contact_center_pipelines"
         sequence="35"
         groups="contact_center_base.group_contact_center_admin"

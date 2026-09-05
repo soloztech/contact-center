@@ -15,6 +15,12 @@ direct-text/reply outbound and managed Graph health for Messenger and Page-linke
 Instagram.
 Telegram and other providers can be added without changing the core contract.
 
+Service pipelines are an optional capability supplied by `contact_center_kanban`.
+That addon owns cases, stages, the Kanban, transition history and case-scoped
+follow-ups. `contact_center_base` remains independent and retains quick replies,
+internal notes and scheduled provider messages. The CRM bridge depends on the
+optional Kanban addon because it synchronizes those cases and stages with native CRM.
+
 ## Current status
 
 Phases 2.1, 3, Phase 4 code hardening, 5.1, 5.2, 5.3 and Meta 6.1-6.5 have
@@ -53,8 +59,10 @@ The person-first identity and company-context UX is recorded in the
 [2026-09-01 validation](reviews/2026-09-01-person-company-identity-ux-validation.md).
 The per-inbox deleted-message display policy is recorded in the
 [deleted-message policy validation](reviews/2026-09-01-deleted-message-display-policy-validation.md).
-The inbox-density, two-state workflow and inbound-reopen increment is recorded in the
+The earlier inbox-density and inbound-reopen increment is recorded in the
 [2026-09-01 validation](reviews/2026-09-01-inbox-density-two-state-reopen-validation.md).
+The current lifecycle supersedes that increment with three operational states:
+`open`, `resolved`, and `archived`.
 The final architectural review is recorded in the
 [independent-audit disposition](reviews/2026-08-25-independent-audit-disposition.md).
 Production was not accessed or changed.
@@ -99,8 +107,10 @@ prioritize the logical inbox name over
 repeated transport metadata, and the selected-conversation header keeps platform,
 provider and inbox together. A persisted compact desktop density narrows the list and
 collapses its filters without changing the responsive mobile layout. The operational
-workflow has only `open` and `resolved` states, exposed as one contextual Resolve or
-Reopen action. Image, audio, video and document messages are rendered in the timeline.
+workflow has `open`, `resolved`, and `archived` states. A new inbound message always
+reopens a resolved conversation, while an archived conversation deliberately remains
+archived. The UI exposes contextual Resolve, Reopen, Archive, and Unarchive actions.
+Image, audio, video and document messages are rendered in the timeline.
 Each inbox chooses whether a deleted message keeps an attenuated, struck-through
 content snapshot or exposes only the deletion tombstone; the default is the tombstone
 with operational body, reactions and attachments removed. Desktop and mobile layouts
@@ -155,8 +165,11 @@ converge in a dedicated technical ledger and reach the UI only as aggregate coun
 
 An earlier validated increment passed **408/408** core tests, **204/204** WuzAPI tests and
 **742/742** integrated tests with no failures or errors. Its authenticated UI smoke
-covered the inbox-priority hierarchy, compact density, contextual state action and
-per-inbox inbound-reopen option. The authenticated media route is covered for `206`,
+covered the inbox-priority hierarchy, compact density, contextual state actions,
+and the then-current inbox-configurable reopening behavior. The current release makes
+reopening resolved conversations automatic and adds persistent archival; those changes
+are covered by the 2026-09-04 lifecycle tests, not this historical smoke.
+The authenticated media route is covered for `206`,
 `304`, `416` and deleted-content `404` responses.
 
 The 2026-09-02 native-first increment added two prerequisites.
@@ -600,8 +613,9 @@ disposition and its M4 addendum are recorded in
 ## Runtime and development
 
 Use the OCA `queue` repository on branch `16.0` and install modules in this order:
-`queue_job`, `contact_center_base`, a provider addon such as `contact_center_wuzapi`,
-and `contact_center_ui`. A running deployment must load `queue_job` server-wide and
+`queue_job`, `contact_center_base`, optional `contact_center_kanban`, a provider addon
+such as `contact_center_wuzapi`, and `contact_center_ui`. A running deployment must
+load `queue_job` server-wide and
 configure an active JobRunner; size workers and channel capacity before production use.
 Do not enable `QUEUE_JOB__NO_DELAY` outside focused tests. Provider addons must
 communicate with the core only through the adapter/DTO boundary and extend the generic

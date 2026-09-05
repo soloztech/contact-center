@@ -218,6 +218,7 @@ export class ConversationTimeline extends Component {
         this.followLatest = true;
         this.observedChannelId = false;
         this.observedLastMessageId = 0;
+        this.pendingInitialPositionChannelId = false;
         useEffect(
             () => this.synchronizeScroll(),
             () => [
@@ -532,14 +533,24 @@ export class ConversationTimeline extends Component {
         const lastMessageId = this.latestMessageId;
         if (channelChanged) {
             this.observedChannelId = channelId;
+            this.pendingInitialPositionChannelId = channelId;
             this.observedLastMessageId =
                 this.state.timelinePhase === "ready" ? lastMessageId : 0;
             this.followLatest = true;
             this.ui.unseenMessages = 0;
             this.ui.awayFromLatest = false;
             if (this.state.timelinePhase === "ready") {
-                this.scrollToBottom();
+                this.scrollToInitialPosition();
             }
+            return;
+        }
+
+        if (
+            this.state.timelinePhase === "ready" &&
+            this.pendingInitialPositionChannelId === channelId
+        ) {
+            this.observedLastMessageId = lastMessageId;
+            this.scrollToInitialPosition();
             return;
         }
 
@@ -556,7 +567,7 @@ export class ConversationTimeline extends Component {
             this.observedLastMessageId = lastMessageId;
         }
         if (decision === "follow") {
-            this.scrollToBottom({markSeen: true});
+            this.scrollToBottom({markSeen: !this.state.timelineHasMoreForward});
         } else if (decision === "notify") {
             const added = this.state.messages.filter(
                 (message) =>
@@ -577,7 +588,13 @@ export class ConversationTimeline extends Component {
         this.followLatest = timelineViewportNearBottom(this.viewportRef.el);
         this.ui.awayFromLatest = !this.followLatest;
         if (this.followLatest) {
-            const shouldMarkSeen = Boolean(this.ui.unseenMessages);
+            if (this.state.timelineHasMoreForward) {
+                this.loadNewer();
+                return;
+            }
+            const shouldMarkSeen = Boolean(
+                this.ui.unseenMessages || this.state.timelineFirstUnreadMessageId
+            );
             this.ui.unseenMessages = 0;
             if (shouldMarkSeen && this.latestMessageId) {
                 this.store.markSeen(this.latestMessageId);
@@ -632,10 +649,14 @@ export class ConversationTimeline extends Component {
     }
 
     scrollToBottom({markSeen = false} = {}) {
+        const channelId = this.state.selectedChannelId;
         this.followLatest = true;
         this.ui.unseenMessages = 0;
         this.ui.awayFromLatest = false;
         browser.requestAnimationFrame(() => {
+            if (channelId !== this.state.selectedChannelId) {
+                return;
+            }
             const viewport = this.viewportRef.el;
             if (viewport) {
                 viewport.scrollTop = viewport.scrollHeight;
@@ -646,20 +667,70 @@ export class ConversationTimeline extends Component {
         });
     }
 
-    showLatest() {
+    scrollToInitialPosition() {
+        const channelId = this.state.selectedChannelId;
+        this.pendingInitialPositionChannelId = false;
+        const firstUnreadMessageId = this.state.timelineFirstUnreadMessageId;
+        if (!Number.isSafeInteger(firstUnreadMessageId) || firstUnreadMessageId <= 0) {
+            this.scrollToBottom();
+            return;
+        }
+        this.followLatest = false;
+        this.ui.unseenMessages = 0;
+        this.ui.awayFromLatest = true;
+        browser.requestAnimationFrame(() => {
+            if (channelId !== this.state.selectedChannelId) {
+                return;
+            }
+            const viewport = this.viewportRef.el;
+            const boundary =
+                viewport &&
+                viewport.querySelector(
+                    `[data-unread-boundary="${firstUnreadMessageId}"]`
+                );
+            if (!viewport || !boundary) {
+                this.scrollToBottom();
+                return;
+            }
+            viewport.scrollTop = Math.max(0, boundary.offsetTop - 16);
+        });
+    }
+
+    async showLatest() {
+        if (this.state.timelineHasMoreForward) {
+            this.followLatest = true;
+            this.ui.unseenMessages = 0;
+            this.ui.awayFromLatest = false;
+            await this.store.jumpToLatest();
+            return;
+        }
         this.scrollToBottom({markSeen: true});
     }
 
     async loadOlder() {
+        const channelId = this.state.selectedChannelId;
         const viewport = this.viewportRef.el;
         const previousHeight = viewport ? viewport.scrollHeight : 0;
         const previousTop = viewport ? viewport.scrollTop : 0;
         this.preserveScroll = true;
         await this.store.loadOlderMessages();
         browser.requestAnimationFrame(() => {
-            if (viewport) {
+            if (channelId === this.state.selectedChannelId && viewport) {
                 viewport.scrollTop =
                     previousTop + Math.max(0, viewport.scrollHeight - previousHeight);
+            }
+            this.preserveScroll = false;
+        });
+    }
+
+    async loadNewer() {
+        const channelId = this.state.selectedChannelId;
+        this.preserveScroll = true;
+        await this.store.loadNewerMessages();
+        browser.requestAnimationFrame(() => {
+            if (channelId === this.state.selectedChannelId) {
+                this.followLatest = timelineViewportNearBottom(this.viewportRef.el);
+                this.ui.awayFromLatest = !this.followLatest;
             }
             this.preserveScroll = false;
         });

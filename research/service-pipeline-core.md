@@ -1,4 +1,4 @@
-# Pipeline de atendimento no core
+# Pipeline de atendimento no addon opcional
 
 Data da decisão: 2026-08-31.
 
@@ -7,11 +7,17 @@ Status: implementado e implantado no SERVIDOR05 em 2026-09-01 no
 de teste:
 [`../reviews/2026-09-01-owner-team-pipeline-crm-release-validation.md`](../reviews/2026-09-01-owner-team-pipeline-crm-release-validation.md).
 
+Decisão arquitetural de 2026-09-04: a implementação foi extraída integralmente para o
+addon opcional `contact_center_kanban`. O registro acima permanece como evidência
+histórica da primeira implantação; a autoridade atual de pipelines, casos, transições e
+follow-ups de caso é o plugin. `contact_center_base` não declara esses modelos, campos,
+ACLs, regras, views ou dados.
+
 ## Separação canônica
 
 - `mail.channel` continua sendo a conversa e o histórico de mensagens.
 - `mail.channel.contact_center_state` continua sendo o estado operacional da conversa
-  (`open`, `pending`, `resolved`).
+  (`open`, `resolved`, `archived`).
 - `contact.center.case` representa um assunto comercial ou de atendimento. Uma conversa
   pode ter vários casos, cada um em uma etapa diferente.
 - Mover um caso no Kanban não altera o estado operacional da conversa, e alterar o
@@ -20,7 +26,7 @@ de teste:
 Essa separação permite que duas propostas, tickets ou oportunidades coexistam na mesma
 conversa sem forçar um único estágio para todos os assuntos.
 
-## Modelos do core
+## Modelos do addon
 
 - `contact.center.pipeline`: pipeline neutro por empresa, reutilizável por várias caixas
   e equipes.
