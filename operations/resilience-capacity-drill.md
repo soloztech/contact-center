@@ -9,8 +9,8 @@ replaces, unit and integration tests.
 
 The automated harness uses a localhost WuzAPI test server and an internal-only Docker
 network. Ingress authentication, Odoo HTTP, PostgreSQL and the OCA JobRunner are real;
-the provider responses and session events are simulated. A successful run does not
-claim that a real WhatsApp session was disconnected or that Meta App Review gates were
+the provider responses and session events are simulated. A successful run does not claim
+that a real WhatsApp session was disconnected or that Meta App Review gates were
 validated. Live-provider canary checks remain part of cutover.
 
 ## Topology
