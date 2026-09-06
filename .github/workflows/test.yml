@@ -47,7 +47,7 @@ jobs:
     container: ${{ matrix.container }}
     name: ${{ matrix.name }}
     env:
-      PEER_REF: ${{ inputs.peer_ref || 'b86b4a39b0f96af2d6368fc41d3b9f429512ce22' }}
+      PEER_REF: ${{ inputs.peer_ref || '605d1e670f821e1e3ffc8e9c51fec7c4942ca040' }}
     strategy:
       fail-fast: false
       matrix:
@@ -79,8 +79,8 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: soloztech/marketing-center
-          # PRs use the published baseline; a manual release run can select the
-          # exact coordinated peer commit without rewriting the workflow.
+          # PRs use the validated compatible baseline; a manual release run
+          # selects the exact coordinated peer commit without rewriting the workflow.
           ref: ${{ env.PEER_REF }}
           path: .ci-private-dependency/marketing-center
           token: ${{ secrets.CROSS_REPO_READ_TOKEN }}

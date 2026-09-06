@@ -103,8 +103,49 @@ O plano é limitado a sete mensagens identificadas como teste, admitidas no banc
 dedicado e despachadas pelos jobs correspondentes. A preparação privada contém apenas os
 dados da conexão e do destinatário autorizados e fica fora do Git. O plano exige backup
 pareado de banco/filestore e interrompe diante de falha ou ambiguidade, sem repetição
-automática. O resultado desta prova será registrado após sua execução.
+automática.
+
+**Resultado: sete comandos concluídos, cada um com uma tentativa externa, sete IDs
+distintos e recibo `delivered` correspondente à conversa autorizada.** Foram enviados
+aviso em texto, cartão com botões de resposta/link/telefone, lista, contato sintético,
+localização estática e duas imagens. Estas imagens foram duas admissões individuais; o
+envio múltiplo do compositor foi validado nos testes locais. Não houve prova de álbum
+nativo no WhatsApp.
+
+A primeira execução parou antes do segundo despacho: o intervalo fixo de 1,1 segundo do
+harness ficou cerca de 218 ms aquém do prazo reservado pelo núcleo, que arredonda o
+intervalo mínimo de um segundo para o próximo segundo inteiro. O núcleo recusou o
+despacho sem incrementar a tentativa externa. A continuação foi revisada explicitamente
+para os seis comandos ainda sem tentativa, mantendo seus UUIDs e o ID do primeiro já
+entregue. Um novo backup preservou esse estado; o intervalo passou a três segundos no
+harness. Nenhuma política do produto foi alterada para executar o ensaio.
+
+`transport-continuation-results.json` registra os sete resultados e
+`transport-lab-receipts.json` registra a confirmação independente dos recibos, por ID e
+conversa exatos. Os oito ingressos de recibo correspondem aos sete IDs; repetição de
+recibo não representa repetição de envio. Os backups privados tiveram catálogo e hashes
+verificados, além da comparação integral do filestore; isso não constitui ensaio
+completo de restauração.
+
+A apresentação dos cartões e o acionamento das opções no aplicativo destinatário ainda
+dependem da confirmação humana. Os ingressos observados permaneciam pendentes no
+laboratório, sem projeções vinculadas aos outboxes do banco local. Assim, os recibos
+comprovam entrega, mas não aprovam o processamento pelo ERP remoto. Não houve teste real
+Meta, pois nenhum destinatário dessa plataforma foi indicado.
 
 Essa prova de transporte não aprova a implantação do ERP. O laboratório permanece com a
 fonte anterior e com pouca memória disponível para um runtime adicional; a janela de
 produção anterior continua cancelada.
+
+## CI coordenada
+
+O par inicial do candidato passou no GitHub: Contact Center, execução
+[34046982979](https://github.com/soloztech/contact-center/actions/runs/34046982979), 962
+testes; Marketing Center, execução
+[34046984151](https://github.com/soloztech/marketing-center/actions/runs/34046984151),
+765 testes. Cada execução confirmou o SHA completo do parceiro.
+
+A CI automática do primeiro PR Contact ainda usou o Marketing anterior, cuja função de
+transporte não aceitava `files`. Os fallbacks dos dois workflows foram atualizados para
+as revisões compatíveis desse par já validado. A validação final deve usar as HEADs dos
+PRs e registrar os dispatches cruzados no próprio PR, além das verificações automáticas.

@@ -86,8 +86,8 @@ forward pagination, with older history available through backward pagination.
 
 | Capability | WuzAPI / WhatsApp                                                           | Meta / Messenger and Page-linked Instagram                                                   |
 | ---------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| Inbound    | Text, supported media and structured-message summaries                      | Direct text, replies, echoes and supported media                                             |
-| Outbound   | Text, image, audio, video and document                                      | Direct text and replies within the standard 24-hour response window                          |
+| Inbound    | Text, supported media, typed cards and selections                           | Direct text, replies, echoes and supported media                                             |
+| Outbound   | Text, media, buttons, lists, contacts and static locations                  | Text/replies and private media, one file/no caption, 24h; outbound cards unavailable          |
 | Groups     | Metadata, participant receipts and opt-in sending/mutations                 | Not supported                                                                                |
 | Mutations  | Replies, reactions, edits and deletes subject to ownership and capabilities | Inbound state/mutation events by platform; outbound reactions, edits and deletes unavailable |
 | Profiles   | Bounded name/avatar fetch and group metadata synchronization                | Bounded profile/avatar fetch and token/scope/subscription health                             |

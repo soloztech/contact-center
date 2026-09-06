@@ -1,5 +1,11 @@
 # Webhooks e formatos de mensagem — auditoria de cobertura
 
+Este documento registra o diagnóstico anterior às implementações desta data. As matrizes
+abaixo são históricas. Consulte os resultados posteriores de
+[mensagens ricas](2026-09-06-rich-messaging.md),
+[mídia Meta](2026-09-06-rich-messaging-meta.md) e
+[capacidades por canal](2026-09-06-channel-capabilities.md) para a cobertura candidata.
+
 Data: 2026-09-06. Repositórios: Contact Center e Marketing Center, árvore local com as
 correções da auditoria de 2026-09-05. Estudo com inspeção de código, contratos dos
 provedores e leitura do laboratório SERVIDOR05. Não houve envio real, replay
