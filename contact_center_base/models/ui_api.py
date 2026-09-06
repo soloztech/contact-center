@@ -1,5 +1,8 @@
 import uuid
 
+from psycopg2 import errorcodes
+from psycopg2.errors import SerializationFailure, UniqueViolation
+
 from odoo import _, api, fields, models
 from odoo.exceptions import AccessError, UserError, ValidationError
 from odoo.osv import expression
@@ -13,7 +16,14 @@ from ..services.media import (
     validate_provider_media_caption_capability,
     validate_provider_recorded_audio_capability,
 )
+from ..services.structured_content import outbound_structured_capabilities
 from ..services.tokens import CONTACT_CENTER_MEMBERSHIP_TOKEN
+
+
+class _ConversationPreferenceSerializationFailure(SerializationFailure):
+    # Python-created psycopg2 exceptions need an explicit SQLSTATE for Odoo's
+    # transaction retry to restart the request with a fresh database snapshot.
+    pgcode = errorcodes.SERIALIZATION_FAILURE
 
 
 class ContactCenterUiApi(models.AbstractModel):
@@ -377,8 +387,18 @@ class ContactCenterUiApi(models.AbstractModel):
             return "retry_capability_unavailable"
         if not connection._contact_center_outbound_is_available():
             return "retry_connection_unavailable"
+        try:
+            self._application()._check_outbound_structured_capability(
+                connection,
+                binding.channel_binding_id.conversation_type,
+                _source_command.message.structured_content,
+                clean_body,
+            )
+        except (UserError, ValidationError):
+            return "retry_capability_unavailable"
         if (
             clean_body
+            and not _source_command.message.structured_content
             and binding.account_id.outbound_signature_enabled
             and capabilities.get("sender_signature") is not True
         ):
@@ -589,6 +609,9 @@ class ContactCenterUiApi(models.AbstractModel):
             "direction": binding.direction if binding else "internal",
             "origin": binding.origin if binding else "internal",
             "content_type": binding.content_type if binding else "note",
+            "structured_content": (binding.structured_content_json or {})
+            if binding and content_visible
+            else {},
             "platform": binding.account_id.platform if binding else "internal",
             "provider": (
                 binding.provider_connection_id.adapter_key
@@ -660,6 +683,7 @@ class ContactCenterUiApi(models.AbstractModel):
                     and binding.external_message_id
                     and capabilities.get("edit_message")
                     and not is_deleted
+                    and self._application()._outbound_text_edit_supported(binding)
                 ),
                 "delete": bool(
                     allows_mutations
@@ -1306,6 +1330,12 @@ class ContactCenterUiApi(models.AbstractModel):
         if conversation_type == "direct":
             effective_capabilities = dict(provider_capabilities)
             effective_capabilities["send_message"] = can_send
+            effective_capabilities.pop("structured_content", None)
+            effective_capabilities["outbound_structured_content"] = (
+                outbound_structured_capabilities(provider_capabilities)
+                if can_send
+                else {}
+            )
         elif conversation_type == "group":
             if own_protocol_participant is None and can_send:
                 if "own_protocol_participant" in prefetched:
@@ -1326,6 +1356,11 @@ class ContactCenterUiApi(models.AbstractModel):
                     can_send and provider_capabilities.get("sender_signature") is True
                 ),
                 "media": (provider_capabilities.get("media", {}) if can_send else {}),
+                "outbound_structured_content": outbound_structured_capabilities(
+                    provider_capabilities
+                )
+                if can_send
+                else {},
                 "reply": bool(can_send and provider_capabilities.get("reply") is True),
                 "react": bool(
                     mutations_ready and provider_capabilities.get("react") is True
@@ -2322,13 +2357,27 @@ class ContactCenterUiApi(models.AbstractModel):
         if preference:
             preference.write(values)
         elif values.get("pinned_at") or values.get("muted"):
-            preference = preference_model.create(
-                {
-                    "channel_id": channel.id,
-                    "user_id": self.env.user.id,
-                    **values,
-                }
-            )
+            try:
+                with self.env.cr.savepoint():
+                    preference = preference_model.create(
+                        {
+                            "channel_id": channel.id,
+                            "user_id": self.env.user.id,
+                            **values,
+                        }
+                    )
+            except UniqueViolation as error:
+                if error.diag.constraint_name != (
+                    "contact_center_conversation_preference_channel_user_unique"
+                ):
+                    raise
+                # The member lock serializes changes but does not update that
+                # row. At REPEATABLE READ a first preference committed while
+                # this request waited is still invisible to its old snapshot.
+                # Restart the whole request so the patch merges into that row.
+                raise _ConversationPreferenceSerializationFailure(
+                    "Concurrent conversation preference requires a fresh snapshot"
+                ) from error
         if preference and not preference.pinned_at and not preference.muted:
             preference.unlink()
             preference = preference_model
@@ -3107,6 +3156,7 @@ class ContactCenterUiApi(models.AbstractModel):
         reply_to_message_id=None,
         client_request_id=None,
         media_refs=None,
+        structured_content=None,
     ):
         channel, _member = self._authorized_channel(channel_id)
         reply_to_message_id = (
@@ -3120,6 +3170,7 @@ class ContactCenterUiApi(models.AbstractModel):
             reply_to_message_id=reply_to_message_id,
             client_request_id=client_request_id,
             media_refs=media_refs,
+            structured_content=structured_content,
         )
         binding = outbox.message_binding_id
         return {

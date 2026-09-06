@@ -16,6 +16,38 @@
                 class="cc-productivity-toolbar"
                 aria-label="Ferramentas da conversa"
             >
+                <label
+                    t-if="structuredTypes.length || local.structuredDraft"
+                    class="cc-composer-card-choice"
+                >
+                    <span class="sr-only">Tipo de cartão</span>
+                    <select
+                        aria-label="Tipo de cartão"
+                        t-att-disabled="!canChooseStructured"
+                        t-on-change="onStructuredType"
+                    >
+                        <option
+                            value=""
+                            t-att-selected="!local.structuredDraft"
+                        >Cartão…</option>
+                        <option
+                            t-if="local.structuredDraft &amp;&amp; !structuredTypes.includes(local.structuredDraft.type)"
+                            t-att-value="local.structuredDraft.type"
+                            selected="selected"
+                            disabled="disabled"
+                        ><t
+                                t-esc="structuredLabel(local.structuredDraft.type)"
+                            /> (indisponível)</option>
+                        <option
+                            t-foreach="structuredTypes"
+                            t-as="type"
+                            t-key="type"
+                            t-att-value="type"
+                            t-att-selected="local.structuredDraft &amp;&amp; local.structuredDraft.type === type"
+                            t-esc="structuredLabel(type)"
+                        />
+                    </select>
+                </label>
                 <button
                     t-if="canUseQuickReplies"
                     type="button"
@@ -415,75 +447,93 @@
                     t-if="!noteMode"
                     type="button"
                     aria-label="Cancelar resposta"
+                    t-att-disabled="local.sendPlan || local.actionBusy"
                     t-on-click="() => store.clearReply()"
                 >
                     <i class="fa fa-times" aria-hidden="true" />
                 </button>
             </div>
+            <t
+                t-if="local.structuredDraft"
+                t-call="contact_center_ui.StructuredComposerFields"
+            />
+            <div t-if="attachments.length" class="cc-composer-attachments">
             <div
-                t-if="local.attachment"
-                t-att-class="'cc-composer-attachment is-' + local.uploadPhase"
-                t-att-aria-busy="local.uploadPhase === 'uploading' ? 'true' : 'false'"
-            >
+                    t-foreach="attachments"
+                    t-as="attachment"
+                    t-key="attachment.id"
+                    t-att-class="'cc-composer-attachment is-' + attachment.phase"
+                    t-att-aria-busy="attachment.phase === 'uploading' ? 'true' : 'false'"
+                >
                 <div class="cc-composer-attachment__preview" aria-hidden="true">
                     <img
-                        t-if="local.attachment.kind === 'image' &amp;&amp; local.attachment.previewUrl"
-                        t-att-src="local.attachment.previewUrl"
-                        alt=""
-                    />
+                            t-if="attachment.kind === 'image' &amp;&amp; attachment.previewUrl"
+                            t-att-src="attachment.previewUrl"
+                            alt=""
+                        />
                     <video
-                        t-elif="local.attachment.kind === 'video' &amp;&amp; local.attachment.previewUrl"
-                        t-att-src="local.attachment.previewUrl"
-                        muted="muted"
-                        playsinline="playsinline"
-                    />
+                            t-elif="attachment.kind === 'video' &amp;&amp; attachment.previewUrl"
+                            t-att-src="attachment.previewUrl"
+                            muted="muted"
+                            playsinline="playsinline"
+                        />
                     <i
-                        t-else=""
-                        t-att-class="local.attachment.kind === 'audio' ? 'fa fa-volume-up' : 'fa fa-file-o'"
-                    />
+                            t-else=""
+                            t-att-class="attachment.kind === 'audio' ? 'fa fa-volume-up' : 'fa fa-file-o'"
+                        />
                 </div>
                 <div class="cc-composer-attachment__copy">
-                    <strong t-esc="local.attachment.name" />
-                    <span t-if="local.uploadPhase === 'uploading'">
+                    <strong t-esc="attachment.name" />
+                    <span
+                            t-if="attachment.phase === 'uploading' || attachment.phase === 'pending'"
+                        >
                         <i class="fa fa-circle-o-notch fa-spin" aria-hidden="true" />
-                        Enviando arquivo…
+                        Preparando arquivo…
                     </span>
-                    <span t-elif="local.uploadPhase === 'error'" class="is-error">
+                    <span t-elif="attachment.phase === 'error'" class="is-error">
                         <i class="fa fa-exclamation-circle" aria-hidden="true" />
-                        <t t-esc="local.uploadError" />
+                        <t t-esc="attachment.error" />
                     </span>
-                    <span t-else="" t-esc="attachmentLabel" />
+                    <span t-else="" t-esc="attachmentLabel(attachment)" />
                     <audio
-                        t-if="local.attachment.kind === 'audio' &amp;&amp; local.attachment.previewUrl"
-                        class="cc-composer-attachment__audio"
-                        t-att-src="local.attachment.previewUrl"
-                        controls="controls"
-                        controlslist="nodownload"
-                        preload="metadata"
-                        aria-label="Ouvir prévia do áudio"
-                    />
+                            t-if="attachment.kind === 'audio' &amp;&amp; attachment.previewUrl"
+                            class="cc-composer-attachment__audio"
+                            t-att-src="attachment.previewUrl"
+                            controls="controls"
+                            controlslist="nodownload"
+                            preload="metadata"
+                            aria-label="Ouvir prévia do áudio"
+                        />
                     <button
-                        t-if="local.uploadPhase === 'error'"
-                        type="button"
-                        class="cc-composer-attachment__retry"
-                        t-on-click="retryUpload"
-                    >Tentar novamente</button>
+                            t-if="attachment.phase === 'error'"
+                            type="button"
+                            class="cc-composer-attachment__retry"
+                            t-att-disabled="uploadInProgress || local.sendPlan || local.actionBusy"
+                            t-on-click="() => this.retryUpload(attachment)"
+                        >Tentar novamente</button>
                 </div>
                 <button
-                    type="button"
-                    class="cc-composer-attachment__remove"
-                    aria-label="Remover arquivo"
-                    title="Remover arquivo"
-                    t-on-click="removeAttachment"
-                >
+                        type="button"
+                        class="cc-composer-attachment__remove"
+                        aria-label="Remover arquivo"
+                        title="Remover arquivo"
+                        t-att-disabled="local.sendPlan || local.actionBusy"
+                        t-on-click="() => this.removeAttachment(attachment)"
+                    >
                     <i class="fa fa-times" aria-hidden="true" />
                 </button>
             </div>
-            <div
-                t-elif="local.uploadError"
-                class="cc-composer-upload-error"
-                role="alert"
-            >
+            </div>
+            <p
+                t-if="attachments.length"
+                class="cc-composer-attachments__hint"
+                t-esc="attachmentCaptionHint"
+            />
+            <div t-if="local.sendStatus" class="cc-composer-upload-error" role="status">
+                <i class="fa fa-info-circle" aria-hidden="true" />
+                <span t-esc="local.sendStatus" />
+            </div>
+            <div t-if="local.uploadError" class="cc-composer-upload-error" role="alert">
                 <i class="fa fa-exclamation-circle" aria-hidden="true" />
                 <span t-esc="local.uploadError" />
                 <button
@@ -495,7 +545,7 @@
                     class="cc-composer-upload-error__dismiss"
                     aria-label="Fechar aviso"
                     title="Fechar aviso"
-                    t-on-click="removeAttachment"
+                    t-on-click="() => this.removeAttachment()"
                 >
                     <i class="fa fa-times" aria-hidden="true" />
                 </button>
@@ -567,6 +617,7 @@
                 <input
                     t-ref="file"
                     type="file"
+                    multiple="multiple"
                     class="cc-composer__file-input"
                     t-att-accept="acceptedFiles"
                     tabindex="-1"
@@ -576,9 +627,9 @@
                     t-if="!noteMode"
                     type="button"
                     class="cc-attachment-button"
-                    t-att-disabled="!canAttach || voiceCaptureActive || sending || local.uploadPhase === 'uploading'"
-                    t-att-title="scheduleMode ? 'Agendamento aceita somente texto' : canAttach ? 'Anexar arquivo' : 'Este canal não permite anexos'"
-                    aria-label="Anexar arquivo"
+                    t-att-disabled="!canChooseAttachments"
+                    t-att-title="scheduleMode ? 'Agendamento aceita somente texto' : canAttach ? 'Anexar até 10 arquivos' : 'Este canal não permite anexos'"
+                    aria-label="Anexar arquivos"
                     t-on-click="chooseAttachment"
                 >
                     <i class="fa fa-paperclip" aria-hidden="true" />
@@ -587,10 +638,11 @@
                     <textarea
                         t-ref="input"
                         rows="1"
-                        maxlength="65536"
-                        t-att-placeholder="noteMode ? 'Escreva uma nota interna' : local.attachment ? 'Adicione uma legenda' : 'Escreva uma mensagem'"
+                        t-att-maxlength="bodyMaxLength"
+                        t-att-placeholder="noteMode ? 'Escreva uma nota interna' : attachments.length ? 'Adicione uma legenda ou mensagem' : 'Escreva uma mensagem'"
                         t-att-aria-label="noteMode ? 'Nota interna' : 'Mensagem'"
                         t-att-value="local.body"
+                        t-att-readonly="local.sendPlan ? true : false"
                         t-att-disabled="!conversation || (!noteMode &amp;&amp; !conversation.can_send) || voiceCaptureActive"
                         t-on-input="onInput"
                         t-on-keydown="onKeydown"
@@ -635,5 +687,170 @@
                 </button>
             </div>
         </footer>
+    </t>
+    <t t-name="contact_center_ui.StructuredComposerFields" owl="1">
+        <fieldset
+            class="cc-structured-form"
+            t-att-disabled="local.sendPlan || local.actionBusy || !structuredSpec"
+        >
+            <legend t-esc="structuredLabel(local.structuredDraft.type)" />
+            <p
+                t-if="structuredBodyHint"
+                class="cc-structured-form__hint"
+                t-esc="structuredBodyHint"
+            />
+            <t t-if="['buttons', 'list'].includes(local.structuredDraft.type)">
+                <label
+                    t-if="!structuredSpec || structuredSpec.max_title_length || local.structuredDraft.title"
+                ><span>Título (opcional)</span><input
+                        type="text"
+                        t-att-maxlength="structuredSpec &amp;&amp; structuredSpec.max_title_length * 2"
+                        t-model="local.structuredDraft.title"
+                    /></label>
+                <label
+                    t-if="!structuredSpec || structuredSpec.max_footer_length || local.structuredDraft.footer"
+                ><span>Rodapé (opcional)</span><input
+                        type="text"
+                        t-att-maxlength="structuredSpec &amp;&amp; structuredSpec.max_footer_length * 2"
+                        t-model="local.structuredDraft.footer"
+                    /></label>
+                <t t-if="local.structuredDraft.type === 'list'">
+                    <label><span>Texto do botão</span><input
+                            type="text"
+                            t-att-maxlength="structuredSpec &amp;&amp; structuredSpec.max_button_text_length * 2"
+                            t-model="local.structuredDraft.buttonText"
+                        /></label>
+                    <label><span>Nome da seção</span><input
+                            type="text"
+                            t-att-maxlength="structuredSpec &amp;&amp; structuredSpec.max_section_title_length * 2"
+                            t-model="local.structuredDraft.sectionTitle"
+                        /></label>
+                </t>
+                <div
+                    t-foreach="local.structuredDraft.rows"
+                    t-as="row"
+                    t-key="row.id"
+                    class="cc-structured-form__row"
+                >
+                    <label><span t-esc="'Opção ' + (row_index + 1)" /><input
+                            type="text"
+                            t-att-maxlength="structuredRowTitleLimit * 2"
+                            t-model="row.title"
+                        /></label>
+                    <t t-if="local.structuredDraft.type === 'buttons'">
+                        <label><span>Ação</span><select t-model="row.type">
+                            <option
+                                    t-if="!structuredActions.includes(row.type)"
+                                    t-att-value="row.type"
+                                    disabled="disabled"
+                                ><t
+                                        t-esc="structuredActionLabel(row.type)"
+                                    /> (indisponível)</option>
+                            <option
+                                    t-foreach="structuredActions"
+                                    t-as="action"
+                                    t-key="action"
+                                    t-att-value="action"
+                                    t-esc="structuredActionLabel(action)"
+                                />
+                        </select></label>
+                        <label t-if="row.type === 'url'"><span
+                            >Endereço HTTPS</span><input
+                                type="url"
+                                maxlength="2048"
+                                placeholder="https://"
+                                t-model="row.url"
+                            /></label>
+                        <label t-if="row.type === 'phone'"><span>Telefone</span><input
+                                type="tel"
+                                t-att-maxlength="structuredSpec &amp;&amp; structuredSpec.max_phone_length"
+                                placeholder="+55…"
+                                t-model="row.phone"
+                            /></label>
+                    </t>
+                    <label
+                        t-elif="!structuredSpec || structuredSpec.max_row_description_length || row.description"
+                    ><span>Descrição (opcional)</span><input
+                            type="text"
+                            t-att-maxlength="structuredSpec &amp;&amp; structuredSpec.max_row_description_length * 2"
+                            t-model="row.description"
+                        /></label>
+                    <button
+                        type="button"
+                        title="Remover opção"
+                        aria-label="Remover opção"
+                        t-att-disabled="local.structuredDraft.rows.length === 1"
+                        t-on-click="() => this.removeStructuredRow(row)"
+                    ><i class="fa fa-times" aria-hidden="true" /></button>
+                </div>
+                <button
+                    type="button"
+                    class="cc-structured-form__add"
+                    t-att-disabled="!canAddStructuredRow"
+                    t-on-click="addStructuredRow"
+                >Adicionar opção<t t-if="structuredRowLimit"> (até <t
+                            t-esc="structuredRowLimit"
+                        />)</t></button>
+            </t>
+            <t t-elif="local.structuredDraft.type === 'contacts'">
+                <label><span>Nome do contato</span><input
+                        type="text"
+                        t-att-maxlength="structuredSpec &amp;&amp; structuredSpec.max_name_length * 2"
+                        t-model="local.structuredDraft.name"
+                    /></label>
+                <label
+                    t-if="!structuredSpec || structuredSpec.max_phones || local.structuredDraft.phones"
+                ><span
+                        t-esc="structuredSpec ? 'Telefones (até ' + structuredSpec.max_phones + ', um por linha)' : 'Telefones'"
+                    /><textarea
+                        rows="2"
+                        t-att-maxlength="structuredSpec &amp;&amp; structuredSpec.max_phones * (structuredSpec.max_phone_length + 1)"
+                        t-model="local.structuredDraft.phones"
+                        placeholder="+55…"
+                    /></label>
+                <label
+                    t-if="!structuredSpec || structuredSpec.max_emails || local.structuredDraft.emails"
+                ><span
+                        t-esc="structuredSpec ? 'E-mails (até ' + structuredSpec.max_emails + ', um por linha)' : 'E-mails'"
+                    /><textarea
+                        rows="2"
+                        t-att-maxlength="structuredSpec &amp;&amp; structuredSpec.max_emails * (structuredSpec.max_email_length * 2 + 1)"
+                        t-model="local.structuredDraft.emails"
+                    /></label>
+            </t>
+            <t t-elif="local.structuredDraft.type === 'location'">
+                <label
+                    t-if="!structuredSpec || structuredSpec.max_name_length || local.structuredDraft.name"
+                ><span>Nome do local (opcional)</span><input
+                        type="text"
+                        t-att-maxlength="structuredSpec &amp;&amp; structuredSpec.max_name_length * 2"
+                        t-model="local.structuredDraft.name"
+                    /></label>
+                <label
+                    t-if="!structuredSpec || structuredSpec.max_address_length || local.structuredDraft.address"
+                ><span>Endereço (opcional)</span><input
+                        type="text"
+                        t-att-maxlength="structuredSpec &amp;&amp; structuredSpec.max_address_length * 2"
+                        t-model="local.structuredDraft.address"
+                    /></label>
+                <label><span>Latitude</span><input
+                        type="text"
+                        inputmode="decimal"
+                        placeholder="-23.5505"
+                        t-model="local.structuredDraft.latitude"
+                    /></label>
+                <label><span>Longitude</span><input
+                        type="text"
+                        inputmode="decimal"
+                        placeholder="-46.6333"
+                        t-model="local.structuredDraft.longitude"
+                    /></label>
+            </t>
+            <p
+                t-if="structuredSubmission.error"
+                class="cc-structured-form__hint"
+                t-esc="structuredSubmission.error"
+            />
+        </fieldset>
     </t>
 </templates>

@@ -21,6 +21,11 @@ from ..services.media import (
     validate_provider_media_caption_capability,
     validate_provider_recorded_audio_capability,
 )
+from ..services.structured_content import (
+    OUTBOUND_TYPES,
+    validate_outbound_structured_content,
+    validate_structured_content,
+)
 from ..services.tokens import CONTACT_CENTER_POST_TOKEN
 
 _logger = logging.getLogger("%s.application" % __name__.rsplit(".", 1)[0])
@@ -30,7 +35,63 @@ _MAX_OUTBOUND_TEXT_CHARS = 65536
 class ContactCenterApplicationOutbound(models.AbstractModel):
     _inherit = "contact.center.application"
 
-    def _normalize_outbound_message_content(self, body, media_refs):
+    def _normalize_outbound_structured_content(self, content, body, media_refs):
+        content = {} if content is None else content
+        try:
+            validate_structured_content(content)
+        except (TypeError, ValueError) as error:
+            raise ValidationError(
+                _("The message card contains invalid fields.")
+            ) from error
+        if not content:
+            return {}, body
+        if not isinstance(body, str):
+            raise ValidationError(_("A message body must be text."))
+        if content["type"] not in OUTBOUND_TYPES or media_refs:
+            raise ValidationError(_("This card cannot be combined with attachments."))
+        return content, body
+
+    def _outbound_projection_body(self, text, content):
+        """Supply a local preview without turning it into provider-visible text."""
+        if text or not content:
+            return text
+        if content["type"] == "contacts":
+            return ", ".join(item["name"] for item in content["contacts"])
+        if content["type"] == "location":
+            return content.get("name") or _(
+                "Location: %(latitude)s, %(longitude)s",
+                latitude=content["latitude"],
+                longitude=content["longitude"],
+            )
+        return content.get("title") or ""
+
+    def _check_outbound_structured_capability(
+        self, connection, conversation_type, content, text
+    ):
+        if not content:
+            return True
+        capabilities = conversation_capabilities(
+            connection.capabilities_json or {}, conversation_type
+        )
+        try:
+            validate_outbound_structured_content(
+                content, text, capabilities.get("outbound_structured_content", {})
+            )
+        except (TypeError, ValueError) as error:
+            raise ValidationError(
+                _("The active channel rejected this message card: %s", str(error))
+            ) from error
+        try:
+            connection.get_adapter().validate_outbound_structured_content(
+                connection, content, text
+            )
+        except AdapterError as error:
+            raise UserError(
+                _("The active provider rejected this message card: %s", str(error))
+            ) from error
+        return True
+
+    def _normalize_outbound_message_content(self, body, media_refs, *, has_card=False):
         if not isinstance(body, str):
             raise UserError(_("A message body must be text."))
         clean_body = body.strip()
@@ -50,7 +111,7 @@ class ContactCenterApplicationOutbound(models.AbstractModel):
                 raise ValidationError(
                     _("A media reference is not a valid UUID.")
                 ) from error
-        if not clean_body and not normalized_media_refs:
+        if not clean_body and not normalized_media_refs and not has_card:
             raise UserError(_("Write a message or attach a media file."))
         return clean_body, normalized_media_refs
 
@@ -117,6 +178,7 @@ class ContactCenterApplicationOutbound(models.AbstractModel):
         clean_body,
         normalized_media_refs,
         reply_to_message_id,
+        structured_content=None,
     ):
         existing_outbox = (
             self.env["contact.center.outbox.command"]
@@ -143,6 +205,8 @@ class ContactCenterApplicationOutbound(models.AbstractModel):
             )
             if (
                 persisted_message.get("text") != clean_body
+                or (persisted_message.get("structured_content") or {})
+                != (structured_content or {})
                 or persisted_media_refs != normalized_media_refs
                 or (reply_to_message_id or False)
                 != (persisted_reply_message_id or False)
@@ -425,10 +489,13 @@ class ContactCenterApplicationOutbound(models.AbstractModel):
         reply_binding,
         reply_to_message_id,
         uploads,
+        structured_content=None,
     ):
         message = channel._contact_center_post(
             origin="outbound",
-            body=html_escape(clean_body),
+            body=html_escape(
+                self._outbound_projection_body(clean_body, structured_content)
+            ),
             message_type="comment",
             subtype_xmlid="mail.mt_comment",
             partner_ids=[],
@@ -448,7 +515,9 @@ class ContactCenterApplicationOutbound(models.AbstractModel):
                     "provider_connection_id": connection.id,
                     "direction": "outbound",
                     "origin": "agent",
-                    "content_type": uploads.kind if len(uploads) == 1 else "text",
+                    "content_type": (structured_content or {}).get("type")
+                    or (uploads.kind if len(uploads) == 1 else "text"),
+                    "structured_content_json": structured_content or {},
                     "client_message_id": client_message_id,
                     "reply_to_binding_id": reply_binding.id if reply_binding else False,
                     "protocol_snapshot_json": {},
@@ -512,6 +581,8 @@ class ContactCenterApplicationOutbound(models.AbstractModel):
             != (source_binding.client_message_id or "")
             or message.client_message_id != (source_binding.client_message_id or "")
             or message.content_type != source_binding.content_type
+            or message.structured_content
+            != (source_binding.structured_content_json or {})
         ):
             raise ValidationError(
                 _("Only an unequivocally failed outbound message can be resent.")
@@ -526,7 +597,7 @@ class ContactCenterApplicationOutbound(models.AbstractModel):
             raise ValidationError(
                 _("The failed message media cannot be retried safely.")
             )
-        if not clean_body and not source_media:
+        if not clean_body and not source_media and not message.structured_content:
             raise ValidationError(
                 _("The failed message no longer has content to resend.")
             )
@@ -668,12 +739,15 @@ class ContactCenterApplicationOutbound(models.AbstractModel):
         clean_body,
         reply_binding,
         retry_media,
+        structured_content=None,
     ):
         """Create an independent message/binding/attachment projection for a retry."""
 
         message = channel._contact_center_post(
             origin="outbound",
-            body=html_escape(clean_body),
+            body=html_escape(
+                self._outbound_projection_body(clean_body, structured_content)
+            ),
             message_type="comment",
             subtype_xmlid="mail.mt_comment",
             partner_ids=[],
@@ -683,7 +757,9 @@ class ContactCenterApplicationOutbound(models.AbstractModel):
         client_message_id = (
             connection.get_adapter().derive_client_message_id(command_id) or ""
         )
-        content_type = retry_media[0]["media"].kind if retry_media else "text"
+        content_type = (structured_content or {}).get("type") or (
+            retry_media[0]["media"].kind if retry_media else "text"
+        )
         message_binding = (
             self.env["contact.center.message.binding"]
             .sudo()
@@ -695,6 +771,7 @@ class ContactCenterApplicationOutbound(models.AbstractModel):
                     "direction": "outbound",
                     "origin": "agent",
                     "content_type": content_type,
+                    "structured_content_json": structured_content or {},
                     "client_message_id": client_message_id,
                     "reply_to_binding_id": reply_binding.id if reply_binding else False,
                     "protocol_snapshot_json": {},
@@ -806,6 +883,7 @@ class ContactCenterApplicationOutbound(models.AbstractModel):
             own_protocol_participant=own_protocol_participant,
             message=MessageDTO(
                 content_type=message_binding.content_type,
+                structured_content=message_binding.structured_content_json or {},
                 text=clean_body,
                 client_message_id=client_message_id,
                 reply_to_external_id=(
@@ -856,14 +934,18 @@ class ContactCenterApplicationOutbound(models.AbstractModel):
         reply_to_message_id=None,
         client_request_id=None,
         media_refs=None,
+        structured_content=None,
     ):
         self._check_agent()
         channel.ensure_one()
         channel.check_access_rights("read")
         channel.check_access_rule("read")
         channel._contact_center_member_for_current_user()
+        structured_content, body = self._normalize_outbound_structured_content(
+            structured_content, body, media_refs
+        )
         clean_body, normalized_media_refs = self._normalize_outbound_message_content(
-            body, media_refs
+            body, media_refs, has_card=bool(structured_content)
         )
         binding = self._active_channel_binding(channel)
         if not binding:
@@ -871,6 +953,7 @@ class ContactCenterApplicationOutbound(models.AbstractModel):
         binding._contact_center_ensure_outbound_supported(
             operation="send_message",
             has_text=bool(clean_body),
+            has_structured=bool(structured_content),
             has_media=bool(normalized_media_refs),
             has_reply=bool(reply_to_message_id),
         )
@@ -882,6 +965,7 @@ class ContactCenterApplicationOutbound(models.AbstractModel):
         binding._contact_center_ensure_outbound_supported(
             operation="send_message",
             has_text=bool(clean_body),
+            has_structured=bool(structured_content),
             has_media=bool(normalized_media_refs),
             has_reply=bool(reply_to_message_id),
         )
@@ -891,10 +975,15 @@ class ContactCenterApplicationOutbound(models.AbstractModel):
             clean_body,
             normalized_media_refs,
             reply_to_message_id,
+            structured_content=structured_content,
         )
         if existing_outbox:
             return existing_outbox.message_binding_id.message_id, existing_outbox
-        sender_signature = self._outbound_signature(binding.account_id, clean_body)
+        sender_signature = (
+            {}
+            if structured_content
+            else self._outbound_signature(binding.account_id, clean_body)
+        )
         connection = self._outbound_connection(
             binding,
             "send_message",
@@ -902,6 +991,9 @@ class ContactCenterApplicationOutbound(models.AbstractModel):
         )
         capabilities = conversation_capabilities(
             connection.capabilities_json or {}, binding.conversation_type
+        )
+        self._check_outbound_structured_capability(
+            connection, binding.conversation_type, structured_content, clean_body
         )
         self._check_outbound_signature_capability(
             connection, binding.conversation_type, clean_body, sender_signature
@@ -935,6 +1027,7 @@ class ContactCenterApplicationOutbound(models.AbstractModel):
             reply_binding,
             reply_to_message_id,
             uploads,
+            structured_content=structured_content,
         )
         address_dtos, target_address = self._outbound_route(
             binding, _("The conversation has no outbound routing address.")
@@ -1058,7 +1151,15 @@ class ContactCenterApplicationOutbound(models.AbstractModel):
         capabilities = conversation_capabilities(
             connection.capabilities_json or {}, binding.conversation_type
         )
-        sender_signature = self._outbound_signature(binding.account_id, clean_body)
+        structured_content = source_command.message.structured_content
+        sender_signature = (
+            {}
+            if structured_content
+            else self._outbound_signature(binding.account_id, clean_body)
+        )
+        self._check_outbound_structured_capability(
+            connection, binding.conversation_type, structured_content, clean_body
+        )
         self._check_outbound_signature_capability(
             connection, binding.conversation_type, clean_body, sender_signature
         )
@@ -1095,6 +1196,7 @@ class ContactCenterApplicationOutbound(models.AbstractModel):
             clean_body,
             reply_binding,
             retry_media,
+            structured_content=structured_content,
         )
         outbox = self._create_send_outbox(
             binding,
@@ -1175,6 +1277,16 @@ class ContactCenterApplicationOutbound(models.AbstractModel):
             new_text,
         )
 
+    def _outbound_text_edit_supported(self, target):
+        """The outbound edit contract replaces plain text, never media content."""
+
+        return bool(
+            target
+            and target.content_type == "text"
+            and not target.media_ids
+            and not target.structured_content_json
+        )
+
     def _check_outbound_mutation_target_access(self, target, mutation_type):
         """Enforce stable target ownership before returning an idempotent replay."""
 
@@ -1194,6 +1306,8 @@ class ContactCenterApplicationOutbound(models.AbstractModel):
         self._check_outbound_mutation_target_access(target, mutation_type)
         if target.message_state == "deleted":
             raise UserError(_("The message was already deleted."))
+        if mutation_type == "edit" and not self._outbound_text_edit_supported(target):
+            raise UserError(_("Only text messages without media can be edited."))
         return values
 
     def _outbound_mutation_options(

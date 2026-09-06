@@ -18,6 +18,14 @@ import {
 } from "./contact_center_model.esm";
 import {deserializeDateTime} from "@web/core/l10n/dates";
 import {session} from "@web/session";
+import {
+    STRUCTURED_ACTION_LABELS,
+    STRUCTURED_CONTENT_LABELS,
+    newStructuredDraft,
+    newStructuredRow,
+    outboundStructuredCapabilities,
+    structuredDraftSubmission,
+} from "./structured_content.esm";
 
 const {DateTime} = luxon;
 
@@ -28,6 +36,7 @@ const PRODUCTIVITY_TOOLS = new Set(["quick_reply", "followup", "schedule"]);
 const MAX_PERSISTED_DRAFTS = 100;
 const MAX_DRAFT_BODY_LENGTH = 65536;
 const MAX_RETAINED_UPLOAD_PREVIEW_BYTES = 8 * 1024 * 1024;
+export const MAX_COMPOSER_ATTACHMENTS = 10;
 // SessionStorage quotas vary by browser and count UTF-16 storage. Keep the
 // newest complete drafts inside a bounded budget instead of silently clipping
 // every draft to a lower limit than the server accepts.
@@ -107,6 +116,61 @@ function mergedUploadedAttachment(serverMedia, attachment, releasePreview) {
         durationSeconds: serverMedia.duration_seconds || attachment.durationSeconds,
         previewUrl: releasePreview ? "" : attachment.previewUrl,
     };
+}
+
+export function buildAttachmentSendPlan(
+    body,
+    attachments,
+    capabilities,
+    replyId = false
+) {
+    const text = typeof body === "string" ? body.trim() : "";
+    const captionIndex = text
+        ? attachments.findIndex((item) => mediaCaptionAllowed(capabilities, item.kind))
+        : -1;
+    const plan = [];
+    if (text && captionIndex === -1) {
+        plan.push({body: text, mediaRef: "", attachmentId: false});
+    }
+    attachments.forEach((item, index) => {
+        plan.push({
+            body: index === captionIndex ? text : "",
+            mediaRef: item.mediaRef,
+            attachmentId: item.id,
+        });
+    });
+    return plan.map((operation, index) => ({
+        ...operation,
+        replyId: index === 0 ? replyId : false,
+    }));
+}
+
+export async function admitAttachmentSequence(plan, {isActive, send, onAdmitted}) {
+    let admitted = 0;
+    while (plan.length && isActive()) {
+        const operation = plan[0];
+        const outcome = await send(operation);
+        const accepted =
+            typeof outcome === "object" && outcome ? outcome.accepted : outcome;
+        if (!accepted) {
+            if (outcome && outcome.requestId) {
+                operation.requestId = outcome.requestId;
+            }
+            const definitive = Boolean(
+                outcome && outcome.definitive && !operation.uncertain
+            );
+            if (!definitive) {
+                operation.uncertain = true;
+            }
+            return {complete: false, admitted, failed: true, definitive};
+        }
+        // Remove an acknowledged operation before touching presentation state.
+        // A view refresh or disposal can never make it eligible for another send.
+        plan.shift();
+        admitted += 1;
+        onAdmitted(operation);
+    }
+    return {complete: !plan.length, admitted, failed: false};
 }
 
 export function readComposerDrafts(storage, key) {
@@ -324,20 +388,19 @@ export class MessageComposer extends Component {
             followupUserId: false,
             followupCaseId: false,
             completionFeedback: {},
-            attachment: false,
-            mediaRef: "",
-            uploadPhase: "idle",
+            attachments: [],
+            structuredDraft: false,
             uploadError: "",
+            sendPlan: false,
+            sendStatus: "",
             recordingPhase: "idle",
             recordingElapsedMs: 0,
             recordingError: "",
             dragActive: false,
         });
         this.uploadGeneration = 0;
-        this.uploadController = null;
-        this.pendingFile = null;
-        this.pendingUploadId = "";
-        this.pendingUploadMetadata = {};
+        this.uploadControllers = new Map();
+        this.destroyed = false;
         this.voiceCaptureHadFocus = false;
         this.drafts = new Map();
         this.draftStorage = Object.prototype.hasOwnProperty.call(
@@ -393,7 +456,9 @@ export class MessageComposer extends Component {
             () => {
                 if (!this.canAttach) {
                     this.cancelVoiceRecording();
-                    this.removeAttachment();
+                    if (!this.local.sendPlan) {
+                        this.clearLocalAttachments();
+                    }
                 }
             },
             () => [this.canAttach]
@@ -416,6 +481,7 @@ export class MessageComposer extends Component {
             () => [this.local.recordingPhase]
         );
         onWillDestroy(() => {
+            this.destroyed = true;
             this.saveCurrentDraft();
             window.removeEventListener("keydown", this.onWindowKeydown);
             if (this.unregisterConversationGuard) {
@@ -524,12 +590,12 @@ export class MessageComposer extends Component {
         return [
             this.canCreateScheduledMessage,
             !this.noteMode,
-            !this.local.attachment,
-            !this.local.mediaRef,
+            !this.attachments.length,
+            !this.local.sendPlan,
+            !this.local.structuredDraft,
             !this.state.replyTo,
             !this.voiceCaptureActive,
-            this.local.uploadPhase !== "uploading",
-            this.local.uploadPhase !== "error",
+            !this.uploadInProgress,
         ].every(Boolean);
     }
 
@@ -544,7 +610,9 @@ export class MessageComposer extends Component {
 
     get hasProductivityToolbar() {
         return Boolean(
-            this.canUseQuickReplies ||
+            this.structuredTypes.length ||
+                this.local.structuredDraft ||
+                this.canUseQuickReplies ||
                 this.canUseInternalNotes ||
                 this.canUseFollowups ||
                 this.canUseScheduledMessages
@@ -559,8 +627,171 @@ export class MessageComposer extends Component {
         return (
             !this.noteMode &&
             !this.scheduleMode &&
+            !this.local.structuredDraft &&
             this.conversationPolicy.allow_attachments
         );
+    }
+
+    get attachments() {
+        return this.local.attachments || [];
+    }
+
+    get structuredTypes() {
+        return Object.keys(this.structuredCapabilities);
+    }
+
+    get structuredCapabilities() {
+        return outboundStructuredCapabilities(this.capabilities);
+    }
+
+    get structuredSpec() {
+        const draft = this.local.structuredDraft;
+        return draft && this.structuredTypes.includes(draft.type)
+            ? this.structuredCapabilities[draft.type]
+            : false;
+    }
+
+    get structuredActions() {
+        return this.structuredSpec && this.local.structuredDraft.type === "buttons"
+            ? this.structuredSpec.action_types
+            : [];
+    }
+
+    structuredActionLabel(action) {
+        return STRUCTURED_ACTION_LABELS[action] || "Ação indisponível";
+    }
+
+    get structuredRowTitleLimit() {
+        if (!this.structuredSpec) {
+            return 0;
+        }
+        return this.local.structuredDraft.type === "buttons"
+            ? this.structuredSpec.max_button_title_length
+            : this.structuredSpec.max_row_title_length;
+    }
+
+    get structuredRowLimit() {
+        if (!this.structuredSpec) {
+            return 0;
+        }
+        return this.local.structuredDraft.type === "buttons"
+            ? this.structuredSpec.max_buttons
+            : this.structuredSpec.max_rows;
+    }
+
+    get canAddStructuredRow() {
+        return Boolean(
+            this.canChooseStructured &&
+                this.structuredSpec &&
+                this.local.structuredDraft.rows.length < this.structuredRowLimit
+        );
+    }
+
+    get bodyMaxLength() {
+        return this.structuredSpec && this.structuredSpec.body_mode !== "none"
+            ? this.structuredSpec.max_body_length * 2
+            : 65536;
+    }
+
+    get structuredBodyHint() {
+        const spec = this.structuredSpec;
+        if (!spec) {
+            return "";
+        }
+        return spec.body_mode === "none"
+            ? "Este cartão não aceita texto adicional."
+            : `Texto ${
+                  spec.body_mode === "required" ? "obrigatório" : "opcional"
+              }, até ${spec.max_body_length} caracteres.`;
+    }
+
+    structuredLabel(type) {
+        return STRUCTURED_CONTENT_LABELS[type];
+    }
+
+    get structuredSubmission() {
+        return structuredDraftSubmission(
+            this.local.structuredDraft,
+            this.local.body,
+            this.capabilities
+        );
+    }
+
+    get canChooseStructured() {
+        return (
+            !this.noteMode &&
+            !this.scheduleMode &&
+            this.conversationPolicy.allow_send &&
+            !this.attachments.length &&
+            !this.voiceCaptureActive &&
+            !this.local.sendPlan &&
+            !this.local.actionBusy &&
+            !this.sending
+        );
+    }
+
+    onStructuredType(event) {
+        if (this.canChooseStructured) {
+            const type = event.target.value;
+            if (!type) {
+                this.local.structuredDraft = false;
+            } else if (this.structuredTypes.includes(type)) {
+                this.local.structuredDraft = newStructuredDraft(
+                    type,
+                    this.capabilities
+                );
+            }
+        }
+    }
+
+    addStructuredRow() {
+        const draft = this.local.structuredDraft;
+        if (this.canAddStructuredRow) {
+            draft.rows.push(
+                newStructuredRow(
+                    draft.type === "buttons" ? this.structuredActions[0] : "reply",
+                    this.structuredSpec.max_id_length,
+                    draft.rows
+                )
+            );
+        }
+    }
+
+    removeStructuredRow(row) {
+        const draft = this.local.structuredDraft;
+        if (this.canChooseStructured && draft && draft.rows.length > 1) {
+            draft.rows = draft.rows.filter((item) => item.id !== row.id);
+        }
+    }
+
+    get uploadInProgress() {
+        return this.attachments.some((item) =>
+            ["pending", "uploading"].includes(item.phase)
+        );
+    }
+
+    get canChooseAttachments() {
+        return Boolean(
+            this.canAttach &&
+                !this.local.sendPlan &&
+                !this.local.actionBusy &&
+                !this.voiceCaptureActive &&
+                !this.uploadInProgress &&
+                !this.sending &&
+                this.attachments.length < MAX_COMPOSER_ATTACHMENTS
+        );
+    }
+
+    get attachmentCaptionHint() {
+        if (!this.attachments.length) {
+            return "";
+        }
+        const compatible = this.attachments.find((item) =>
+            mediaCaptionAllowed(this.capabilities, item.kind)
+        );
+        return compatible
+            ? `O texto será a legenda de ${compatible.name}. Cada arquivo será enviado separadamente.`
+            : "O texto será enviado uma vez, antes dos arquivos. Cada arquivo será enviado separadamente.";
     }
 
     get voiceRecordingAvailable() {
@@ -579,9 +810,7 @@ export class MessageComposer extends Component {
 
     get switchHasBlockingWork() {
         return Boolean(
-            this.voiceCaptureActive ||
-                this.local.uploadPhase === "uploading" ||
-                this.local.actionBusy
+            this.voiceCaptureActive || this.uploadInProgress || this.local.actionBusy
         );
     }
 
@@ -605,7 +834,9 @@ export class MessageComposer extends Component {
         return Boolean(
             draft &&
                 (draft.body.trim() ||
-                    draft.attachment ||
+                    (draft.attachments && draft.attachments.length) ||
+                    (draft.sendPlan && draft.sendPlan.length) ||
+                    draft.structuredDraft ||
                     draft.replyTo ||
                     draft.scheduledAt ||
                     draft.followupSummary ||
@@ -657,13 +888,11 @@ export class MessageComposer extends Component {
         const draft = {
             body: this.local.body,
             mode: this.local.mode,
-            attachment: this.local.attachment ? {...this.local.attachment} : false,
-            mediaRef: this.local.mediaRef,
-            uploadPhase: this.local.uploadPhase,
+            attachments: this.attachments,
+            structuredDraft: this.local.structuredDraft,
             uploadError: this.local.uploadError,
-            pendingFile: this.pendingFile,
-            pendingUploadId: this.pendingUploadId,
-            pendingUploadMetadata: {...this.pendingUploadMetadata},
+            sendPlan: this.local.sendPlan,
+            sendStatus: this.local.sendStatus,
             replyTo: this.state.replyTo ? {...this.state.replyTo} : false,
             scheduledAt: this.local.scheduledAt,
             followupSummary: this.local.followupSummary,
@@ -683,22 +912,17 @@ export class MessageComposer extends Component {
         return false;
     }
 
-    clearLocalAttachment({revoke = true} = {}) {
+    clearLocalAttachments({revoke = true} = {}) {
         this.uploadGeneration += 1;
-        if (this.uploadController) {
-            this.uploadController.abort();
-            this.uploadController = null;
+        for (const controller of this.uploadControllers.values()) {
+            controller.abort();
         }
+        this.uploadControllers.clear();
         if (revoke) {
-            this.revokePreview();
+            this.attachments.forEach((item) => this.revokePreview(item));
         }
-        this.local.attachment = false;
-        this.local.mediaRef = "";
-        this.local.uploadPhase = "idle";
+        this.local.attachments = [];
         this.local.uploadError = "";
-        this.pendingFile = null;
-        this.pendingUploadId = "";
-        this.pendingUploadMetadata = {};
         if (this.fileRef.el) {
             this.fileRef.el.value = "";
         }
@@ -706,7 +930,11 @@ export class MessageComposer extends Component {
 
     resetLocalForConversation({revoke = true} = {}) {
         this.cancelVoiceRecording();
-        this.clearLocalAttachment({revoke});
+        this.clearLocalAttachments({revoke});
+        this.local.sendPlan = false;
+        this.local.structuredDraft = false;
+        this.local.sendStatus = "";
+        this.local.actionBusy = false;
         this.local.body = "";
         this.local.mode = "message";
         this.local.tool = false;
@@ -731,13 +959,12 @@ export class MessageComposer extends Component {
         }
         this.local.body = draft.body;
         this.local.mode = COMPOSER_MODES.has(draft.mode) ? draft.mode : "message";
-        this.local.attachment = draft.attachment || false;
-        this.local.mediaRef = draft.mediaRef || "";
-        this.local.uploadPhase = draft.uploadPhase || "idle";
+        this.local.attachments = draft.attachments || [];
+        this.local.structuredDraft = draft.structuredDraft || false;
         this.local.uploadError = draft.uploadError || "";
-        this.pendingFile = draft.pendingFile || null;
-        this.pendingUploadId = draft.pendingUploadId || "";
-        this.pendingUploadMetadata = draft.pendingUploadMetadata || {};
+        this.local.sendPlan =
+            draft.sendPlan && draft.sendPlan.length ? draft.sendPlan : false;
+        this.local.sendStatus = draft.sendStatus || "";
         this.state.replyTo = draft.replyTo || false;
         Object.assign(this.local, restoredProductivityDraft(draft));
         this.resize();
@@ -753,10 +980,13 @@ export class MessageComposer extends Component {
             // and list reconciliation may change the selected channel without
             // using that path, so persist once more before resetting local state.
             if (!this.switchPrepared) {
-                if (this.local.uploadPhase === "uploading") {
-                    this.local.uploadPhase = "error";
-                    this.local.uploadError =
-                        "O upload foi interrompido pela troca de conversa. Tente novamente.";
+                if (this.uploadInProgress) {
+                    for (const item of this.attachments) {
+                        if (["pending", "uploading"].includes(item.phase)) {
+                            item.phase = "error";
+                            item.error = "Upload interrompido. Tente novamente.";
+                        }
+                    }
                 }
                 this.saveCurrentDraft();
             }
@@ -769,27 +999,19 @@ export class MessageComposer extends Component {
         }
     }
 
-    revokeDraftPreview(draft, revoked) {
-        const previewUrl = draft && draft.attachment && draft.attachment.previewUrl;
-        if (
-            previewUrl &&
-            !revoked.has(previewUrl) &&
-            window.URL &&
-            typeof window.URL.revokeObjectURL === "function"
-        ) {
-            revoked.add(previewUrl);
-            window.URL.revokeObjectURL(previewUrl);
+    revokeDraftPreview(draft) {
+        for (const item of (draft && draft.attachments) || []) {
+            this.revokePreview(item);
         }
     }
 
     disposeDrafts() {
-        const revoked = new Set();
-        this.revokeDraftPreview({attachment: this.local.attachment}, revoked);
+        this.revokeDraftPreview({attachments: this.attachments});
         for (const draft of this.drafts.values()) {
-            this.revokeDraftPreview(draft, revoked);
+            this.revokeDraftPreview(draft);
         }
         this.drafts.clear();
-        this.clearLocalAttachment({revoke: false});
+        this.clearLocalAttachments({revoke: false});
     }
 
     get canStartVoiceRecording() {
@@ -798,8 +1020,9 @@ export class MessageComposer extends Component {
                 this.conversationPolicy.allow_send &&
                 this.canAttach &&
                 !this.local.body.trim() &&
-                !this.local.attachment &&
-                this.local.uploadPhase === "idle" &&
+                !this.attachments.length &&
+                !this.local.sendPlan &&
+                !this.uploadInProgress &&
                 this.local.recordingPhase === "idle" &&
                 (!this.state.replyTo || this.conversationPolicy.allow_reply) &&
                 !this.sending
@@ -811,8 +1034,10 @@ export class MessageComposer extends Component {
             !this.noteMode &&
                 !this.scheduleMode &&
                 this.voiceRecordingAvailable &&
+                !this.local.structuredDraft &&
+                !this.local.sendPlan &&
                 !this.local.body.trim() &&
-                !this.local.attachment &&
+                !this.attachments.length &&
                 !this.voiceCaptureActive
         );
     }
@@ -873,7 +1098,8 @@ export class MessageComposer extends Component {
             Boolean(this.conversation),
             this.canUseInternalNotes,
             Boolean(this.local.body.trim()),
-            !this.local.attachment,
+            !this.attachments.length,
+            !this.local.structuredDraft,
             !this.state.replyTo,
             !this.voiceCaptureActive,
             !this.local.actionBusy,
@@ -881,22 +1107,32 @@ export class MessageComposer extends Component {
     }
 
     get canSendExternalMessage() {
-        const captionAllowed =
-            !this.local.attachment ||
-            !this.local.body.trim() ||
-            mediaCaptionAllowed(this.capabilities, this.local.attachment.kind);
         return [
             this.conversationPolicy.allow_send,
-            Boolean(this.local.body.trim() || this.local.mediaRef),
-            !this.local.mediaRef || this.canAttach,
-            !this.state.replyTo || this.conversationPolicy.allow_reply,
-            captionAllowed,
-            this.local.uploadPhase !== "error",
-            this.local.uploadPhase !== "uploading",
+            Boolean(
+                this.local.body.trim() ||
+                    this.attachments.length ||
+                    this.local.sendPlan ||
+                    this.local.structuredDraft
+            ),
+            this.canReplayPendingSend ||
+                !this.local.structuredDraft ||
+                Boolean(this.structuredSubmission.content),
+            this.canReplayPendingSend || !this.attachments.length || this.canAttach,
+            this.local.sendPlan ||
+                !this.state.replyTo ||
+                this.conversationPolicy.allow_reply,
+            this.attachments.every((item) => item.phase === "ready" && item.mediaRef),
+            !this.uploadInProgress,
             !this.voiceCaptureActive,
             !this.sending,
             !this.local.actionBusy,
         ].every(Boolean);
+    }
+
+    get canReplayPendingSend() {
+        const operation = this.local.sendPlan && this.local.sendPlan[0];
+        return Boolean(operation && operation.uncertain && operation.requestId);
     }
 
     get canSend() {
@@ -938,27 +1174,22 @@ export class MessageComposer extends Component {
         if (!this.conversation.can_send) {
             return "O provider desta conversa não está disponível para envio";
         }
-        if (this.local.uploadPhase === "uploading") {
-            return "Aguarde o envio do arquivo";
+        if (this.uploadInProgress) {
+            return "Aguarde o preparo dos arquivos";
         }
-        if (this.local.uploadPhase === "error") {
-            return "Remova o arquivo com erro para continuar";
+        if (this.attachments.some((item) => item.phase === "error")) {
+            return "Tente novamente ou remova os arquivos com erro";
+        }
+        if (this.structuredSubmission.error) {
+            return this.structuredSubmission.error;
         }
         if (this.voiceCaptureActive) {
             return "Conclua ou cancele a gravação de áudio";
         }
-        if (
-            this.local.attachment &&
-            this.local.body.trim() &&
-            !mediaCaptionAllowed(this.capabilities, this.local.attachment.kind)
-        ) {
-            return "Este tipo de arquivo não aceita legenda neste provedor";
-        }
         return "Escreva uma mensagem";
     }
 
-    get attachmentLabel() {
-        const attachment = this.local.attachment;
+    attachmentLabel(attachment) {
         if (!attachment) {
             return "";
         }
@@ -1008,18 +1239,25 @@ export class MessageComposer extends Component {
             if (!this.canUseInternalNotes) {
                 return false;
             }
-            if (this.voiceCaptureActive || this.local.uploadPhase === "uploading") {
+            if (
+                this.voiceCaptureActive ||
+                this.uploadInProgress ||
+                this.local.sendPlan
+            ) {
                 this.store.notify(
                     "Conclua ou cancele o áudio ou arquivo antes de criar uma nota.",
                     {type: "warning", title: "Trabalho em andamento"}
                 );
                 return false;
             }
-            if (this.local.attachment) {
-                this.store.notify("Remova o anexo antes de criar uma nota interna.", {
-                    type: "warning",
-                    title: "Nota somente em texto",
-                });
+            if (this.attachments.length || this.local.structuredDraft) {
+                this.store.notify(
+                    "Remova os anexos ou o cartão antes de criar uma nota interna.",
+                    {
+                        type: "warning",
+                        title: "Nota somente em texto",
+                    }
+                );
                 return false;
             }
             this.store.clearReply();
@@ -1064,7 +1302,11 @@ export class MessageComposer extends Component {
     }
 
     async openTool(tool) {
-        if (!PRODUCTIVITY_TOOLS.has(tool) || this.local.actionBusy) {
+        if (
+            !PRODUCTIVITY_TOOLS.has(tool) ||
+            this.local.actionBusy ||
+            this.local.sendPlan
+        ) {
             return false;
         }
         if (this.local.tool === tool) {
@@ -1093,7 +1335,8 @@ export class MessageComposer extends Component {
             }
             if (
                 this.noteMode ||
-                this.local.attachment ||
+                this.attachments.length ||
+                this.local.structuredDraft ||
                 this.state.replyTo ||
                 this.voiceCaptureActive
             ) {
@@ -1125,7 +1368,12 @@ export class MessageComposer extends Component {
     }
 
     insertQuickReply(reply) {
-        if (!reply || typeof reply.body !== "string") {
+        if (
+            !reply ||
+            typeof reply.body !== "string" ||
+            this.local.sendPlan ||
+            this.local.actionBusy
+        ) {
             return false;
         }
         const input = this.inputRef.el;
@@ -1324,6 +1572,9 @@ export class MessageComposer extends Component {
     }
 
     onInput(event) {
+        if (this.local.sendPlan || this.local.actionBusy) {
+            return;
+        }
         this.local.body = event.target.value;
         this.persistDraft(this.activeChannelId);
         this.resize();
@@ -1354,67 +1605,129 @@ export class MessageComposer extends Component {
         if (!this.canSend) {
             return;
         }
-        const body = this.local.body;
         const channelId = this.conversation.channel_id;
-        const mediaRef = this.local.mediaRef;
+        const body = this.local.body;
         this.local.actionBusy = true;
-        let sent = false;
+        this.local.sendStatus = "";
         try {
-            sent = this.noteMode
-                ? await this.store.postInternalNote(body)
-                : await this.store.sendMessage(body, mediaRef ? [mediaRef] : []);
+            if (this.noteMode) {
+                if (await this.store.postInternalNote(body)) {
+                    this.acknowledgeSendOperation(channelId, {
+                        body,
+                        attachmentId: false,
+                    });
+                }
+                return;
+            }
+            if (!this.local.sendPlan) {
+                this.local.sendPlan = this.local.structuredDraft
+                    ? [
+                          {
+                              body: body.trim(),
+                              mediaRef: "",
+                              attachmentId: false,
+                              replyId: this.state.replyTo
+                                  ? this.state.replyTo.message_id
+                                  : false,
+                              structuredContent: this.structuredSubmission.content,
+                          },
+                      ]
+                    : buildAttachmentSendPlan(
+                          body,
+                          this.attachments,
+                          this.capabilities,
+                          this.state.replyTo ? this.state.replyTo.message_id : false
+                      );
+            }
+            const plan = this.local.sendPlan;
+            const result = await admitAttachmentSequence(plan, {
+                isActive: () =>
+                    !this.destroyed &&
+                    !this.store.destroyed &&
+                    this.state.selectedChannelId === channelId,
+                send: (operation) =>
+                    this.store.sendMessage(
+                        operation.body,
+                        operation.mediaRef ? [operation.mediaRef] : [],
+                        {
+                            channelId,
+                            replyId: operation.replyId,
+                            structuredContent: operation.structuredContent,
+                            replayRequestId: operation.uncertain
+                                ? operation.requestId
+                                : false,
+                            returnOutcome: true,
+                        }
+                    ),
+                onAdmitted: (operation) =>
+                    this.acknowledgeSendOperation(channelId, operation),
+            });
+            if (this.activeChannelId === channelId && !this.destroyed) {
+                if (result.complete) {
+                    this.local.sendPlan = false;
+                    this.local.sendStatus = "";
+                } else if (result.failed) {
+                    if (result.definitive) {
+                        this.local.sendPlan = false;
+                        this.local.sendStatus =
+                            "O envio foi recusado. Revise os itens restantes e tente novamente.";
+                    } else {
+                        this.local.sendStatus =
+                            `Envio interrompido. ${plan.length} item(ns) aguardam confirmação. ` +
+                            "Tente novamente; os itens já aceitos não serão repetidos.";
+                    }
+                }
+            }
         } finally {
-            this.local.actionBusy = false;
-        }
-        if (sent) {
-            this.clearSentDraft(channelId, body, mediaRef);
-            this.clearPersistedDraft(channelId);
-        }
-        if (sent && this.conversation && this.conversation.channel_id === channelId) {
-            const bodyWasNotChanged = this.local.body === body;
-            const sentMediaIsStillSelected =
-                mediaRef && this.local.mediaRef === mediaRef;
-            if (bodyWasNotChanged) {
-                this.local.body = "";
-            }
-            if (sentMediaIsStillSelected) {
-                this.removeAttachment();
-            }
-            this.resize();
-            this.persistDraft(channelId);
-            if (this.inputRef.el) {
-                this.inputRef.el.focus();
+            if (this.activeChannelId === channelId && !this.destroyed) {
+                this.local.actionBusy = false;
+                this.persistDraft(channelId);
+                this.resize();
             }
         }
     }
 
-    clearSentDraft(channelId, body, mediaRef) {
-        if (this.conversation && this.conversation.channel_id === channelId) {
-            return false;
-        }
-        const draft = this.drafts.get(channelId);
+    acknowledgeSendOperation(channelId, operation) {
+        const active = !this.destroyed && this.activeChannelId === channelId;
+        const draft = active ? this.local : this.drafts.get(channelId);
         if (!draft) {
-            return false;
+            const persisted =
+                this.persistedDrafts && this.persistedDrafts.get(channelId);
+            if (
+                operation.body &&
+                persisted &&
+                persisted.body.trim() === operation.body
+            ) {
+                this.clearPersistedDraft(channelId);
+            }
+            return;
         }
-        if (draft.body === body) {
+        if (operation.body && draft.body.trim() === operation.body) {
             draft.body = "";
         }
-        if (mediaRef && draft.mediaRef === mediaRef) {
-            this.revokeDraftPreview(draft, new Set());
-            draft.attachment = false;
-            draft.mediaRef = "";
-            draft.uploadPhase = "idle";
-            draft.uploadError = "";
-            draft.pendingFile = null;
-            draft.pendingUploadId = "";
-            draft.pendingUploadMetadata = {};
+        if (operation.attachmentId) {
+            draft.attachments = (draft.attachments || []).filter((item) => {
+                if (item.id !== operation.attachmentId) {
+                    return true;
+                }
+                this.revokePreview(item);
+                return false;
+            });
         }
-        draft.replyTo = false;
-        if (!this.draftHasContent(draft)) {
+        if (operation.structuredContent) {
+            draft.structuredDraft = false;
+        }
+        if (
+            !active &&
+            draft.replyTo &&
+            draft.replyTo.message_id === operation.replyId
+        ) {
+            draft.replyTo = false;
+        }
+        if (!active && !this.draftHasContent(draft)) {
             this.drafts.delete(channelId);
         }
-        this.clearPersistedDraft(channelId);
-        return true;
+        this.persistDraft(channelId, draft.body, draft.mode);
     }
 
     resize() {
@@ -1427,12 +1740,7 @@ export class MessageComposer extends Component {
     }
 
     chooseAttachment() {
-        if (
-            this.canAttach &&
-            !this.voiceCaptureActive &&
-            !this.sending &&
-            this.fileRef.el
-        ) {
+        if (this.canChooseAttachments && this.fileRef.el) {
             this.fileRef.el.click();
         }
     }
@@ -1448,141 +1756,177 @@ export class MessageComposer extends Component {
         return window.URL.createObjectURL(file);
     }
 
-    revokePreview() {
-        const previewUrl = this.local.attachment && this.local.attachment.previewUrl;
+    revokePreview(item) {
+        const previewUrl = item && item.previewUrl;
         if (
             previewUrl &&
             window.URL &&
             typeof window.URL.revokeObjectURL === "function"
         ) {
             window.URL.revokeObjectURL(previewUrl);
+            item.previewUrl = "";
         }
     }
 
-    removeAttachment() {
-        this.clearLocalAttachment({revoke: true});
-    }
-
-    uploadIsStale(generation, channelId = false) {
-        return (
-            generation !== this.uploadGeneration ||
-            (channelId && channelId !== this.state.selectedChannelId)
+    removeAttachment(item) {
+        if (this.local.sendPlan || this.local.actionBusy) {
+            return;
+        }
+        if (!item) {
+            this.local.uploadError = "";
+            return;
+        }
+        const controller = this.uploadControllers.get(item.id);
+        if (controller) {
+            controller.abort();
+            this.uploadControllers.delete(item.id);
+        }
+        this.revokePreview(item);
+        item.file = null;
+        this.local.attachments = this.attachments.filter(
+            (candidate) => candidate.id !== item.id
         );
     }
 
-    startUploadController() {
+    uploadIsStale(generation, channelId, item) {
+        return (
+            this.destroyed ||
+            generation !== this.uploadGeneration ||
+            channelId !== this.state.selectedChannelId ||
+            !this.attachments.some((candidate) => candidate.id === item.id)
+        );
+    }
+
+    startUploadController(item) {
         const controller =
             typeof window.AbortController === "function"
                 ? new window.AbortController()
                 : null;
-        this.uploadController = controller;
+        if (controller) {
+            this.uploadControllers.set(item.id, controller);
+        }
         return controller;
     }
 
-    applyUploadedMedia(payload) {
+    applyUploadedMedia(item, payload) {
         const serverMedia = normalizeMessageMedia([payload.media])[0];
-        const uploadedSize = uploadedMediaSize(
-            serverMedia,
-            this.pendingFile,
-            this.local.attachment
-        );
+        const uploadedSize = uploadedMediaSize(serverMedia, item.file, item);
         const releasePreview = Boolean(
-            this.local.attachment &&
-                this.local.attachment.previewUrl &&
-                uploadedSize > MAX_RETAINED_UPLOAD_PREVIEW_BYTES
+            item.previewUrl && uploadedSize > MAX_RETAINED_UPLOAD_PREVIEW_BYTES
         );
         if (releasePreview) {
-            this.revokePreview();
+            this.revokePreview(item);
         }
-        this.local.attachment = mergedUploadedAttachment(
-            serverMedia,
-            this.local.attachment,
-            releasePreview
+        Object.assign(
+            item,
+            mergedUploadedAttachment(serverMedia, item, releasePreview)
         );
-        this.local.mediaRef = payload.media_ref.trim();
-        this.local.uploadPhase = "ready";
+        item.mediaRef = payload.media_ref.trim();
+        item.phase = "ready";
+        item.error = "";
         // The immutable server reference owns the prepared upload from here on.
         // Keeping the browser File in each conversation draft would retain the
         // complete binary in memory until that draft is sent or discarded.
-        this.pendingFile = null;
-        this.pendingUploadId = "";
-        this.pendingUploadMetadata = {};
+        item.file = null;
+        item.metadata = {};
     }
 
-    async uploadPendingFile(generation, channelId) {
-        const file = this.pendingFile;
-        const uploadId = this.pendingUploadId;
-        const uploadMetadata = this.pendingUploadMetadata;
-        const controller = this.startUploadController();
+    async uploadPendingFile(item, generation, channelId) {
+        if (this.uploadIsStale(generation, channelId, item)) {
+            return;
+        }
+        const controller = this.startUploadController(item);
+        item.phase = "uploading";
+        item.error = "";
         try {
             const payload = await this.store.uploadMedia(
-                file,
-                uploadId,
+                item.file,
+                item.id,
                 channelId,
                 controller ? controller.signal : undefined,
-                uploadMetadata
+                item.metadata
             );
-            if (this.uploadIsStale(generation, channelId)) {
+            if (this.uploadIsStale(generation, channelId, item)) {
                 return;
             }
-            this.applyUploadedMedia(payload);
+            this.applyUploadedMedia(item, payload);
         } catch (error) {
             if (
-                this.uploadIsStale(generation) ||
+                this.uploadIsStale(generation, channelId, item) ||
                 (error && error.name === "AbortError")
             ) {
                 return;
             }
-            this.local.mediaRef = "";
-            this.local.uploadPhase = "error";
-            this.local.uploadError =
-                (error && error.message) || "O arquivo não pôde ser enviado.";
+            item.mediaRef = "";
+            item.phase = "error";
+            item.error = (error && error.message) || "O arquivo não pôde ser enviado.";
         } finally {
-            if (this.uploadController === controller) {
-                this.uploadController = null;
+            if (this.uploadControllers.get(item.id) === controller) {
+                this.uploadControllers.delete(item.id);
             }
         }
     }
 
-    retryUpload() {
+    retryUpload(item) {
         if (
-            !this.pendingFile ||
-            !this.pendingUploadId ||
-            this.local.uploadPhase !== "error"
+            !item ||
+            !item.file ||
+            item.phase !== "error" ||
+            this.local.sendPlan ||
+            this.uploadInProgress ||
+            !this.canAttach
         ) {
             return;
         }
-        const generation = ++this.uploadGeneration;
-        this.local.uploadPhase = "uploading";
-        this.local.uploadError = "";
-        this.uploadPendingFile(generation, this.conversation.channel_id);
+        return this.uploadPendingFile(
+            item,
+            this.uploadGeneration,
+            this.conversation.channel_id
+        );
     }
 
     async prepareFileUpload(file, metadata = {}) {
-        const validation = validateMediaFile(file, this.capabilities);
-        if (!validation.ok) {
-            this.removeAttachment();
-            this.local.uploadPhase = "error";
-            this.local.uploadError = validation.error;
-            return;
+        return this.prepareFilesUpload([file], metadata);
+    }
+
+    async prepareFilesUpload(files, metadata = {}) {
+        if (
+            !this.conversation ||
+            !this.canAttach ||
+            this.local.sendPlan ||
+            this.local.actionBusy
+        ) {
+            return false;
         }
-        if (!this.conversation) {
-            return;
+        if (this.attachments.length + files.length > MAX_COMPOSER_ATTACHMENTS) {
+            this.local.uploadError = `Selecione até ${MAX_COMPOSER_ATTACHMENTS} arquivos por envio.`;
+            return false;
         }
-        this.removeAttachment();
-        const generation = ++this.uploadGeneration;
+        const validated = files.map((file) => ({
+            file,
+            validation: validateMediaFile(file, this.capabilities),
+        }));
+        const invalid = validated.find((item) => !item.validation.ok);
+        if (invalid) {
+            this.local.uploadError = `${invalid.file.name}: ${invalid.validation.error}`;
+            return false;
+        }
+        const generation = this.uploadGeneration;
         const channelId = this.conversation.channel_id;
-        this.pendingFile = file;
-        this.pendingUploadId = makeClientRequestId(window.crypto);
-        this.pendingUploadMetadata =
-            Number.isSafeInteger(metadata.durationSeconds) &&
-            metadata.durationSeconds > 0
-                ? {
-                      isVoiceNote: metadata.isVoiceNote === true,
-                      durationSeconds: metadata.durationSeconds,
-                  }
-                : {};
-        this.local.attachment = {
+        const items = validated.map(({file, validation}) => ({
+            id: makeClientRequestId(window.crypto),
+            file,
+            mediaRef: "",
+            phase: "pending",
+            error: "",
+            metadata:
+                Number.isSafeInteger(metadata.durationSeconds) &&
+                metadata.durationSeconds > 0
+                    ? {
+                          isVoiceNote: metadata.isVoiceNote === true,
+                          durationSeconds: metadata.durationSeconds,
+                      }
+                    : {},
             name: file.name,
             size: file.size,
             mimetype: file.type || "application/octet-stream",
@@ -1591,16 +1935,25 @@ export class MessageComposer extends Component {
             isVoiceNote: metadata.isVoiceNote === true,
             isRecordedAudio: metadata.isRecordedAudio === true,
             durationSeconds: metadata.durationSeconds || 0,
-        };
-        this.local.uploadPhase = "uploading";
+        }));
+        this.local.attachments = [...this.attachments, ...items];
         this.local.uploadError = "";
-        await this.uploadPendingFile(generation, channelId);
+        for (const item of items) {
+            const activeItem = this.attachments.find(
+                (candidate) => candidate.id === item.id
+            );
+            if (activeItem) {
+                await this.uploadPendingFile(activeItem, generation, channelId);
+            }
+        }
+        return true;
     }
 
     async onFileChange(event) {
-        const file = event.target.files && event.target.files[0];
-        if (file) {
-            await this.prepareFileUpload(file);
+        const files = Array.from(event.target.files || []);
+        event.target.value = "";
+        if (files.length) {
+            await this.prepareFilesUpload(files);
         }
     }
 
@@ -1613,25 +1966,10 @@ export class MessageComposer extends Component {
             event.preventDefault();
         }
         this.local.dragActive = false;
-        if (!this.canAttach || this.voiceCaptureActive || this.sending) {
+        if (!this.canChooseAttachments) {
             return false;
         }
-        if (this.local.attachment) {
-            this.store.notify("Remova o anexo atual antes de adicionar outro.", {
-                type: "warning",
-                title: "Um arquivo por mensagem",
-            });
-            return false;
-        }
-        if (files.length > 1) {
-            this.store.notify("Selecione apenas um arquivo por mensagem.", {
-                type: "warning",
-                title: "Vários arquivos detectados",
-            });
-            return false;
-        }
-        await this.prepareFileUpload(files[0]);
-        return true;
+        return this.prepareFilesUpload(files);
     }
 
     onPaste(event) {

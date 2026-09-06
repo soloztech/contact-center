@@ -34,9 +34,16 @@ transport mode and target identity are read-only projections of that asset. Mess
 PSIDs and Instagram IGSIDs remain scoped to the logical Contact Center account.
 
 Inbound messages, echoes, replies, referrals, media, receipts, reactions, edits,
-unsends and postbacks enter the canonical Contact Center inbox pipeline. Direct text
-outbound is admitted only inside the standard 24-hour response window. Signed media
-URLs remain in a short-lived private locator vault and never enter DTOs or bus data.
+unsends and postbacks enter the canonical Contact Center inbox pipeline. Shared posts,
+reels and stories expose context cards with safe permalinks or private media when
+available. Direct text and private media outbound are admitted only inside the
+standard 24-hour response window. Signed media URLs remain in a short-lived private
+locator vault and never enter DTOs or bus data.
+
+Outbound media uses a private multipart upload followed by an attachment-ID send;
+the original Odoo attachment is never made public. Each command sends one attachment
+without a caption. Ambiguous uploads can be retried; ambiguous message sends stay
+uncertain and are not automatically repeated.
 
 **Table of contents**
 
@@ -63,6 +70,20 @@ Credential fields contain environment-variable or mounted-file references only.
 Changing an external route requires archiving the connection and creating another
 one; the asset binding and logical account identity are immutable.
 
+Media sending requires the Page token and App Review permissions for the selected
+transport. For Page-linked Instagram, verify the upload grants listed by Meta
+(``instagram_basic``, ``instagram_manage_comments``, ``instagram_manage_messages``
+and ``pages_messaging``) and the Page's MESSAGING task. Validate acceptance with the
+dedicated App before enabling production traffic; a local test does not grant these
+permissions.
+
+The effective limits are 16 MiB for Messenger images and audio, 8 MB for Instagram
+images, 16 MiB for Instagram audio, and 25 MB for video and PDF in either transport.
+Messenger accepts JPEG/PNG/GIF; Instagram accepts JPEG/PNG. Supported audio formats
+are AAC, M4A/MP4 and WAV, plus MP3/OGG for Messenger. Supported video formats are
+MP4, OGG, AVI, MOV and WebM. Documents are limited to PDF. Captions and voice notes
+are not enabled for Meta media sends.
+
 Known issues / Roadmap
 ======================
 
@@ -73,14 +94,17 @@ Implemented
 * Messenger and Page-linked Instagram routing.
 * Direct inbound text, replies, echoes, referrals and supported state mutations.
 * Provider-private inbound media download and identity profile synchronization.
-* Direct text outbound with exact provider correlation and a 24-hour response window.
+* Direct text and private media outbound with exact provider correlation and a
+  24-hour response window, rechecked after the upload.
+* Shared-post, reel and story context cards with safe public permalinks or private
+  media, preserving text and original attachment slots.
 * Revision-fenced health and subscription reconciliation through OCA ``queue_job``.
 
 Next increments
 ===============
 
 * External acceptance with a managed System User credential and App Review.
-* Outbound media and reactions.
+* Outbound reactions.
 * Explicitly approved Human Agent capability.
 * Optional Instagram Login transport without a linked Facebook Page.
 

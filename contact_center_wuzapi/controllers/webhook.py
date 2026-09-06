@@ -2,7 +2,8 @@ import hashlib
 import json
 import logging
 
-from psycopg2 import IntegrityError
+from psycopg2 import errorcodes
+from psycopg2.errors import SerializationFailure, UniqueViolation
 from werkzeug.wrappers import Response
 
 from odoo import fields, http
@@ -18,12 +19,23 @@ from ..services.adapter import (
 _logger = logging.getLogger(__name__)
 
 MAX_WEBHOOK_BODY_BYTES = 1024 * 1024
+
+
+class _WebhookSerializationFailure(SerializationFailure):
+    """Request a fresh transaction through Odoo's normal concurrency retry."""
+
+    @property
+    def pgcode(self):
+        return errorcodes.SERIALIZATION_FAILURE
+
+
 _DROP = object()
 _PRIMARY_MEDIA_FIELDS = (
     "imageMessage",
     "audioMessage",
     "videoMessage",
     "documentMessage",
+    "ptvMessage",
     "stickerMessage",
 )
 _DROP_WHOLE_KEYS = {
@@ -331,16 +343,19 @@ def _read_bounded_body(http_request, maximum_bytes):
         return cached_body[: maximum_bytes + 1]
 
     # With a verified Content-Length, Werkzeug's own reader is bounded by the
-    # WSGI LimitedStream and is compatible across the Odoo 16 version range.
+    # WSGI LimitedStream. Keep its request-local cache: Odoo retries the entire
+    # controller on a transaction conflict, after the input stream was consumed.
     content_length = http_request.content_length
     if content_length is not None:
-        return http_request.get_data(cache=False)
+        return http_request.get_data(cache=True)
 
     # A length-less/chunked request must not reach unbounded ``get_data``.
     input_stream = http_request.environ.get("wsgi.input")
     if input_stream is None:
         raise ValueError("request body stream is unavailable")
-    return input_stream.read(maximum_bytes + 1)
+    body = input_stream.read(maximum_bytes + 1)
+    http_request._cached_data = body
+    return body
 
 
 def _inbox_dedupe_key(inbox_model, connection, envelope, digest):
@@ -407,11 +422,17 @@ def _find_or_create_inbox(inbox_model, domain, values):
     try:
         with inbox_model.env.cr.savepoint():
             return inbox_model.create(values), False
-    except IntegrityError:
-        inbox = inbox_model.search(domain, limit=1)
-        if not inbox:
+    except UniqueViolation as error:
+        if error.diag.constraint_name != (
+            "contact_center_inbox_event_connection_dedupe_unique"
+        ):
             raise
-        return inbox, True
+        # Under REPEATABLE READ, a concurrent winner may remain invisible even
+        # after its insert has committed. Searching this snapshot again cannot
+        # resolve the duplicate; Odoo must restart the whole transaction.
+        raise _WebhookSerializationFailure(
+            "Concurrent WuzAPI webhook requires a fresh snapshot"
+        ) from None
 
 
 def _inbox_ledger_values(

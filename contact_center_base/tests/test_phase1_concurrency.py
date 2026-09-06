@@ -1287,6 +1287,77 @@ class TestPhase1Concurrency(TransactionCase):
                 ),
             }
 
+    def _cleanup_marketing_fixture(self, env, channel_bindings, message_bindings):
+        """Remove optional bridge evidence owned by this committed test fixture.
+
+        Marketing ledgers intentionally forbid runtime deletion. These scoped
+        test-only statements clean child rows before the Contact Center parents;
+        no production unlink capability or foreign-key policy is weakened.
+        """
+
+        if "marketing.contact.center.response.signal" not in env:
+            return
+        record_ids_by_model = {
+            "contact.center.channel.binding": set(channel_bindings.ids),
+            "contact.center.message.binding": set(message_bindings.ids),
+        }
+        env["queue.job"].sudo().search(
+            [("model_name", "in", list(record_ids_by_model))]
+        ).filtered(
+            lambda job: bool(
+                set(job.record_ids or []) & record_ids_by_model[job.model_name]
+            )
+        ).unlink()
+        env.cr.execute(
+            "DELETE FROM marketing_contact_center_response_cursor "
+            "WHERE channel_binding_id = ANY(%s)",
+            [channel_bindings.ids],
+        )
+        env.cr.execute(
+            "DELETE FROM marketing_contact_center_response "
+            "WHERE episode_id IN (SELECT id FROM "
+            "marketing_contact_center_response_episode "
+            "WHERE channel_binding_id = ANY(%s))",
+            [channel_bindings.ids],
+        )
+        env.cr.execute(
+            "DELETE FROM marketing_contact_center_response_episode "
+            "WHERE channel_binding_id = ANY(%s)",
+            [channel_bindings.ids],
+        )
+        env.cr.execute(
+            "DELETE FROM marketing_contact_center_response_signal "
+            "WHERE channel_binding_id = ANY(%s)",
+            [channel_bindings.ids],
+        )
+        events = (
+            env["marketing.business.event"]
+            .sudo()
+            .search(
+                [
+                    ("source_system", "=", "contact_center"),
+                    ("source_model", "=", "mail.channel"),
+                    ("source_res_id", "in", channel_bindings.channel_id.ids),
+                ]
+            )
+        )
+        if events:
+            if "marketing.business.event.crm.link" in env:
+                env.cr.execute(
+                    "DELETE FROM marketing_business_event_crm_link "
+                    "WHERE event_id = ANY(%s)",
+                    [events.ids],
+                )
+            env.cr.execute(
+                "DELETE FROM marketing_business_event_observation "
+                "WHERE event_id = ANY(%s)",
+                [events.ids],
+            )
+            env.cr.execute(
+                "DELETE FROM marketing_business_event WHERE id = ANY(%s)",
+                [events.ids],
+            )
+
     def _cleanup_committed_fixture(self, token):
         with self.registry.cursor() as cr:
             env = api.Environment(cr, SUPERUSER_ID, {})
@@ -1333,6 +1404,7 @@ class TestPhase1Concurrency(TransactionCase):
                     .sudo()
                     .search([("account_id", "in", accounts.ids)])
                 )
+                self._cleanup_marketing_fixture(env, channel_bindings, message_bindings)
                 message_bindings.unlink()
                 # The diagnostic source link deliberately restricts deletion of
                 # ledger evidence while a projected message still references it.

@@ -57,11 +57,11 @@ def _retry_after(response):
 def _validated_meta_media_url(value):
     if not isinstance(value, str) or not value or len(value) > 8192:
         raise AdapterError("Meta media locator URL is invalid")
-    parsed = urlsplit(value)
     try:
+        parsed = urlsplit(value)
         port = parsed.port
-    except ValueError as error:
-        raise AdapterError("Meta media locator URL is invalid") from error
+    except ValueError:
+        raise AdapterError("Meta media locator URL is invalid") from None
     hostname = (parsed.hostname or "").lower().rstrip(".")
     if (
         parsed.scheme.lower() != "https"
@@ -106,7 +106,7 @@ def _validated_mime_type(kind, response, fallback):
 
 def _raise_http_error(response):
     status = int(getattr(response, "status_code", 0) or 0)
-    if status == 429 or status >= 500:
+    if status in (408, 425, 429) or status >= 500:
         error = TransientAdapterError(
             "Meta media endpoint returned a transient HTTP error"
         )

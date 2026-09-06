@@ -325,6 +325,35 @@ class TestContactCenterPipeline(SavepointCase):
                 contact_center_case_account_id=self.account.id,
             ).create(values)
 
+        case = self.channel.contact_center_case_ids.filtered("is_default")
+        original_opened_at = case.opened_at
+        for context in ({}, {"contact_center_case_service_token": "forged-rpc-token"}):
+            with self.subTest(context=context), self.assertRaises(AccessError):
+                case.with_user(self.agent).with_context(**context).write(
+                    {"opened_at": "2000-01-01 00:00:00"}
+                )
+        case.invalidate_recordset(["opened_at"])
+        self.assertEqual(case.opened_at, original_opened_at)
+
+        created = (
+            self.env["contact.center.case"]
+            .with_user(self.agent)
+            .with_context(
+                default_active=False,
+                default_is_default=True,
+            )
+            .create(
+                {
+                    "name": "Untrusted context defaults",
+                    "channel_id": self.channel.id,
+                    "pipeline_id": pipeline.id,
+                    "stage_id": stage.id,
+                }
+            )
+        )
+        self.assertTrue(created.active)
+        self.assertFalse(created.is_default)
+
     def test_initial_stage_is_replaced_only_by_atomic_service_action(self):
         pipeline = self.account.default_pipeline_id
         previous = pipeline._contact_center_initial_stage()

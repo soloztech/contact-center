@@ -22,6 +22,7 @@ import {
 } from "./contact_center_model.esm";
 import {_t} from "@web/core/l10n/translation";
 import {browser} from "@web/core/browser/browser";
+import {outboundStructuredCapabilities} from "./structured_content.esm";
 import {session} from "@web/session";
 
 const API_MODEL = "contact.center.ui.api";
@@ -769,6 +770,20 @@ function canStartSend(conversation, body, mediaRefs, sending) {
     );
 }
 
+function sendOutcome(options, accepted, definitive = false, requestId = false) {
+    return options.returnOutcome ? {accepted, definitive, requestId} : accepted;
+}
+
+function definitiveSendRejection(error) {
+    const name = error && error.data && error.data.name;
+    return [
+        "odoo.exceptions.UserError",
+        "odoo.exceptions.ValidationError",
+        "odoo.exceptions.AccessError",
+        "odoo.exceptions.MissingError",
+    ].includes(name);
+}
+
 function replyMatches(replyTo, replyId) {
     return (!replyTo && !replyId) || (replyTo && replyTo.message_id === replyId);
 }
@@ -1296,10 +1311,12 @@ export class ContactCenterStore {
         this.busService.removeEventListener("reconnect", this.onReconnect);
         this.busService.removeEventListener("reconnecting", this.onReconnecting);
         this.busService.removeEventListener("disconnect", this.onDisconnect);
-        for (const timer of [this.searchTimer, this.syncTimer]) {
-            if (timer !== null) {
-                browser.clearTimeout(timer);
-            }
+        if (this.searchTimer !== null) {
+            browser.clearTimeout(this.searchTimer);
+        }
+        if (this.syncTimer !== null) {
+            this.realtimeTimer.clearTimeout(this.syncTimer);
+            this.syncTimer = null;
         }
         if (this.contactSearchTimer !== null) {
             this.contactTimer.clearTimeout(this.contactSearchTimer);
@@ -2977,92 +2994,170 @@ export class ContactCenterStore {
         }
     }
 
-    prepareSendContext(conversation, cleanBody, cleanMediaRefs) {
+    prepareSendContext(
+        conversation,
+        cleanBody,
+        cleanMediaRefs,
+        requestedReplyId,
+        structuredContent = false,
+        replayRequestId = false
+    ) {
         const policy = conversationUiPolicy(conversation);
         if (
             !canStartSend(
                 conversation,
-                cleanBody,
+                cleanBody || structuredContent,
                 cleanMediaRefs,
                 this.isSending(conversation && conversation.channel_id)
-            ) ||
-            (cleanMediaRefs.length && !policy.allow_attachments)
+            )
         ) {
             return false;
         }
-        if (!this.state.replyTo) {
+        // Repeating an uncertain operation asks the server to acknowledge its
+        // original UUID. The application checks that match before current card
+        // capabilities, and still validates all current rules for a new send.
+        if (replayRequestId) {
+            return {replyId: requestedReplyId || false};
+        }
+        if (
+            (cleanMediaRefs.length && !policy.allow_attachments) ||
+            (structuredContent &&
+                (cleanMediaRefs.length ||
+                    !Object.keys(
+                        outboundStructuredCapabilities(conversation.capabilities)
+                    ).includes(structuredContent.type)))
+        ) {
+            return false;
+        }
+        return this.prepareReplyContext(policy, requestedReplyId);
+    }
+
+    prepareReplyContext(policy, requestedReplyId) {
+        const replyId =
+            requestedReplyId === undefined
+                ? this.state.replyTo && this.state.replyTo.message_id
+                : requestedReplyId;
+        if (!replyId) {
             return {replyId: false};
         }
         const target = this.state.messages.find(
-            (message) => message.message_id === this.state.replyTo.message_id
+            (message) => message.message_id === replyId
         );
+        // A pending operation already captured this target while it was visible.
+        // Pagination after a conversation switch does not invalidate that ID;
+        // the server still enforces target ownership and reply policy.
+        if (
+            !target &&
+            requestedReplyId !== undefined &&
+            policy.allow_reply &&
+            Number.isSafeInteger(replyId) &&
+            replyId > 0
+        ) {
+            return {replyId};
+        }
         if (
             !policy.allow_reply ||
             !target ||
             !target.actions ||
             target.actions.reply !== true
         ) {
-            this.state.replyTo = false;
+            if (requestedReplyId === undefined) {
+                this.state.replyTo = false;
+            }
             return false;
         }
         return {replyId: target.message_id};
     }
 
-    async sendMessage(body, mediaRefs = []) {
-        const conversation = this.selectedConversation;
+    async sendMessage(body, mediaRefs = [], options = {}) {
+        if (this.destroyed) {
+            return sendOutcome(options, false, true);
+        }
+        const conversation = options.channelId
+            ? this.state.conversations.find(
+                  (item) => item.channel_id === options.channelId
+              )
+            : this.selectedConversation;
         const cleanBody = typeof body === "string" ? body.trim() : "";
         const cleanMediaRefs = normalizedMediaRefs(mediaRefs);
+        const structuredContent = options.structuredContent || false;
+        const replayRequestId = options.replayRequestId || false;
+        if (replayRequestId && !UUID_PATTERN.test(replayRequestId)) {
+            return sendOutcome(options, false, true);
+        }
         const sendContext = this.prepareSendContext(
             conversation,
             cleanBody,
-            cleanMediaRefs
+            cleanMediaRefs,
+            options.replyId,
+            structuredContent,
+            replayRequestId
         );
         if (!sendContext) {
-            return false;
+            return sendOutcome(options, false, true);
         }
         const channelId = conversation.channel_id;
         const replyId = sendContext.replyId;
         const signature = `send-message:${channelId}:${
             replyId || ""
-        }:${cleanBody}:${cleanMediaRefs.join(",")}`;
-        const requestId = this.operationRequestId(signature);
+        }:${cleanBody}:${cleanMediaRefs.join(",")}${
+            structuredContent ? `:card:${JSON.stringify(structuredContent)}` : ""
+        }`;
+        const requestId = replayRequestId || this.operationRequestId(signature);
         this.setChannelSending(channelId, true);
+        let admissionConfirmed = false;
         try {
-            const payload = await this.call("send_message", [
+            const args = [
                 channelId,
                 cleanBody,
                 replyId || false,
                 requestId,
                 cleanMediaRefs,
-            ]);
+            ];
+            if (structuredContent) {
+                args.push(structuredContent);
+            }
+            const payload = await this.call("send_message", args);
             validateOperationEnvelope(payload, {
                 channelId,
                 requestId,
                 requiredRecords: ["message"],
             });
-            if (this.state.selectedChannelId === channelId) {
+            admissionConfirmed = true;
+            this.completeOperationIntent(signature, requestId);
+            if (!this.destroyed && this.state.selectedChannelId === channelId) {
                 this.state.messages = mergeTimelineItems(
                     this.state.messages,
                     [payload.message],
                     {prepend: false}
                 );
             }
-            this.completeOperationIntent(signature, requestId);
             if (
                 this.state.selectedChannelId === channelId &&
                 replyMatches(this.state.replyTo, replyId)
             ) {
                 this.state.replyTo = false;
             }
-            await this.refreshLoadedConversations({silent: true});
-            return true;
+            if (!this.destroyed) {
+                await this.refreshLoadedConversations({silent: true});
+            }
+            return sendOutcome(options, true, false, requestId);
         } catch (error) {
+            if (admissionConfirmed) {
+                // A refresh failure cannot undo the acknowledged server command.
+                return sendOutcome(options, true, false, requestId);
+            }
             this.notify(errorMessage(error), {
                 type: "danger",
                 title: "Mensagem não enviada",
                 sticky: true,
             });
-            return false;
+            return sendOutcome(
+                options,
+                false,
+                definitiveSendRejection(error),
+                requestId
+            );
         } finally {
             this.setChannelSending(channelId, false);
         }
@@ -4330,12 +4425,15 @@ export class ContactCenterStore {
     }
 
     scheduleSynchronization(reconnect, refreshTimeline = false) {
+        if (this.destroyed) {
+            return;
+        }
         this.syncReconnect = this.syncReconnect || reconnect;
         this.syncTimeline = this.syncTimeline || refreshTimeline;
         if (this.syncTimer !== null) {
             return;
         }
-        this.syncTimer = browser.setTimeout(async () => {
+        this.syncTimer = this.realtimeTimer.setTimeout(async () => {
             this.syncTimer = null;
             const synchronizedReconnect = this.syncReconnect;
             const synchronizeTimeline = this.syncTimeline;
@@ -4351,9 +4449,8 @@ export class ContactCenterStore {
                     await this.refreshLatestTimeline();
                 }
             }
-            if (synchronizedReconnect) {
-                this.state.realtime = "online";
-            }
+            // Only bus events prove connectivity. A successful RPC refresh can
+            // finish after a newer disconnect and must not overwrite that state.
         }, 120);
     }
 }

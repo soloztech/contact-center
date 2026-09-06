@@ -4,10 +4,17 @@ import hmac
 import json
 import time
 import uuid
+from unittest import mock
 
+from psycopg2 import errorcodes
+from psycopg2.errors import SerializationFailure
+
+from odoo import _
+from odoo.exceptions import ValidationError
 from odoo.tests import tagged
 from odoo.tests.common import HttpCase
 
+from ..controllers import main as media_controller
 from ..services.tokens import CONTACT_CENTER_POST_TOKEN
 
 _PNG = base64.b64decode(
@@ -416,6 +423,73 @@ class TestContactCenterHttpEndpoints(HttpCase):
         self.assertEqual(set(invalid_payload), {"error"})
         self.assertTrue(invalid_payload["error"])
         self.assertEqual(upload_model.search_count([]), before_count + 1)
+
+    def test_failed_upload_rolls_back_attachment_and_upload_before_http_error(self):
+        reference = str(uuid.uuid4())
+        upload_model = self.env["contact.center.media.upload"].sudo()
+        attachment_model = self.env["ir.attachment"].sudo()
+        attachment_domain = [("res_model", "=", "contact.center.media.upload")]
+        before_attachment_ids = attachment_model.search(attachment_domain).ids
+        original_create = type(upload_model).create
+
+        def reject_created_upload(model, values):
+            original_create(model, values)
+            raise ValidationError(_("Rejected after aggregate creation"))
+
+        with mock.patch.object(type(upload_model), "create", new=reject_created_upload):
+            failed = self._upload_image(reference)
+
+        self.assertEqual(failed.status_code, 400)
+        self.assertIn("Rejected after aggregate creation", failed.json()["error"])
+        self.assertFalse(upload_model.search([("reference", "=", reference)]))
+        self.assertEqual(
+            attachment_model.search(attachment_domain).ids, before_attachment_ids
+        )
+        # The same client intent remains usable after the failed transaction.
+        retried = self._upload_image(reference)
+        self.assertEqual(retried.status_code, 200)
+        self.assertEqual(retried.json()["media_ref"], reference)
+
+    def test_media_upload_reuses_multipart_file_after_transaction_retry(self):
+        class ConcurrentUpdate(SerializationFailure):
+            pgcode = errorcodes.SERIALIZATION_FAILURE
+
+        reference = str(uuid.uuid4())
+        upload_model = self.env["contact.center.media.upload"].sudo()
+        attachment_model = self.env["ir.attachment"].sudo()
+        attachment_domain = [("res_model", "=", "contact.center.media.upload")]
+        before_attachment_ids = set(attachment_model.search(attachment_domain).ids)
+        original_lock = media_controller._lock_media_upload_reference
+        attempts = []
+
+        def fail_once(cr, upload_reference):
+            attempts.append(upload_reference)
+            if len(attempts) == 1:
+                raise ConcurrentUpdate("synthetic upload admission conflict")
+            return original_lock(cr, upload_reference)
+
+        # Odoo rewinds multipart FileStorage streams when retrying the request.
+        # Fail after the controller consumed the image to exercise that contract.
+        with mock.patch.object(
+            media_controller, "_lock_media_upload_reference", new=fail_once
+        ):
+            response = self._upload_image(reference)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(attempts, [reference, reference])
+        upload = upload_model.search([("reference", "=", reference)])
+        self.assertEqual(len(upload), 1)
+        self.assertEqual(upload.attachment_id.raw, _PNG)
+        self.assertEqual(
+            set(attachment_model.search(attachment_domain).ids) - before_attachment_ids,
+            {upload.attachment_id.id},
+        )
+        replay = self._upload_image(reference)
+        self.assertEqual(replay.status_code, 200, replay.text)
+        self.assertEqual(replay.json(), response.json())
+        self.assertEqual(
+            upload_model.search([("reference", "=", reference)]).ids, upload.ids
+        )
 
     def test_media_stream_supports_full_range_suffix_and_open_ranges(self):
         response = self.url_open(self.media_url)

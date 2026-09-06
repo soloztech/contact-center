@@ -2,6 +2,7 @@ from odoo import _, api, fields, models
 from odoo.exceptions import AccessError, ValidationError
 
 from ..services.dto import MAX_FORWARDING_SCORE, AddressDTO, DTOValidationError
+from ..services.structured_content import validate_structured_content
 from ..services.tokens import CONTACT_CENTER_POST_TOKEN
 
 
@@ -340,6 +341,7 @@ class ContactCenterMessageBinding(models.Model):
         help="Whether the provider explicitly supplied a forwarding score.",
     )
     protocol_snapshot_json = fields.Json(default=dict, copy=False)
+    structured_content_json = fields.Json(default=dict, copy=False)
     protocol_participant_json = fields.Json(
         default=dict,
         copy=False,
@@ -444,6 +446,19 @@ class ContactCenterMessageBinding(models.Model):
             "A forwarding score requires explicit provider evidence.",
         ),
     ]
+
+    @api.constrains("structured_content_json")
+    def _check_structured_content(self):
+        for binding in self:
+            try:
+                content = binding.structured_content_json
+                validate_structured_content(
+                    {} if content is None or content is False else content
+                )
+            except (TypeError, ValueError) as error:
+                raise ValidationError(
+                    _("Invalid structured message content.")
+                ) from error
 
     def init(self):
         """Keep provider correlation keys unique without constraining empty values."""

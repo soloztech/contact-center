@@ -82,7 +82,10 @@ import {
     timelineViewportNearBottom,
 } from "@contact_center_ui/js/conversation_timeline.esm";
 import {
+    MAX_COMPOSER_ATTACHMENTS,
     MessageComposer,
+    admitAttachmentSequence,
+    buildAttachmentSendPlan,
     composerDraftStorageKey,
     composerHint,
     composerShortcut,
@@ -92,6 +95,14 @@ import {
     transferredFiles,
     writeComposerDrafts,
 } from "@contact_center_ui/js/message_composer.esm";
+import {
+    newStructuredDraft,
+    newStructuredRow,
+    outboundStructuredCapabilities,
+    safeStructuredUrl,
+    structuredDraftSubmission,
+    structuredMessageCard,
+} from "@contact_center_ui/js/structured_content.esm";
 import {
     MessageContent,
     formatAudioTime,
@@ -4473,6 +4484,50 @@ QUnit.module("contact_center_ui > model", (hooks) => {
     );
 
     QUnit.test(
+        "a late reconnect refresh preserves a newer disconnect",
+        async (assert) => {
+            let synchronize = null;
+            let releaseRefresh = null;
+            const refresh = new Promise((resolve) => {
+                releaseRefresh = resolve;
+            });
+            const store = new ContactCenterStore({
+                orm: {},
+                busService: {
+                    removeEventListener() {
+                        // This store schedules synchronization without listeners.
+                    },
+                },
+                notification: false,
+                realtimeTimer: {
+                    setTimeout(callback) {
+                        synchronize = callback;
+                        return 1;
+                    },
+                    clearTimeout() {
+                        // The test invokes the captured timer directly.
+                    },
+                },
+            });
+            store.refreshLoadedConversations = () => refresh;
+            store.state.realtime = "online";
+            store.scheduleSynchronization(true, true);
+            const pending = synchronize();
+            store.onDisconnect();
+            releaseRefresh();
+            await pending;
+            assert.strictEqual(store.state.realtime, "offline");
+            store.destroy();
+            store.scheduleSynchronization(true, true);
+            assert.strictEqual(
+                store.syncTimer,
+                null,
+                "destroyed stores cannot reschedule"
+            );
+        }
+    );
+
+    QUnit.test(
         "tracks the real bus lifecycle and keeps a consistency fallback armed",
         async (assert) => {
             const listeners = new Map();
@@ -5329,9 +5384,16 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             composer.local = {
                 body: "Resposta ainda não enviada",
                 mode: "message",
-                attachment: {name: "manual.pdf", previewUrl: "blob:manual"},
-                mediaRef: "media-ref-ready",
-                uploadPhase: "ready",
+                attachments: [
+                    {
+                        id: "upload-10",
+                        name: "manual.pdf",
+                        previewUrl: "blob:manual",
+                        mediaRef: "media-ref-ready",
+                        phase: "ready",
+                        file: null,
+                    },
+                ],
                 uploadError: "",
                 scheduledAt: "2030-01-02T10:00",
                 followupSummary: "Retornar proposta",
@@ -5341,25 +5403,19 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 followupUserId: 7,
                 followupCaseId: 12,
             };
-            composer.pendingFile = {name: "manual.pdf"};
-            composer.pendingUploadId = "upload-10";
-            composer.pendingUploadMetadata = {};
             composer.resize = () => true;
 
             assert.ok(composer.saveCurrentDraft());
             composer.local.body = "";
-            composer.local.attachment = false;
-            composer.local.mediaRef = "";
-            composer.local.uploadPhase = "idle";
+            composer.local.attachments = [];
             composer.local.scheduledAt = "";
             composer.local.followupSummary = "";
-            composer.pendingFile = null;
             composer.props.state.replyTo = false;
 
             assert.ok(composer.restoreDraft(10));
             assert.strictEqual(composer.local.body, "Resposta ainda não enviada");
-            assert.strictEqual(composer.local.mediaRef, "media-ref-ready");
-            assert.strictEqual(composer.local.attachment.name, "manual.pdf");
+            assert.strictEqual(composer.attachments[0].mediaRef, "media-ref-ready");
+            assert.strictEqual(composer.attachments[0].name, "manual.pdf");
             assert.strictEqual(composer.props.state.replyTo.message_id, 7);
             assert.strictEqual(composer.local.scheduledAt, "2030-01-02T10:00");
             assert.strictEqual(composer.local.followupSummary, "Retornar proposta");
@@ -5372,28 +5428,25 @@ QUnit.module("contact_center_ui > model", (hooks) => {
         "a prepared upload releases the browser file and keeps its server reference",
         (assert) => {
             const composer = Object.create(MessageComposer.prototype);
-            composer.local = {
-                attachment: {
-                    name: "video-local.mp4",
-                    size: 50000000,
-                    mimetype: "video/mp4",
-                    kind: "video",
-                    previewUrl: "blob:video-local",
-                    isVoiceNote: false,
-                    durationSeconds: 0,
-                },
-                mediaRef: "",
-                uploadPhase: "uploading",
+            const item = {
+                id: "upload-large-video",
+                file: {name: "video-local.mp4", size: 50000000},
+                metadata: {durationSeconds: 15},
+                name: "video-local.mp4",
+                size: 50000000,
+                mimetype: "video/mp4",
+                kind: "video",
+                previewUrl: "blob:video-local",
+                isVoiceNote: false,
+                durationSeconds: 0,
+                phase: "uploading",
             };
-            composer.pendingFile = {name: "video-local.mp4", size: 50000000};
-            composer.pendingUploadId = "upload-large-video";
-            composer.pendingUploadMetadata = {durationSeconds: 15};
             let revoked = 0;
             composer.revokePreview = () => {
                 revoked += 1;
             };
 
-            composer.applyUploadedMedia({
+            composer.applyUploadedMedia(item, {
                 media_ref: " prepared-media-ref ",
                 media: {
                     kind: "video",
@@ -5405,38 +5458,36 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 },
             });
 
-            assert.strictEqual(composer.local.mediaRef, "prepared-media-ref");
-            assert.strictEqual(composer.local.uploadPhase, "ready");
-            assert.strictEqual(composer.local.attachment.name, "video.mp4");
-            assert.strictEqual(composer.local.attachment.previewUrl, "");
+            assert.strictEqual(item.mediaRef, "prepared-media-ref");
+            assert.strictEqual(item.phase, "ready");
+            assert.strictEqual(item.name, "video.mp4");
+            assert.strictEqual(item.previewUrl, "");
             assert.strictEqual(revoked, 1);
-            assert.strictEqual(composer.pendingFile, null);
-            assert.strictEqual(composer.pendingUploadId, "");
-            assert.deepEqual(composer.pendingUploadMetadata, {});
+            assert.strictEqual(item.file, null);
+            assert.strictEqual(item.id, "upload-large-video");
+            assert.deepEqual(item.metadata, {});
         }
     );
 
     QUnit.test("a prepared small upload keeps its local preview", (assert) => {
         const composer = Object.create(MessageComposer.prototype);
-        composer.local = {
-            attachment: {
-                name: "image-local.jpg",
-                size: 2000000,
-                mimetype: "image/jpeg",
-                kind: "image",
-                previewUrl: "blob:image-local",
-                isVoiceNote: false,
-                durationSeconds: 0,
-            },
+        const item = {
+            id: "upload-small-image",
+            file: {name: "image-local.jpg", size: 2000000},
+            metadata: {},
+            name: "image-local.jpg",
+            size: 2000000,
+            mimetype: "image/jpeg",
+            kind: "image",
+            previewUrl: "blob:image-local",
+            isVoiceNote: false,
+            durationSeconds: 0,
             mediaRef: "",
-            uploadPhase: "uploading",
+            phase: "uploading",
         };
-        composer.pendingFile = {name: "image-local.jpg", size: 2000000};
-        composer.pendingUploadId = "upload-small-image";
-        composer.pendingUploadMetadata = {};
         composer.revokePreview = () => assert.step("unexpected revoke");
 
-        composer.applyUploadedMedia({
+        composer.applyUploadedMedia(item, {
             media_ref: "prepared-image-ref",
             media: {
                 kind: "image",
@@ -5447,8 +5498,8 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             },
         });
 
-        assert.strictEqual(composer.local.attachment.previewUrl, "blob:image-local");
-        assert.strictEqual(composer.pendingFile, null);
+        assert.strictEqual(item.previewUrl, "blob:image-local");
+        assert.strictEqual(item.file, null);
         assert.verifySteps([]);
     });
 
@@ -5458,13 +5509,16 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             const composer = Object.create(MessageComposer.prototype);
             composer.activeChannelId = 10;
             composer.switchPrepared = false;
-            composer.local = {uploadPhase: "uploading", uploadError: ""};
+            composer.local = {
+                attachments: [{id: "pending", phase: "uploading"}],
+                uploadError: "",
+            };
             let saved = 0;
             let savedUploadPhase = "";
             const restored = [];
             composer.saveCurrentDraft = () => {
                 saved += 1;
-                savedUploadPhase = composer.local.uploadPhase;
+                savedUploadPhase = composer.attachments[0].phase;
                 return true;
             };
             composer.resetLocalForConversation = () => true;
@@ -5939,9 +5993,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
         };
         composer.local = {
             body: "mensagem concorrente",
-            attachment: false,
-            mediaRef: "",
-            uploadPhase: "idle",
+            attachments: [],
             recordingPhase: "idle",
         };
 
@@ -8648,16 +8700,14 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             };
             composer.local = {
                 actionBusy: false,
-                attachment: false,
+                attachments: [],
                 body: "Retorno combinado",
-                mediaRef: "",
                 mode: "message",
                 recordingPhase: "idle",
                 scheduledAt: localDateTimeInputValue(
                     new Date(Date.now() + 30 * 60 * 1000)
                 ),
                 tool: "schedule",
-                uploadPhase: "idle",
             };
             composer.scheduleCurrentMessage = async () => {
                 calls.scheduled += 1;
@@ -8696,7 +8746,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 "attachments stay disabled while scheduling"
             );
 
-            composer.local.attachment = {kind: "image"};
+            composer.local.attachments = [{kind: "image"}];
             assert.notOk(
                 composer.scheduledTextOnlyAllowed,
                 "a late attachment invalidates the schedule intent"
@@ -8719,8 +8769,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 {
                     body: "Nota reservada",
                     mode: "note",
-                    attachment: {name: "contrato.pdf"},
-                    mediaRef: "upload-secret",
+                    attachments: [{name: "contrato.pdf", mediaRef: "upload-secret"}],
                     replyTo: {message_id: 99},
                 },
             ],
@@ -9230,6 +9279,1122 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                     ),
                 /outra conversa/,
                 "a response for another conversation fails closed"
+            );
+        }
+    );
+});
+
+QUnit.module("contact_center_ui > multi-file and structured messages", () => {
+    const capabilities = {
+        media: {
+            image: {enabled: true, caption: true},
+            audio: {enabled: true, caption: false},
+        },
+        outbound_structured_content: {
+            buttons: {
+                body_mode: "required",
+                max_body_length: 1024,
+                max_buttons: 3,
+                action_types: ["reply", "url", "phone"],
+                max_title_length: 60,
+                max_footer_length: 60,
+                max_button_title_length: 20,
+                max_id_length: 200,
+                max_phone_length: 30,
+            },
+            list: {
+                body_mode: "required",
+                max_body_length: 1024,
+                max_sections: 10,
+                max_rows: 10,
+                max_title_length: 60,
+                max_footer_length: 60,
+                max_button_text_length: 20,
+                max_section_title_length: 60,
+                max_row_title_length: 24,
+                max_row_description_length: 72,
+                max_id_length: 200,
+            },
+            contacts: {
+                body_mode: "none",
+                max_body_length: 0,
+                max_contacts: 1,
+                max_name_length: 120,
+                max_phones: 5,
+                max_emails: 5,
+                max_phone_length: 30,
+                max_email_length: 254,
+            },
+            location: {
+                body_mode: "none",
+                max_body_length: 0,
+                max_name_length: 120,
+                max_address_length: 300,
+                allow_live: false,
+            },
+        },
+    };
+
+    function attachment(id, kind = "image") {
+        return {
+            id,
+            kind,
+            name: `${id}.jpg`,
+            mediaRef: `media-${id}`,
+            phase: "ready",
+            file: null,
+            previewUrl: "",
+        };
+    }
+
+    function makeComposer(items = [], body = "") {
+        const store = new ContactCenterStore({
+            orm: {},
+            busService: {},
+            notification: false,
+            operationStorage: false,
+        });
+        const conversation = {
+            channel_id: 10,
+            conversation_type: "direct",
+            state: "open",
+            can_send: true,
+            capabilities,
+        };
+        store.state.conversations = [conversation];
+        store.state.selectedChannelId = 10;
+        store.refreshLoadedConversations = async () => true;
+        const composer = Object.create(MessageComposer.prototype);
+        composer.props = {store, state: store.state, conversation};
+        composer.local = {
+            body,
+            mode: "message",
+            tool: false,
+            attachments: items,
+            sendPlan: false,
+            structuredDraft: false,
+            actionBusy: false,
+            recordingPhase: "idle",
+            uploadError: "",
+        };
+        composer.activeChannelId = 10;
+        composer.destroyed = false;
+        composer.uploadGeneration = 0;
+        composer.uploadControllers = new Map();
+        composer.drafts = new Map();
+        composer.persistedDrafts = new Map();
+        composer.fileRef = {el: null};
+        composer.persistDraft = () => true;
+        composer.resize = () => true;
+        composer.revokePreview = () => true;
+        composer.previewUrl = () => "";
+        return composer;
+    }
+
+    function accepted(args, id = 1) {
+        return {
+            schema_version: SUPPORTED_SCHEMA_VERSION,
+            channel_id: args[0],
+            client_request_id: args[3],
+            message: {message_id: id, body_text: args[1]},
+        };
+    }
+
+    QUnit.test(
+        "caption belongs to the first compatible file and audio preserves separate text",
+        (assert) => {
+            const plan = buildAttachmentSendPlan(
+                " Legenda única ",
+                [attachment("a", "audio"), attachment("b"), attachment("c")],
+                capabilities,
+                7
+            );
+            assert.deepEqual(
+                plan.map((item) => item.body),
+                ["", "Legenda única", ""]
+            );
+            assert.deepEqual(
+                plan.map((item) => item.replyId),
+                [7, false, false]
+            );
+            const audioPlan = buildAttachmentSendPlan(
+                "Texto preservado",
+                [attachment("a", "audio"), attachment("b", "audio")],
+                capabilities,
+                7
+            );
+            assert.deepEqual(
+                audioPlan.map((item) => [item.body, item.mediaRef]),
+                [
+                    ["Texto preservado", ""],
+                    ["", "media-a"],
+                    ["", "media-b"],
+                ]
+            );
+            assert.deepEqual(
+                audioPlan.map((item) => item.replyId),
+                [7, false, false]
+            );
+            assert.strictEqual(
+                buildAttachmentSendPlan("Texto", [], capabilities).length,
+                1
+            );
+        }
+    );
+
+    QUnit.test(
+        "partial timeout retries only pending files with the original request UUID",
+        async (assert) => {
+            const composer = makeComposer(
+                [attachment("one"), attachment("two"), attachment("three")],
+                "Uma legenda"
+            );
+            const calls = [];
+            composer.store.call = async (_method, args) => {
+                calls.push(args);
+                if (calls.length === 2) {
+                    throw new Error("HTTP timeout after uncertain admission");
+                }
+                return accepted(args, calls.length);
+            };
+            await composer.send();
+            assert.deepEqual(
+                composer.attachments.map((item) => item.id),
+                ["two", "three"]
+            );
+            assert.strictEqual(
+                composer.local.body,
+                "",
+                "the admitted caption is cleared exactly once"
+            );
+            assert.strictEqual(composer.local.sendPlan.length, 2);
+            assert.ok(composer.local.sendStatus.includes("2 item"));
+            assert.notOk(
+                composer.canChooseAttachments,
+                "an uncertain request cannot be edited into another intent"
+            );
+            composer.onInput({target: {value: "altered uncertain caption"}});
+            assert.strictEqual(composer.local.body, "");
+            await composer.send();
+            assert.deepEqual(
+                calls.map((args) => args[4][0]),
+                ["media-one", "media-two", "media-two", "media-three"]
+            );
+            assert.strictEqual(
+                calls[1][3],
+                calls[2][3],
+                "the uncertain item retains its UUID"
+            );
+            assert.notStrictEqual(calls[0][3], calls[1][3]);
+            assert.deepEqual(
+                calls.map((args) => args[1]),
+                ["Uma legenda", "", "", ""]
+            );
+            assert.deepEqual(composer.attachments, []);
+            assert.notOk(composer.local.sendPlan);
+        }
+    );
+
+    QUnit.test(
+        "an acknowledged send survives a failed conversation refresh",
+        async (assert) => {
+            const composer = makeComposer([attachment("one"), attachment("two")]);
+            const calls = [];
+            composer.store.call = async (_method, args) => {
+                calls.push(args);
+                return accepted(args, calls.length);
+            };
+            composer.store.refreshLoadedConversations = async () => {
+                throw new Error("refresh unavailable");
+            };
+            await composer.send();
+            assert.strictEqual(calls.length, 2);
+            assert.deepEqual(composer.attachments, []);
+            assert.notOk(
+                composer.local.sendPlan,
+                "view refresh cannot turn an acknowledged file into a pending send"
+            );
+        }
+    );
+
+    QUnit.test(
+        "destroy stops the sequence after the in-flight acknowledgement",
+        async (assert) => {
+            const plan = buildAttachmentSendPlan(
+                "",
+                [attachment("one"), attachment("two")],
+                capabilities
+            );
+            let active = true;
+            let resolve = null;
+            const admitted = [];
+            let calls = 0;
+            const sending = admitAttachmentSequence(plan, {
+                isActive: () => active,
+                send: () => {
+                    calls += 1;
+                    return new Promise((done) => {
+                        resolve = done;
+                    });
+                },
+                onAdmitted: (item) => admitted.push(item.attachmentId),
+            });
+            active = false;
+            resolve(true);
+            const result = await sending;
+            assert.strictEqual(calls, 1);
+            assert.deepEqual(admitted, ["one"]);
+            assert.deepEqual(
+                plan.map((item) => item.attachmentId),
+                ["two"]
+            );
+            assert.notOk(result.complete);
+        }
+    );
+
+    QUnit.test(
+        "an indirect switch updates only the original draft after acknowledgement",
+        async (assert) => {
+            const composer = makeComposer(
+                [attachment("one"), attachment("two")],
+                "Legenda A"
+            );
+            let resolve = null;
+            let callArgs = null;
+            composer.store.call = (_method, args) => {
+                callArgs = args;
+                return new Promise((done) => {
+                    resolve = done;
+                });
+            };
+            const sending = composer.send();
+            composer.saveCurrentDraft();
+            composer.activeChannelId = 20;
+            composer.state.selectedChannelId = 20;
+            composer.local = {
+                body: "Rascunho B",
+                mode: "message",
+                attachments: [],
+                sendPlan: false,
+            };
+            resolve(accepted(callArgs));
+            await sending;
+            assert.strictEqual(composer.local.body, "Rascunho B");
+            assert.deepEqual(composer.local.attachments, []);
+            const draft = composer.drafts.get(10);
+            assert.strictEqual(draft.body, "");
+            assert.deepEqual(
+                draft.attachments.map((item) => item.id),
+                ["two"]
+            );
+            assert.deepEqual(
+                draft.sendPlan.map((item) => item.attachmentId),
+                ["two"]
+            );
+            assert.deepEqual(composer.state.messages, [], "A never appears in B");
+        }
+    );
+
+    QUnit.test(
+        "upload limit is atomic and retry retains each individual upload UUID",
+        async (assert) => {
+            const composer = makeComposer([attachment("existing")]);
+            const file = {name: "picture.jpg", size: 42, type: "image/jpeg"};
+            assert.notOk(
+                await composer.prepareFilesUpload(
+                    Array(MAX_COMPOSER_ATTACHMENTS).fill(file)
+                )
+            );
+            assert.deepEqual(
+                composer.attachments.map((item) => item.id),
+                ["existing"]
+            );
+            assert.ok(composer.local.uploadError.includes("10"));
+            const calls = [];
+            composer.store.uploadMedia = async (_file, id) => {
+                calls.push(id);
+                if (calls.length === 1) {
+                    throw new Error("network interrupted");
+                }
+                return {
+                    media_ref: "prepared",
+                    media: {
+                        kind: "image",
+                        state: "ready",
+                        name: "picture.jpg",
+                        size_bytes: 42,
+                    },
+                };
+            };
+            await composer.prepareFilesUpload([file]);
+            const item = composer.attachments[1];
+            assert.strictEqual(item.phase, "error");
+            await composer.retryUpload(item);
+            assert.deepEqual(calls, [item.id, item.id]);
+            assert.strictEqual(item.phase, "ready");
+            assert.strictEqual(item.file, null);
+            assert.strictEqual(composer.attachments[0].id, "existing");
+        }
+    );
+
+    QUnit.test(
+        "removing or destroying an upload discards late results and aborts its controller",
+        async (assert) => {
+            for (const destroy of [false, true]) {
+                const composer = makeComposer();
+                const item = {
+                    ...attachment("pending"),
+                    file: {name: "photo.jpg"},
+                    phase: "pending",
+                    mediaRef: "",
+                };
+                composer.local.attachments = [item];
+                let resolve = null;
+                let signal = null;
+                composer.store.uploadMedia = (_file, _id, _channel, requestSignal) => {
+                    signal = requestSignal;
+                    return new Promise((done) => {
+                        resolve = done;
+                    });
+                };
+                const uploading = composer.uploadPendingFile(item, 0, 10);
+                if (destroy) {
+                    composer.destroyed = true;
+                    composer.clearLocalAttachments();
+                } else {
+                    composer.removeAttachment(item);
+                }
+                resolve({media_ref: "late", media: {kind: "image", state: "ready"}});
+                await uploading;
+                assert.ok(signal.aborted);
+                assert.deepEqual(composer.attachments, []);
+                assert.strictEqual(
+                    item.mediaRef,
+                    "",
+                    "a stale response never resurrects an attachment"
+                );
+            }
+        }
+    );
+
+    QUnit.test(
+        "structured forms enforce body, boundaries and stable opaque option IDs",
+        (assert) => {
+            const buttons = newStructuredDraft("buttons", capabilities);
+            buttons.rows[0].title = "Falar com vendas";
+            const first = structuredDraftSubmission(
+                buttons,
+                "Como podemos ajudar?",
+                capabilities
+            );
+            assert.strictEqual(first.content.buttons[0].id, buttons.rows[0].id);
+            assert.deepEqual(
+                first,
+                structuredDraftSubmission(buttons, "Como podemos ajudar?", capabilities)
+            );
+            assert.notOk(structuredDraftSubmission(buttons, "", capabilities).content);
+            assert.notOk(
+                structuredDraftSubmission(buttons, "a".repeat(1025), capabilities)
+                    .content
+            );
+            const list = newStructuredDraft("list", capabilities);
+            list.rows = Array.from({length: 10}, (_, index) => ({
+                id: String(index),
+                title: `Opção ${index}`,
+                description: "",
+            }));
+            assert.strictEqual(
+                structuredDraftSubmission(list, "Escolha", capabilities).content
+                    .sections[0].rows.length,
+                10
+            );
+            list.rows.push({id: "overflow", title: "11", description: ""});
+            assert.notOk(
+                structuredDraftSubmission(list, "Escolha", capabilities).content
+            );
+            const contact = newStructuredDraft("contacts", capabilities);
+            contact.name = "Maria";
+            contact.phones = "+55 11 99999-0000";
+            assert.ok(structuredDraftSubmission(contact, "", capabilities).content);
+            assert.notOk(
+                structuredDraftSubmission(contact, "não perder", capabilities).content
+            );
+            const location = newStructuredDraft("location", capabilities);
+            location.latitude = "0";
+            location.longitude = "0";
+            assert.deepEqual(
+                structuredDraftSubmission(location, "", capabilities).content,
+                {
+                    type: "location",
+                    latitude: 0,
+                    longitude: 0,
+                    name: "",
+                    address: "",
+                }
+            );
+            location.latitude = "91";
+            assert.notOk(structuredDraftSubmission(location, "", capabilities).content);
+        }
+    );
+
+    QUnit.test(
+        "structured sends preserve card and UUID across timeout and honor capabilities",
+        async (assert) => {
+            const composer = makeComposer();
+            Object.defineProperty(composer, "voiceRecordingAvailable", {value: true});
+            assert.ok(
+                composer.showVoiceRecordingButton,
+                "an empty composer offers voice recording"
+            );
+            composer.local.structuredDraft = newStructuredDraft(
+                "contacts",
+                capabilities
+            );
+            composer.local.structuredDraft.name = "Maria";
+            composer.local.structuredDraft.phones = "+55 11 99999-0000";
+            assert.notOk(
+                composer.showVoiceRecordingButton,
+                "a contact card exposes Send rather than a disabled microphone"
+            );
+            assert.ok(
+                composer.primaryActionAvailable,
+                "a contact card is sendable without text"
+            );
+            composer.local.structuredDraft = newStructuredDraft(
+                "location",
+                capabilities
+            );
+            composer.local.structuredDraft.latitude = "-23.5";
+            composer.local.structuredDraft.longitude = "-46.6";
+            assert.notOk(
+                composer.showVoiceRecordingButton,
+                "a location card also exposes Send"
+            );
+            assert.ok(
+                composer.primaryActionAvailable,
+                "coordinates are sendable without text"
+            );
+            const calls = [];
+            composer.store.call = async (_method, args) => {
+                calls.push(args);
+                if (calls.length === 1) {
+                    throw new Error("HTTP timeout");
+                }
+                return accepted(args);
+            };
+            await composer.send();
+            assert.ok(composer.local.structuredDraft);
+            assert.notOk(composer.canChooseStructured);
+            assert.notOk(
+                composer.showVoiceRecordingButton,
+                "the pending card keeps its retry button"
+            );
+            assert.ok(
+                composer.primaryActionAvailable,
+                "retry remains available after the timeout"
+            );
+            const pendingDraft = composer.local.structuredDraft;
+            composer.local.structuredDraft = false;
+            assert.notOk(
+                composer.showVoiceRecordingButton,
+                "the pending plan alone also suppresses voice recording"
+            );
+            composer.local.structuredDraft = pendingDraft;
+            await composer.send();
+            assert.strictEqual(calls[0][3], calls[1][3]);
+            assert.deepEqual(calls[0][5], calls[1][5]);
+            assert.strictEqual(calls[0][1], "");
+            assert.notOk(composer.local.structuredDraft);
+            assert.ok(
+                composer.showVoiceRecordingButton,
+                "voice recording returns only after the card is acknowledged"
+            );
+            composer.props.conversation = {
+                ...composer.props.conversation,
+                capabilities: {...capabilities, outbound_structured_content: {}},
+            };
+            composer.state.conversations = [composer.props.conversation];
+            assert.notOk(
+                await composer.store.sendMessage("", [], {
+                    structuredContent: calls[0][5],
+                })
+            );
+            assert.notOk(
+                await composer.store.sendMessage("", ["media-one"], {
+                    structuredContent: calls[0][5],
+                })
+            );
+            assert.strictEqual(calls.length, 2);
+        }
+    );
+
+    QUnit.test(
+        "a definitive card rejection unlocks editing without losing its fields",
+        async (assert) => {
+            const composer = makeComposer();
+            composer.local.structuredDraft = newStructuredDraft(
+                "location",
+                capabilities
+            );
+            composer.local.structuredDraft.latitude = "0";
+            composer.local.structuredDraft.longitude = "20";
+            const calls = [];
+            composer.store.call = async (_method, args) => {
+                calls.push(args);
+                if (calls.length === 1) {
+                    throw {
+                        data: {
+                            name: "odoo.exceptions.UserError",
+                            message: "Provider rejects this coordinate",
+                        },
+                    };
+                }
+                return accepted(args);
+            };
+            await composer.send();
+            assert.notOk(composer.local.sendPlan);
+            assert.ok(
+                composer.canChooseStructured,
+                "a rolled-back RPC permits correction"
+            );
+            assert.strictEqual(composer.local.structuredDraft.longitude, "20");
+            composer.local.structuredDraft.latitude = "1";
+            await composer.send();
+            assert.strictEqual(calls.length, 2);
+            assert.notStrictEqual(
+                calls[0][3],
+                calls[1][3],
+                "the corrected content owns a new intent"
+            );
+            assert.strictEqual(calls[1][5].latitude, 1);
+            assert.notOk(composer.local.structuredDraft);
+        }
+    );
+
+    QUnit.test(
+        "a rejection after a timeout cannot dismiss an earlier uncertain admission",
+        async (assert) => {
+            const composer = makeComposer([attachment("one")], "Texto");
+            const calls = [];
+            composer.store.call = async (_method, args) => {
+                calls.push(args);
+                if (calls.length === 1) {
+                    throw new Error("timeout");
+                }
+                throw {
+                    data: {
+                        name: "odoo.exceptions.AccessError",
+                        message: "Access revoked after first request",
+                    },
+                };
+            };
+            await composer.send();
+            await composer.send();
+            assert.ok(composer.local.sendPlan);
+            assert.strictEqual(calls[0][3], calls[1][3]);
+            assert.notOk(composer.canChooseAttachments);
+            assert.strictEqual(composer.local.body, "Texto");
+        }
+    );
+
+    QUnit.test(
+        "a frozen reply can retry after its target leaves the loaded page",
+        async (assert) => {
+            const composer = makeComposer([], "Resposta");
+            composer.state.replyTo = {message_id: 7};
+            composer.state.messages = [{message_id: 7, actions: {reply: true}}];
+            const calls = [];
+            composer.store.call = async (_method, args) => {
+                calls.push(args);
+                if (calls.length === 1) {
+                    throw new Error("timeout");
+                }
+                return accepted(args, 8);
+            };
+            await composer.send();
+            composer.state.messages = [];
+            await composer.send();
+            assert.strictEqual(calls.length, 2);
+            assert.strictEqual(calls[0][3], calls[1][3]);
+            assert.strictEqual(
+                calls[1][2],
+                7,
+                "the server revalidates the captured target in its conversation"
+            );
+            assert.notOk(composer.local.sendPlan);
+        }
+    );
+
+    QUnit.test(
+        "a pre-dispatch reply refusal releases the unsent plan for correction",
+        async (assert) => {
+            const composer = makeComposer([], "Resposta ainda local");
+            composer.state.replyTo = {message_id: 7};
+            composer.state.messages = [{message_id: 7, actions: {reply: false}}];
+            composer.store.call = async () =>
+                assert.ok(false, "no request was dispatched");
+            await composer.send();
+            assert.notOk(composer.local.sendPlan);
+            assert.strictEqual(composer.local.body, "Resposta ainda local");
+            composer.onInput({target: {value: "Corrigida"}});
+            assert.strictEqual(composer.local.body, "Corrigida");
+        }
+    );
+
+    QUnit.test(
+        "outbound capability specs fail closed without legacy or partial defaults",
+        async (assert) => {
+            const valid = capabilities.outbound_structured_content;
+            assert.deepEqual(outboundStructuredCapabilities(capabilities), valid);
+            const missingActionTypes = {...valid.buttons};
+            delete missingActionTypes.action_types;
+            const malformed = [
+                undefined,
+                [],
+                ["buttons"],
+                {buttons: true},
+                {buttons: missingActionTypes},
+                {buttons: {...valid.buttons, action_types: []}},
+                {buttons: {...valid.buttons, action_types: ["reply", "reply"]}},
+                {buttons: {...valid.buttons, action_types: ["script"]}},
+                {buttons: {...valid.buttons, max_buttons: true}},
+                {buttons: {...valid.buttons, max_buttons: 26}},
+                {buttons: {...valid.buttons, max_id_length: 0}},
+                {buttons: {...valid.buttons, max_body_length: 65537}},
+                {buttons: {...valid.buttons, body_mode: "none"}},
+                {buttons: {...valid.buttons, provider_default: true}},
+                {location: {...valid.location, allow_live: "false"}},
+                {...valid, unknown: {}},
+                {...valid, location: {...valid.location, max_address_length: -1}},
+            ];
+            const composer = makeComposer();
+            composer.store.call = async () =>
+                assert.ok(false, "malformed capabilities must not dispatch an RPC");
+            for (const map of malformed) {
+                const rejected = {outbound_structured_content: map};
+                assert.deepEqual(outboundStructuredCapabilities(rejected), {});
+                assert.notOk(newStructuredDraft("buttons", rejected));
+                composer.props.conversation = {
+                    ...composer.props.conversation,
+                    capabilities: rejected,
+                };
+                composer.state.conversations = [composer.props.conversation];
+                assert.notOk(
+                    await composer.store.sendMessage("Mensagem", [], {
+                        structuredContent: {type: "buttons"},
+                    })
+                );
+            }
+            assert.deepEqual(
+                outboundStructuredCapabilities({structured_content: ["buttons"]}),
+                {},
+                "the former list never enables a form"
+            );
+            assert.notOk(newStructuredDraft("toString", capabilities));
+            assert.notOk(
+                structuredDraftSubmission({type: "toString"}, "", capabilities).content
+            );
+        }
+    );
+
+    QUnit.test(
+        "reply-only channel specs control action choices and preserve a now unsupported draft",
+        (assert) => {
+            const composer = makeComposer([], "Mensagem");
+            composer.onStructuredType({target: {value: "buttons"}});
+            const draft = composer.local.structuredDraft;
+            draft.rows[0].type = "url";
+            draft.rows[0].title = "Visitar";
+            draft.rows[0].url = "https://example.com";
+            assert.ok(
+                composer.structuredSubmission.content,
+                "the original channel supports URL buttons"
+            );
+            composer.saveCurrentDraft();
+            composer.local.structuredDraft = false;
+            const replyOnly = {
+                outbound_structured_content: {
+                    buttons: {
+                        ...capabilities.outbound_structured_content.buttons,
+                        action_types: ["reply"],
+                        max_buttons: 1,
+                        max_button_title_length: 10,
+                        max_body_length: 40,
+                    },
+                },
+            };
+            composer.props.conversation = {
+                ...composer.props.conversation,
+                capabilities: replyOnly,
+            };
+            composer.restoreDraft(10);
+            assert.deepEqual(composer.structuredTypes, ["buttons"]);
+            assert.deepEqual(composer.structuredActions, ["reply"]);
+            assert.strictEqual(composer.structuredRowLimit, 1);
+            assert.strictEqual(composer.structuredRowTitleLimit, 10);
+            assert.strictEqual(
+                composer.bodyMaxLength,
+                80,
+                "the HTML guard allows astral characters; validation still enforces 40 code points"
+            );
+            assert.strictEqual(
+                composer.local.structuredDraft.rows[0].type,
+                "url",
+                "restoring never converts an unsupported action"
+            );
+            assert.strictEqual(
+                composer.local.structuredDraft.rows[0].url,
+                "https://example.com"
+            );
+            assert.ok(composer.structuredSubmission.error.includes("ação"));
+            assert.notOk(composer.primaryActionAvailable);
+            composer.onStructuredType({target: {value: "contacts"}});
+            assert.strictEqual(
+                composer.local.structuredDraft.type,
+                "buttons",
+                "an unsupported forged choice cannot discard the draft"
+            );
+            composer.onStructuredType({target: {value: "buttons"}});
+            assert.strictEqual(composer.local.structuredDraft.rows[0].type, "reply");
+            composer.local.structuredDraft.rows[0].title = "Escolher";
+            assert.ok(composer.primaryActionAvailable);
+            assert.notOk(composer.canAddStructuredRow);
+            composer.addStructuredRow();
+            assert.strictEqual(composer.local.structuredDraft.rows.length, 1);
+            composer.local.body =
+                "Mensagem que excede o limite de quarenta caracteres deste canal";
+            assert.notOk(composer.primaryActionAvailable);
+            assert.ok(
+                composer.local.body.length > 40,
+                "a stricter channel never truncates existing text"
+            );
+        }
+    );
+
+    QUnit.test(
+        "larger channel specs and optional bodies replace fixed provider limits",
+        (assert) => {
+            const base = capabilities.outbound_structured_content;
+            const expanded = {
+                outbound_structured_content: {
+                    buttons: {
+                        ...base.buttons,
+                        body_mode: "optional",
+                        max_body_length: 2048,
+                        action_types: ["phone", "url"],
+                        max_buttons: 5,
+                        max_title_length: 200,
+                        max_footer_length: 120,
+                        max_button_title_length: 40,
+                        max_phone_length: 50,
+                    },
+                    list: {
+                        ...base.list,
+                        max_rows: 12,
+                        max_row_title_length: 36,
+                        max_row_description_length: 100,
+                    },
+                    contacts: {
+                        ...base.contacts,
+                        body_mode: "optional",
+                        max_body_length: 80,
+                        max_name_length: 300,
+                        max_phones: 6,
+                        max_phone_length: 45,
+                    },
+                    location: {
+                        ...base.location,
+                        body_mode: "required",
+                        max_body_length: 80,
+                        max_name_length: 200,
+                        max_address_length: 800,
+                    },
+                },
+            };
+            const composer = makeComposer();
+            composer.props.conversation = {
+                ...composer.props.conversation,
+                capabilities: expanded,
+            };
+            composer.onStructuredType({target: {value: "buttons"}});
+            assert.deepEqual(composer.structuredActions, ["phone", "url"]);
+            assert.strictEqual(
+                composer.local.structuredDraft.rows[0].type,
+                "phone",
+                "new rows start with the first allowed action"
+            );
+            while (composer.canAddStructuredRow) {
+                composer.addStructuredRow();
+            }
+            assert.strictEqual(composer.local.structuredDraft.rows.length, 5);
+            for (const row of composer.local.structuredDraft.rows) {
+                assert.strictEqual(row.type, "phone");
+                row.title = "Título de botão maior que vinte";
+                row.phone = "1".repeat(40);
+            }
+            composer.local.structuredDraft.title = "T".repeat(100);
+            assert.ok(
+                composer.primaryActionAvailable,
+                "this profile permits five long buttons with no body"
+            );
+            composer.local.body = "a".repeat(1500);
+            assert.ok(
+                composer.primaryActionAvailable,
+                "the former 1024-character cap does not leak into this profile"
+            );
+            assert.strictEqual(composer.bodyMaxLength, 4096);
+            const list = newStructuredDraft("list", expanded);
+            list.rows = Array.from({length: 12}, (_, index) => ({
+                id: String(index),
+                title: "T".repeat(30),
+                description: "D".repeat(90),
+            }));
+            assert.ok(structuredDraftSubmission(list, "Escolha", expanded).content);
+            assert.notOk(
+                structuredDraftSubmission(list, "Escolha", capabilities).content
+            );
+            const contact = newStructuredDraft("contacts", expanded);
+            contact.name = "N".repeat(180);
+            contact.phones = Array(6).fill("1".repeat(40)).join("\n");
+            assert.ok(
+                structuredDraftSubmission(contact, "Observação opcional", expanded)
+                    .content
+            );
+            const location = newStructuredDraft("location", expanded);
+            location.latitude = "0";
+            location.longitude = "0";
+            location.name = "N".repeat(160);
+            location.address = "E".repeat(600);
+            assert.notOk(structuredDraftSubmission(location, "", expanded).content);
+            assert.ok(
+                structuredDraftSubmission(location, "Descrição obrigatória", expanded)
+                    .content
+            );
+        }
+    );
+
+    QUnit.test(
+        "zero optional limits and compact option IDs remain explicit without rewriting drafts",
+        (assert) => {
+            const restricted = {
+                outbound_structured_content: {
+                    list: {
+                        ...capabilities.outbound_structured_content.list,
+                        max_rows: 40,
+                        max_id_length: 1,
+                        max_title_length: 0,
+                        max_footer_length: 0,
+                        max_row_description_length: 0,
+                    },
+                    contacts: {
+                        ...capabilities.outbound_structured_content.contacts,
+                        max_phones: 0,
+                        max_emails: 0,
+                    },
+                },
+            };
+            const list = newStructuredDraft("list", restricted);
+            for (let index = 1; index < 40; index++) {
+                list.rows.push(newStructuredRow("reply", 1, list.rows));
+            }
+            for (const row of list.rows) {
+                row.title = "Opção";
+            }
+            assert.strictEqual(new Set(list.rows.map((row) => row.id)).size, 40);
+            assert.ok(list.rows.every((row) => row.id.length === 1));
+            assert.ok(structuredDraftSubmission(list, "Escolha", restricted).content);
+            list.rows[0].description = "Descrição preservada";
+            assert.notOk(
+                structuredDraftSubmission(list, "Escolha", restricted).content
+            );
+            assert.strictEqual(list.rows[0].description, "Descrição preservada");
+            const contact = newStructuredDraft("contacts", restricted);
+            contact.name = "Ana";
+            assert.ok(structuredDraftSubmission(contact, "", restricted).content);
+            contact.phones = "11999990000";
+            assert.notOk(structuredDraftSubmission(contact, "", restricted).content);
+            const composer = makeComposer();
+            composer.local.structuredDraft = contact;
+            composer.props.conversation = {
+                ...composer.props.conversation,
+                capabilities: {},
+            };
+            assert.deepEqual(composer.structuredTypes, []);
+            assert.ok(
+                composer.hasProductivityToolbar,
+                "the unavailable card can still be explicitly removed"
+            );
+            assert.notOk(composer.primaryActionAvailable);
+            composer.onStructuredType({target: {value: ""}});
+            assert.notOk(composer.local.structuredDraft);
+        }
+    );
+
+    QUnit.test(
+        "uncertain cards confirm the original UUID after capabilities shrink or disappear",
+        async (assert) => {
+            for (const removeType of [false, true]) {
+                const composer = makeComposer(
+                    [],
+                    "Mensagem já enviada antes da alteração do canal"
+                );
+                composer.onStructuredType({target: {value: "buttons"}});
+                composer.local.structuredDraft.rows[0].type = "url";
+                composer.local.structuredDraft.rows[0].title = "Abrir o site";
+                composer.local.structuredDraft.rows[0].url = "https://example.com";
+                const calls = [];
+                composer.store.call = async (_method, args) => {
+                    calls.push(args);
+                    if (calls.length === 1) {
+                        throw new Error("Timeout after possible admission");
+                    }
+                    return accepted(args);
+                };
+                await composer.send();
+                assert.ok(composer.canReplayPendingSend);
+                assert.strictEqual(composer.local.sendPlan[0].requestId, calls[0][3]);
+                const reduced = {
+                    outbound_structured_content: removeType
+                        ? {}
+                        : {
+                              buttons: {
+                                  ...capabilities.outbound_structured_content.buttons,
+                                  action_types: ["reply"],
+                                  max_body_length: 4,
+                                  max_button_title_length: 5,
+                              },
+                          },
+                };
+                composer.props.conversation = {
+                    ...composer.props.conversation,
+                    capabilities: reduced,
+                };
+                composer.state.conversations = [composer.props.conversation];
+                assert.notOk(
+                    composer.structuredSubmission.content,
+                    "the old card is no longer a valid new admission"
+                );
+                assert.ok(
+                    composer.primaryActionAvailable,
+                    "confirmation of the uncertain admission remains available"
+                );
+                assert.notOk(
+                    composer.canChooseStructured,
+                    "the pending card remains immutable"
+                );
+                composer.store.operationJournal.clear();
+                await composer.send();
+                assert.deepEqual(
+                    calls[1],
+                    calls[0],
+                    "the original content and UUID survive even journal eviction"
+                );
+                assert.notOk(composer.local.sendPlan);
+                assert.notOk(composer.local.structuredDraft);
+                composer.local.body = calls[0][1];
+                composer.local.structuredDraft = newStructuredDraft(
+                    "buttons",
+                    capabilities
+                );
+                composer.local.structuredDraft.rows[0].title = "Novo botão";
+                assert.notOk(
+                    composer.primaryActionAvailable,
+                    "new sends still obey the current channel spec"
+                );
+                await composer.send();
+                assert.strictEqual(calls.length, 2);
+            }
+        }
+    );
+
+    QUnit.test(
+        "card text limits count Unicode code points and preserve valid astral characters",
+        (assert) => {
+            const buttons = newStructuredDraft("buttons", capabilities);
+            buttons.rows[0].title = "😀".repeat(20);
+            buttons.title = "😀".repeat(60);
+            buttons.footer = "😀".repeat(60);
+            assert.ok(
+                structuredDraftSubmission(buttons, "😀".repeat(1024), capabilities)
+                    .content
+            );
+            buttons.rows[0].title += "😀";
+            assert.notOk(
+                structuredDraftSubmission(buttons, "Texto", capabilities).content,
+                "21 code points exceed the 20-character button limit"
+            );
+            buttons.rows[0].title = "😀".repeat(20);
+            assert.notOk(
+                structuredDraftSubmission(buttons, "😀".repeat(1025), capabilities)
+                    .content
+            );
+            const list = newStructuredDraft("list", capabilities);
+            list.rows[0].title = "😀".repeat(24);
+            list.rows[0].description = "😀".repeat(72);
+            assert.ok(structuredDraftSubmission(list, "Escolha", capabilities).content);
+            list.rows[0].description += "😀";
+            assert.notOk(
+                structuredDraftSubmission(list, "Escolha", capabilities).content
+            );
+            const location = newStructuredDraft("location", capabilities);
+            location.latitude = "1";
+            location.longitude = "2";
+            location.name = "😀".repeat(120);
+            location.address = "😀".repeat(300);
+            assert.ok(structuredDraftSubmission(location, "", capabilities).content);
+            location.name += "😀";
+            assert.notOk(structuredDraftSubmission(location, "", capabilities).content);
+            const composer = makeComposer([], "😀".repeat(1024));
+            composer.local.structuredDraft = buttons;
+            assert.strictEqual(
+                composer.bodyMaxLength,
+                2048,
+                "HTML's UTF-16 maxlength cannot cut a valid code-point body"
+            );
+            assert.ok(composer.primaryActionAvailable);
+        }
+    );
+
+    QUnit.test(
+        "received cards never execute opaque selection IDs or unsafe links",
+        (assert) => {
+            assert.strictEqual(
+                safeStructuredUrl("https://example.com/path"),
+                "https://example.com/path"
+            );
+            for (const value of [
+                "javascript:alert(1)",
+                "data:text/html,unsafe",
+                "https://user:secret@example.com",
+                "https://localhost/path",
+                "https://127.0.0.1/path",
+                "https://example.com/?token=secret",
+                "https://example.com:8080/path",
+            ]) {
+                assert.strictEqual(safeStructuredUrl(value), "", value);
+            }
+            const selection = structuredMessageCard({
+                type: "selection",
+                id: "javascript:alert(1)",
+                title: "Vendas",
+            });
+            assert.strictEqual(selection.title, "Vendas");
+            assert.notOk(selection.href);
+            const shared = structuredMessageCard({
+                type: "shared",
+                items: [{kind: "story", url: "javascript:alert(1)", title: "Story"}],
+            });
+            assert.strictEqual(shared.items[0].href, "");
+            assert.notOk(
+                structuredMessageCard({type: "location", latitude: 200, longitude: 0})
+                    .href
+            );
+            assert.ok(
+                structuredMessageCard({
+                    type: "location",
+                    latitude: 0,
+                    longitude: 0,
+                }).href.includes("mlat=0")
             );
         }
     );

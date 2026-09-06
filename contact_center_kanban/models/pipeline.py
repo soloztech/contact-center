@@ -1448,6 +1448,10 @@ class ContactCenterCase(models.Model):
         }
         for source in vals_list:
             values = dict(source)
+            if not internal:
+                # RPC context defaults must not bypass the same service-owned
+                # metadata boundary as explicit create values.
+                values.update(active=True, is_default=False)
             channel = self.env["mail.channel"].browse(values.get("channel_id")).exists()
             if not channel:
                 raise ValidationError(_("A case requires an existing conversation."))
@@ -1565,6 +1569,7 @@ class ContactCenterCase(models.Model):
             "channel_id",
             "team_id",
             "pipeline_id",
+            "opened_at",
             "stage_revision",
             "stage_changed_at",
             "closed_at",
@@ -1675,17 +1680,8 @@ class ContactCenterCase(models.Model):
         allowed_users = self.env["res.users"]
         if self.channel_id.contact_center_owner_user_id:
             allowed_users |= self.channel_id.contact_center_owner_user_id
-        access_users = getattr(account, "_contact_center_access_users", None)
-        access_users = access_users or getattr(
-            account, "_contact_center_effective_users", None
-        )
-        if account and access_users:
-            allowed_users |= access_users()
-        elif account and account.default_team_id:
-            allowed_users |= (
-                account.default_team_id.agent_ids
-                | account.default_team_id.supervisor_ids
-            )
+        if account:
+            allowed_users |= account._contact_center_effective_users()
         if self.team_id:
             allowed_users |= self.team_id.agent_ids | self.team_id.supervisor_ids
         if responsible not in allowed_users:

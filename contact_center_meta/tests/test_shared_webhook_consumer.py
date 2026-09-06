@@ -1,3 +1,5 @@
+from unittest import mock
+
 from odoo import fields
 from odoo.exceptions import AccessError, ValidationError
 
@@ -12,6 +14,7 @@ from ..services.shared_webhook import (
     subscription_contract,
 )
 from .common import MetaCase
+from .test_media import FakeMediaResponse
 
 
 class TestMetaWebhookConsumer(MetaCase):
@@ -116,6 +119,286 @@ class TestMetaWebhookConsumer(MetaCase):
         self.assertEqual(
             inbox.metadata_json["meta_item_key"], dispatch.item_id.item_key
         )
+
+    def test_rejected_attachment_slots_preserve_text_and_valid_private_media(self):
+        mid = "m_meta_mixed_attachment_slots"
+        envelope = self._envelope(mid=mid, text="Arquivos do pedido")
+        message = envelope["entry"][0]["messaging"][0]["message"]
+        message["attachments"] = [
+            None,
+            {
+                "type": "image",
+                "payload": {"url": "https://lookaside.fbsbx.com/image?token=private"},
+            },
+            "invalid-attachment",
+            {
+                "type": "audio",
+                "payload": {"url": "https://lookaside.fbsbx.com/audio?token=private"},
+            },
+        ]
+        delivery = self.create_delivery(envelope)
+        item = delivery.item_ids.ensure_one()
+        attachments = item.payload_json["messaging"]["message"]["attachments"]
+        self.assertEqual(len(attachments), 4)
+        self.assertEqual(attachments[0], {})
+        self.assertEqual(attachments[2], {})
+        locators = (
+            self.env["contact.center.meta.media.locator"]
+            .sudo()
+            .search([("meta_delivery_id", "=", delivery.id)])
+        )
+        self.assertEqual(set(locators.mapped("slot")), {"attachment:1", "attachment:3"})
+
+        _dispatch, inbox = self._dispatch(delivery)
+        with trap_jobs():
+            self.assertTrue(
+                inbox.with_context(job_uuid=inbox.queue_job_uuid)._job_process()
+            )
+
+        inbox.invalidate_recordset()
+        locators.invalidate_recordset(["provider_connection_id", "inbox_event_id"])
+        self.assertEqual(inbox.state, "done")
+        self.assertEqual(locators.mapped("inbox_event_id"), inbox)
+        self.assertEqual(locators.mapped("provider_connection_id"), self.connection)
+        binding = (
+            self.env["contact.center.message.binding"]
+            .search(
+                [
+                    ("provider_connection_id", "=", self.connection.id),
+                    ("external_message_id", "=", mid),
+                ]
+            )
+            .ensure_one()
+        )
+        self.assertIn("Arquivos do pedido", str(binding.message_id.body))
+        self.assertEqual(set(binding.media_ids.mapped("kind")), {"image", "audio"})
+        self.assertEqual(set(binding.media_ids.mapped("state")), {"pending"})
+        self.assertEqual(
+            set(binding.media_ids.mapped("external_media_id")),
+            {"%s:1" % mid, "%s:3" % mid},
+        )
+        self.assertEqual(
+            {
+                media.remote_locator_json["private_locator_ref"]
+                for media in binding.media_ids
+            },
+            set(locators.mapped("reference")),
+        )
+        for payload in (
+            delivery.sanitized_envelope_json,
+            item.payload_json,
+            inbox.raw_envelope_json,
+            inbox.normalized_dto_json,
+        ):
+            self.assertNotIn("token=private", str(payload))
+
+    def test_rejected_story_context_preserves_text_and_reply_validation(self):
+        account = self._create_account("instagram", self.INSTAGRAM_ID, team=self.team)
+        connection = self._create_connection(account, self.instagram_asset)
+        cases = (
+            ("rejected", {"id": []}, False, "done"),
+            ("valid", {"id": "story-123"}, False, "done"),
+            ("unmarked_empty", {}, False, "unsupported"),
+            ("self_reply", {"id": []}, True, "dead"),
+        )
+        for suffix, story, self_reply, expected_state in cases:
+            with self.subTest(suffix=suffix):
+                mid = "m_meta_story_context_%s" % suffix
+                envelope = self._envelope(
+                    object_type="instagram", mid=mid, text="Sobre este produto"
+                )
+                message = envelope["entry"][0]["messaging"][0]["message"]
+                message["reply_to"] = {"story": story}
+                if self_reply:
+                    message["reply_to"]["mid"] = mid
+                _dispatch, inbox = self._dispatch(self.create_delivery(envelope))
+                with trap_jobs():
+                    self.assertTrue(
+                        inbox.with_context(job_uuid=inbox.queue_job_uuid)._job_process()
+                    )
+
+                inbox.invalidate_recordset()
+                self.assertEqual(inbox.state, expected_state)
+                binding = self.env["contact.center.message.binding"].search(
+                    [
+                        ("provider_connection_id", "=", connection.id),
+                        ("external_message_id", "=", mid),
+                    ]
+                )
+                if expected_state != "done":
+                    self.assertFalse(binding)
+                    continue
+                self.assertIn("Sobre este produto", str(binding.message_id.body))
+                self.assertFalse(binding.reply_to_binding_id)
+                if suffix == "valid":
+                    self.assertEqual(
+                        binding.protocol_snapshot_json["story_reply"], story
+                    )
+                else:
+                    self.assertNotIn("story_reply", binding.protocol_snapshot_json)
+                    self.assertEqual(
+                        inbox.normalized_dto_json["extensions"]["provider.meta"][
+                            "unsupported_content"
+                        ],
+                        "content",
+                    )
+
+    def test_shared_cards_keep_public_permalink_and_private_media_through_ingress(self):
+        account = self._create_account("instagram", self.INSTAGRAM_ID, team=self.team)
+        connection = self._create_connection(account, self.instagram_asset)
+        envelope = self._envelope(
+            object_type="instagram", mid="m_shared_cards", text="Confira estes produtos"
+        )
+        envelope["entry"][0]["messaging"][0]["message"]["attachments"] = [
+            None,
+            {
+                "type": "ig_post",
+                "payload": {
+                    "url": "https://www.instagram.com/p/PublicPost/?access_token=private",
+                    "title": "Produto público",
+                },
+            },
+            {
+                "type": "ig_reel",
+                "payload": {
+                    "url": "https://video.cdninstagram.com/demo.mp4?signature=private"
+                },
+            },
+            {
+                "type": "image",
+                "payload": {
+                    "url": "https://lookaside.fbsbx.com/photo.png?token=private"
+                },
+            },
+            {
+                "type": "story_mention",
+                "payload": {"url": "https://lookaside.fbsbx.com/opaque?token=private"},
+            },
+        ]
+        delivery = self.create_delivery(envelope)
+        _dispatch, inbox = self._dispatch(delivery)
+        with trap_jobs():
+            self.assertTrue(
+                inbox.with_context(job_uuid=inbox.queue_job_uuid)._job_process()
+            )
+        self.assertEqual(inbox.state, "done")
+        binding = (
+            self.env["contact.center.message.binding"]
+            .search(
+                [
+                    ("provider_connection_id", "=", connection.id),
+                    ("external_message_id", "=", "m_shared_cards"),
+                ]
+            )
+            .ensure_one()
+        )
+        content = binding.structured_content_json
+        self.assertEqual(content["type"], "shared")
+        self.assertEqual(
+            [item["kind"] for item in content["items"]], ["post", "reel", "story"]
+        )
+        self.assertEqual(
+            content["items"][0]["url"], "https://www.instagram.com/p/PublicPost/"
+        )
+        self.assertEqual(content["items"][0]["title"], "Produto público")
+        self.assertNotIn("url", content["items"][1])
+        self.assertNotIn("url", content["items"][2])
+        self.assertEqual(
+            set(binding.media_ids.mapped("external_media_id")),
+            {"m_shared_cards:2", "m_shared_cards:3"},
+        )
+        self.assertEqual(set(binding.media_ids.mapped("kind")), {"image", "video"})
+        ui = (
+            self.env["contact.center.ui.api"]
+            .with_user(self.agent)
+            ._serialize_message(binding.message_id, binding)
+        )
+        self.assertEqual(ui["structured_content"], content)
+        for value in (
+            delivery.sanitized_envelope_json,
+            delivery.item_ids.payload_json,
+            inbox.raw_envelope_json,
+            inbox.normalized_dto_json,
+            ui,
+        ):
+            self.assertNotIn("token=private", str(value))
+            self.assertNotIn("signature=private", str(value))
+        # A repeated provider delivery binds to the same domain message/cards.
+        envelope["entry"][0]["time"] += 1
+        _dispatch, replay = self._dispatch(self.create_delivery(envelope))
+        self.assertEqual(replay, inbox)
+
+    def test_story_reply_media_download_retains_text_and_enforces_private_slot_ownership(
+        self,
+    ):
+        account = self._create_account("instagram", self.INSTAGRAM_ID, team=self.team)
+        connection = self._create_connection(account, self.instagram_asset)
+        envelope = self._envelope(
+            object_type="instagram", mid="m_story_card", text="Qual o preço?"
+        )
+        private_url = "https://lookaside.fbsbx.com/story.png?token=private"
+        envelope["entry"][0]["messaging"][0]["message"]["reply_to"] = {
+            "story": {"id": "123456789", "url": private_url}
+        }
+        delivery = self.create_delivery(envelope)
+        _dispatch, inbox = self._dispatch(delivery)
+        with trap_jobs():
+            self.assertTrue(
+                inbox.with_context(job_uuid=inbox.queue_job_uuid)._job_process()
+            )
+        self.assertEqual(inbox.state, "done")
+        binding = (
+            self.env["contact.center.message.binding"]
+            .search(
+                [
+                    ("provider_connection_id", "=", connection.id),
+                    ("external_message_id", "=", "m_story_card"),
+                ]
+            )
+            .ensure_one()
+        )
+        self.assertIn("Qual o preço?", str(binding.message_id.body))
+        self.assertEqual(binding.structured_content_json["items"][0]["kind"], "story")
+        media = binding.media_ids.ensure_one()
+        self.assertEqual(media.external_media_id, "m_story_card:story")
+        response = FakeMediaResponse(
+            content=b"story-private-bytes", headers={"Content-Type": "image/png"}
+        )
+        with mock.patch(
+            "odoo.addons.contact_center_meta.services.media.requests.request",
+            return_value=response,
+        ) as request:
+            downloaded = connection.get_adapter().download_media(
+                connection, media._as_dto()
+            )
+            self.assertEqual(downloaded.content, b"story-private-bytes")
+            self.assertEqual(request.call_args.args[1], private_url)
+        self.assertTrue(response.closed)
+        self.assertNotIn(private_url, str(inbox.normalized_dto_json))
+        self.assertNotIn(private_url, str(binding.structured_content_json))
+
+    def test_social_card_rejects_nonpublic_urls_without_erasing_the_shared_label(self):
+        urls = [
+            "https://cdninstagram.com/private.jpg?access_token=secret",
+            "https://www.instagram.com.evil.invalid/p/Public/",
+            "https://user:secret@www.instagram.com/p/Public/",
+            "https://www.instagram.com/direct/t/private/",
+        ]
+        for index, url in enumerate(urls):
+            envelope = self._envelope(mid="m_public_link_guard_%s" % index, text="")
+            envelope["entry"][0]["messaging"][0]["message"]["attachments"] = [
+                {"type": "share", "payload": {"url": url}}
+            ]
+            _dispatch, inbox = self._dispatch(self.create_delivery(envelope))
+            with trap_jobs():
+                inbox.with_context(job_uuid=inbox.queue_job_uuid)._job_process()
+            if inbox.state == "unsupported":
+                # A URL rejected at the authenticated ingress is quarantined.
+                continue
+            self.assertEqual(inbox.state, "done")
+            content = inbox.normalized_dto_json["message"]["structured_content"]
+            self.assertTrue(content["items"][0]["title"])
+            self.assertNotIn("url", content["items"][0])
 
     def test_owner_only_account_projects_and_enqueues_the_new_webhook(self):
         self.account.write(

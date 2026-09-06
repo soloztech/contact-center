@@ -1,11 +1,17 @@
 import uuid
 from unittest import mock
 
-from odoo import fields
+from psycopg2 import errorcodes
+from psycopg2.errors import SerializationFailure, UniqueViolation
+
+from odoo import SUPERUSER_ID, api, fields
 from odoo.exceptions import AccessError, ValidationError
-from odoo.tests.common import SavepointCase
+from odoo.tests import tagged
+from odoo.tests.common import SavepointCase, TransactionCase
+from odoo.tools import mute_logger
 
 from ..services.adapter import AdapterResult, ProviderAdapter, adapter_registry
+from ..services.tokens import CONTACT_CENTER_MEMBERSHIP_TOKEN, CONTACT_CENTER_POST_TOKEN
 
 
 @adapter_registry.register("test.conversation.preference")
@@ -338,3 +344,139 @@ class TestConversationLifecycleAndPreference(SavepointCase):
         self.assertEqual(
             by_partner[self.agent_a.partner_id.id]["event_type"], "message_created"
         )
+
+
+@tagged("-at_install", "post_install")
+class TestConversationPreferenceConcurrency(TransactionCase):
+    """First pin/mute requests must merge across independent RR snapshots."""
+
+    def _setup_committed_fixture(self):
+        token = uuid.uuid4().hex
+        with self.registry.cursor() as cr:
+            env = api.Environment(cr, SUPERUSER_ID, {})
+            agent = (
+                env["res.users"]
+                .with_context(no_reset_password=True)
+                .create(
+                    {
+                        "name": "Preference Race %s" % token,
+                        "login": "cc-preference-race-%s" % token,
+                        "company_id": env.company.id,
+                        "company_ids": [(6, 0, env.company.ids)],
+                        "groups_id": [
+                            (
+                                6,
+                                0,
+                                env.ref(
+                                    "contact_center_base.group_contact_center_agent"
+                                ).ids,
+                            )
+                        ],
+                    }
+                )
+            )
+            account = env["contact.center.account"].create(
+                {
+                    "name": "Preference Race %s" % token,
+                    "company_id": env.company.id,
+                    "platform": "telegram",
+                    "external_ref": "preference-race-%s" % token,
+                    "owner_user_id": agent.id,
+                }
+            )
+            channel = env["mail.channel"]._contact_center_create_channel(
+                account=account,
+                conversation_type="other",
+            )
+            fixture = {
+                "agent_id": agent.id,
+                "partner_id": agent.partner_id.id,
+                "company_id": env.company.id,
+                "account_id": account.id,
+                "channel_id": channel.id,
+            }
+            cr.commit()  # pylint: disable=invalid-commit
+        self.addCleanup(self._cleanup_committed_fixture, fixture)
+        return fixture
+
+    def _cleanup_committed_fixture(self, fixture):
+        with self.registry.cursor() as cr:
+            env = api.Environment(cr, SUPERUSER_ID, {})
+            env["mail.channel"].browse(fixture["channel_id"]).with_context(
+                contact_center_membership_token=CONTACT_CENTER_MEMBERSHIP_TOKEN,
+                contact_center_post_token=CONTACT_CENTER_POST_TOKEN,
+            ).unlink()
+            env["contact.center.account"].browse(fixture["account_id"]).unlink()
+            env["res.users"].browse(fixture["agent_id"]).unlink()
+            env["res.partner"].browse(fixture["partner_id"]).unlink()
+            cr.commit()  # pylint: disable=invalid-commit
+
+    def _preference_api(self, cr, fixture):
+        return api.Environment(
+            cr,
+            fixture["agent_id"],
+            {"allowed_company_ids": [fixture["company_id"]]},
+        )["contact.center.ui.api"]
+
+    def _assert_first_preference_race(self, first_patch, second_patch):
+        fixture = self._setup_committed_fixture()
+        domain = [
+            ("channel_id", "=", fixture["channel_id"]),
+            ("user_id", "=", fixture["agent_id"]),
+        ]
+        with self.registry.cursor() as stale_cr:
+            stale_cr.execute("SET LOCAL lock_timeout = '2s'")
+            stale_cr.execute("SET LOCAL statement_timeout = '10s'")
+            stale_api = self._preference_api(stale_cr, fixture)
+            self.assertFalse(
+                stale_api.env["contact.center.conversation.preference"].search(domain)
+            )
+            with self.registry.cursor() as winner_cr:
+                winner_api = self._preference_api(winner_cr, fixture)
+                winner_payload = winner_api.set_conversation_preference(
+                    fixture["channel_id"], first_patch
+                )["item"]["preference"]
+                winner_id = (
+                    winner_api.env["contact.center.conversation.preference"]
+                    .search(domain)
+                    .id
+                )
+                winner_cr.commit()  # pylint: disable=invalid-commit
+
+            # The member is no longer locked, but this request still cannot see
+            # the winner's row. A local re-search would retain the same snapshot.
+            with mute_logger("odoo.sql_db"), self.assertRaises(
+                SerializationFailure
+            ) as caught:
+                stale_api.set_conversation_preference(
+                    fixture["channel_id"], second_patch
+                )
+            self.assertEqual(caught.exception.pgcode, errorcodes.SERIALIZATION_FAILURE)
+            self.assertIsInstance(caught.exception.__cause__, UniqueViolation)
+            self.assertEqual(
+                caught.exception.__cause__.diag.constraint_name,
+                "contact_center_conversation_preference_channel_user_unique",
+            )
+            stale_cr.rollback()
+
+        with self.registry.cursor() as retry_cr:
+            retry_api = self._preference_api(retry_cr, fixture)
+            retried = retry_api.set_conversation_preference(
+                fixture["channel_id"], second_patch
+            )["item"]["preference"]
+            self.assertTrue(retried["pinned"])
+            self.assertTrue(retried["muted"])
+            self.assertTrue(retried["pinned_at"])
+            if winner_payload["pinned_at"]:
+                self.assertEqual(retried["pinned_at"], winner_payload["pinned_at"])
+            preferences = retry_api.env[
+                "contact.center.conversation.preference"
+            ].search(domain)
+            self.assertEqual(preferences.ids, [winner_id])
+            retry_cr.commit()  # pylint: disable=invalid-commit
+
+    def test_first_mute_retries_and_preserves_concurrent_pin(self):
+        self._assert_first_preference_race({"pinned": True}, {"muted": True})
+
+    def test_first_pin_retries_and_preserves_concurrent_mute(self):
+        self._assert_first_preference_race({"muted": True}, {"pinned": True})

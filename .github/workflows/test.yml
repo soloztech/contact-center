@@ -2,6 +2,11 @@ name: tests
 
 on:
   workflow_dispatch:
+    inputs:
+      peer_ref:
+        description: "Full Marketing Center commit SHA for coordinated release validation"
+        required: false
+        type: string
   pull_request:
     branches:
       - "16.0*"
@@ -41,6 +46,8 @@ jobs:
     runs-on: ubuntu-22.04
     container: ${{ matrix.container }}
     name: ${{ matrix.name }}
+    env:
+      PEER_REF: ${{ inputs.peer_ref || 'b86b4a39b0f96af2d6368fc41d3b9f429512ce22' }}
     strategy:
       fail-fast: false
       matrix:
@@ -50,7 +57,7 @@ jobs:
             makepot: "false"
     services:
       postgres:
-        image: postgres:12
+        image: postgres:16
         env:
           POSTGRES_USER: odoo
           POSTGRES_PASSWORD: odoo
@@ -61,13 +68,20 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - name: Validate coordinated dependency revision
+        shell: bash
+        run: |
+          if ! [[ "$PEER_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "peer_ref must be a full 40-character commit SHA."
+            exit 1
+          fi
       - name: Checkout private Marketing Center dependency
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: soloztech/marketing-center
-          # Release CI is intentionally coupled to the matching, immutable
-          # cross-repository candidate instead of the moving 16.0 branch.
-          ref: "16.0.20260904.3-rc1"
+          # PRs use the published baseline; a manual release run can select the
+          # exact coordinated peer commit without rewriting the workflow.
+          ref: ${{ env.PEER_REF }}
           path: .ci-private-dependency/marketing-center
           token: ${{ secrets.CROSS_REPO_READ_TOKEN }}
           persist-credentials: false

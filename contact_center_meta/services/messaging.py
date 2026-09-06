@@ -350,6 +350,21 @@ def _sanitize_attachment(
     )
     if payload:
         result["payload"] = payload
+    if result.get("type") in {"share", "ig_post", "ig_reel", "reel", "story_mention"}:
+        raw_payload = attachment.get("payload")
+        if isinstance(raw_payload, dict):
+            social_payload = result.setdefault("payload", {})
+            permalink = _public_social_url(raw_payload.get("url"))
+            if permalink:
+                social_payload["public_permalink"] = permalink
+            media_kind = _social_media_kind(raw_payload.get("url"))
+            if media_kind and social_payload.get("private_locator_ref"):
+                social_payload["media_kind"] = media_kind
+            title = raw_payload.get("title")
+            if isinstance(title, str) and not any(
+                ord(character) < 32 or ord(character) == 127 for character in title
+            ):
+                social_payload["title"] = title[:200]
     rejections.extend(payload_rejections)
     return result, rejections
 
@@ -383,8 +398,9 @@ def _sanitize_attachments(
             locator_references=locator_references,
             rejected_reason=rejected_by_slot.get(slot),
         )
-        if sanitized:
-            result.append(sanitized)
+        # Locator slots refer to the original provider array. Keep an empty
+        # placeholder for rejected entries so later valid media keep their slot.
+        result.append(sanitized)
         rejections.extend(item_rejections)
     return result, tuple(rejections)
 
@@ -431,6 +447,9 @@ def _sanitize_story(
     reference = _locator_reference(locator_references, sequence, "story")
     if reference:
         result["private_locator_ref"] = reference
+        media_kind = _social_media_kind(story.get("url"))
+        if media_kind:
+            result["media_kind"] = media_kind
     rejected_reason = _story_locator_rejection(locator_rejections, sequence)
     if rejected_reason:
         result["locator_rejected"] = rejected_reason
@@ -866,3 +885,54 @@ def atomic_dedupe_key(atomic_event, route):
         route["platform"],
         canonical_json_digest(material),
     )
+
+
+def _public_social_url(value):
+    """Keep only recognizable public Meta permalinks, without provider queries."""
+    if not isinstance(value, str) or len(value) > 2048:
+        return ""
+    try:
+        parsed = urlsplit(value)
+        hostname = (parsed.hostname or "").lower()
+        if (
+            parsed.scheme != "https"
+            or parsed.username
+            or parsed.password
+            or parsed.port not in (None, 443)
+        ):
+            return ""
+    except ValueError:
+        return ""
+    path = parsed.path
+    if hostname in {"instagram.com", "www.instagram.com"}:
+        valid = re.fullmatch(
+            r"/(?:p|reel|reels)/[A-Za-z0-9_-]+/?", path
+        ) or re.fullmatch(r"/stories/[A-Za-z0-9_.]+/[0-9]+/?", path)
+    elif hostname in {"facebook.com", "www.facebook.com", "m.facebook.com"}:
+        valid = re.fullmatch(
+            r"/(?:reel/[0-9]+|[A-Za-z0-9_.]+/posts/[A-Za-z0-9]+|share/[prv]/[A-Za-z0-9]+)/?",
+            path,
+        )
+    else:
+        return ""
+    return "https://%s%s" % (hostname, path) if valid else ""
+
+
+def _social_media_kind(value):
+    """Infer only an explicit image/video extension on an allowed private CDN."""
+    if not isinstance(value, str):
+        return ""
+    try:
+        parsed = urlsplit(value)
+        hostname = (parsed.hostname or "").lower()
+    except ValueError:
+        return ""
+    if not any(
+        hostname == suffix or hostname.endswith("." + suffix)
+        for suffix in ("fbcdn.net", "fbsbx.com", "cdninstagram.com")
+    ):
+        return ""
+    extension = parsed.path.rsplit(".", 1)[-1].lower()
+    if extension in {"jpg", "jpeg", "png", "gif", "webp"}:
+        return "image"
+    return "video" if extension in {"mp4", "mov", "webm"} else ""

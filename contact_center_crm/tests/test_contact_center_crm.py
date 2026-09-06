@@ -1091,6 +1091,26 @@ class TestContactCenterCrm(SavepointCase):
             .search([("id", "=", case_b.id)])
         )
 
+    def test_rpc_context_cannot_skip_linked_case_stage_synchronization(self):
+        case = self._default_case(
+            self._create_channel(self.owner_account_a, "Untrusted sync context")
+        )
+        case.with_user(self.user_a).action_transition(self.stage_a.id)
+        case.with_user(self.user_a).action_create_crm_lead()
+        case.invalidate_recordset(["crm_link_ids", "crm_lead_id"])
+        lead = case.crm_lead_id
+        revision = case.stage_revision
+
+        lead.with_user(self.user_a).with_context(
+            contact_center_crm_origin_case_id=case.id,
+            contact_center_crm_stage_sync="forged-rpc-token",
+        ).write({"stage_id": self.crm_stage_b.id})
+
+        case.invalidate_recordset(["stage_id", "stage_revision"])
+        self.assertEqual(lead.stage_id, self.crm_stage_b)
+        self.assertEqual(case.stage_id, self.stage_b)
+        self.assertEqual(case.stage_revision, revision + 1)
+
     def test_one_lead_syncs_cases_in_different_bound_pipelines(self):
         second_pipeline = self.env["contact.center.pipeline"].create(
             {

@@ -17,7 +17,8 @@ from .api import graph_debug_token, resolve_graph_runtime
 from .contracts import META_PROVIDER_SCHEMA_VERSION
 from .media import download_private_media, finalize_private_media
 from .normalizer import normalize_meta_event
-from .outbound import execute_text_request, prepare_text_request
+from .outbound import execute_send_request, prepare_send_request
+from .outbound_media import media_capabilities
 from .profile import fetch_identity_profile
 
 _REQUIRED_SCOPES = {
@@ -124,10 +125,10 @@ class MetaAdapter(ProviderAdapter):
         return normalize_meta_event(_connection(connection), envelope)
 
     def execute_command(self, connection, command):
-        return execute_text_request(self.env, _connection(connection), command)
+        return execute_send_request(self.env, _connection(connection), command)
 
     def prepare_request_snapshot(self, connection, command):
-        return prepare_text_request(self.env, _connection(connection), command)
+        return prepare_send_request(self.env, _connection(connection), command)
 
     def get_capabilities(self, connection):
         connection = _connection(connection)
@@ -141,7 +142,7 @@ class MetaAdapter(ProviderAdapter):
             "edit_message": False,
             "delete_message": False,
             "identity_avatar": True,
-            "media": {},
+            "media": media_capabilities(connection),
             "conversation_types": {},
             "extensions": {
                 "provider.meta": {
@@ -151,7 +152,7 @@ class MetaAdapter(ProviderAdapter):
                     "outbound_direct_text": True,
                     "outbound_response_window": "standard_24h",
                     "outbound_echo_correlation": "provider_message_id",
-                    "outbound_media": False,
+                    "outbound_media": True,
                     "outbound_reply": True,
                     "outbound_reaction": False,
                     "inbound_delivery_ledger": "meta_webhook_base",

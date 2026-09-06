@@ -11,6 +11,7 @@
     "assets": {
         "web.assets_backend": [
             "contact_center_ui/static/src/js/contact_center_model.esm.js",
+            "contact_center_ui/static/src/js/structured_content.esm.js",
             "contact_center_ui/static/src/js/browser_attention.esm.js",
             "contact_center_ui/static/src/js/contact_center_store.esm.js",
             "contact_center_ui/static/src/js/deferred_image.esm.js",

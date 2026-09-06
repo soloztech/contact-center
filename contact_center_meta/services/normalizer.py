@@ -18,7 +18,7 @@ from odoo.addons.contact_center_base.services.dto import (
 )
 
 from .contracts import META_PROVIDER_SCHEMA_VERSION
-from .messaging import atomic_dedupe_key, routing_values
+from .messaging import _public_social_url, atomic_dedupe_key, routing_values
 
 _PLATFORM_CONTRACTS = {
     "messenger": {
@@ -453,7 +453,18 @@ def _reply_values(message):
                     "Meta message.reply_to.story private locator is invalid"
                 )
             story_snapshot["private_locator_ref"] = locator_ref
-        if not story_snapshot:
+            if story.get("media_kind") in {"image", "video"}:
+                story_snapshot["media_kind"] = story["media_kind"]
+        rejected_story = any(
+            isinstance(rejection, dict)
+            and rejection.get("slot") == "story"
+            and rejection.get("reason")
+            in {"invalid_story", "invalid_story_id", "invalid_https_url"}
+            for rejection in (message.get("sanitization_rejections") or ())
+        )
+        # A rejected optional story context must not suppress valid text. Keep
+        # validating reply IDs and scope; only its quarantined empty context goes.
+        if not story_snapshot and not rejected_story:
             raise UnsupportedEventError(
                 "Meta story reply has no bounded story reference"
             )
@@ -491,10 +502,22 @@ def _attachment_rows(message):
         )
     if not isinstance(attachments, list) or not attachments or len(attachments) > 10:
         raise AdapterError("Meta message.attachments must be a bounded non-empty array")
+    rejected_slots = {
+        rejection.get("slot")
+        for rejection in (message.get("sanitization_rejections") or ())
+        if isinstance(rejection, dict)
+        and rejection.get("reason") == "invalid_attachment"
+    }
     rows = []
     for index, attachment in enumerate(attachments):
+        if attachment == {} and "attachment:%s" % index in rejected_slots:
+            continue
         attachment = _required_mapping(attachment, "message.attachments[%s]" % index)
         rows.append((index, attachment, _canonical_token(attachment.get("type"))))
+    if not rows:
+        raise UnsupportedEventError(
+            "Meta message attachments were rejected during sanitization"
+        )
     return tuple(rows)
 
 
@@ -549,23 +572,62 @@ def _message_content_values(message, *, platform, external_message_id, story_sna
     if has_media:
         attachment_rows = _attachment_rows(message)
         provider_kinds = {row[2] for row in attachment_rows}
-        if provider_kinds.issubset(_SOCIAL_ATTACHMENT_KINDS):
-            # Meta is transitioning Instagram post attachments from ``share``
-            # to ``ig_post``. Both provider shapes represent one neutral social
-            # content interaction; signed URLs stay solely in the private vault.
-            content_kinds = {_SOCIAL_ATTACHMENT_KINDS[kind] for kind in provider_kinds}
-            if len(content_kinds) != 1:
-                raise UnsupportedEventError(
-                    "Meta compound shared-content attachments are not implemented"
+        if provider_kinds.intersection(_SOCIAL_ATTACHMENT_KINDS):
+            items, media, content_kinds = [], [], set()
+            for index, attachment, provider_kind in attachment_rows:
+                if provider_kind not in _SOCIAL_ATTACHMENT_KINDS:
+                    media.extend(
+                        _media_descriptors(
+                            ((index, attachment, provider_kind),), external_message_id
+                        )
+                    )
+                    continue
+                content_kind = _SOCIAL_ATTACHMENT_KINDS[provider_kind]
+                content_kinds.add(content_kind)
+                payload = attachment.get("payload") or {}
+                title = _bounded_text(
+                    payload.get("title"), "attachment.payload.title", 200
                 )
-            content_kind = next(iter(content_kinds))
+                title = title or _SOCIAL_ATTACHMENT_LABELS.get(platform, {}).get(
+                    content_kind, "Social content shared"
+                )
+                item = {
+                    "kind": {
+                        "social_post": "post",
+                        "story_mention": "story",
+                        "reel": "reel",
+                    }[content_kind],
+                    "title": title,
+                }
+                public_url = _public_social_url(payload.get("public_permalink"))
+                if public_url:
+                    item["url"] = public_url
+                elif payload.get("media_kind") in {"image", "video"} and payload.get(
+                    "private_locator_ref"
+                ):
+                    media.append(
+                        MediaDTO(
+                            kind=payload["media_kind"],
+                            external_media_id="%s:%s" % (external_message_id, index),
+                            remote_locator={
+                                "private_locator_ref": _private_locator_ref(
+                                    payload, "shared attachment"
+                                )
+                            },
+                        )
+                    )
+                items.append(item)
+            content_kind = (
+                next(iter(content_kinds)) if len(content_kinds) == 1 else "mixed"
+            )
             return {
                 "text": text
                 or _SOCIAL_ATTACHMENT_LABELS.get(platform, {}).get(
                     content_kind, "Social content shared"
                 ),
                 "content_type": "interactive",
-                "media": (),
+                "media": tuple(media),
+                "structured_content": {"type": "shared", "items": items},
                 "snapshot": {
                     "interaction": {
                         "type": "shared_content",
@@ -573,10 +635,6 @@ def _message_content_values(message, *, platform, external_message_id, story_sna
                     }
                 },
             }
-        if provider_kinds.intersection(_SOCIAL_ATTACHMENT_KINDS):
-            raise UnsupportedEventError(
-                "Meta compound shared-content attachments are not implemented"
-            )
         media = _media_descriptors(attachment_rows, external_message_id)
         kinds = {item.kind for item in media}
         return {
@@ -613,7 +671,22 @@ def _message_content_values(message, *, platform, external_message_id, story_sna
         return {
             "text": text,
             "content_type": "text",
-            "media": (),
+            "media": (
+                MediaDTO(
+                    kind=story_snapshot["media_kind"],
+                    external_media_id="%s:story" % external_message_id,
+                    remote_locator={
+                        "private_locator_ref": story_snapshot["private_locator_ref"]
+                    },
+                ),
+            )
+            if story_snapshot.get("media_kind")
+            and story_snapshot.get("private_locator_ref")
+            else (),
+            "structured_content": {
+                "type": "shared",
+                "items": [{"kind": "story", "title": "Instagram story replied to"}],
+            },
             "snapshot": {"story_reply": story_snapshot},
         }
     if not text.strip():
@@ -627,6 +700,9 @@ def _sanitizer_rejected_content(message):
         return False
     return any(
         isinstance(item, dict) and item.get("reason") in _UNSAFE_CONTENT_REJECTIONS
+        # A rejected array slot can coexist with valid independent media. The
+        # attachment reader skips only its explicitly quarantined placeholder.
+        and item.get("reason") != "invalid_attachment"
         for item in rejections
     )
 
@@ -810,6 +886,7 @@ def _normalize_message_event(connection, envelope, route, item):
                 reply_to_external_id=reply_external_id,
                 protocol_snapshot=snapshot,
                 media=(content or {}).get("media", ()),
+                structured_content=(content or {}).get("structured_content", {}),
             ),
             "reply_to": reply_to,
             "attribution": attribution,

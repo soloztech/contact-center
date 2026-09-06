@@ -5,9 +5,9 @@ from . import (
     test_auto_assignment,
     test_connection_health,
     test_connection_roles,
-    test_conversation_lifecycle,
     test_contact_center,
     test_control_events,
+    test_conversation_lifecycle,
     test_cross_account_identity,
     test_dto_adapter,
     test_http_endpoints,
@@ -26,5 +26,6 @@ from . import (
     test_productivity,
     test_queue_recovery,
     test_source_webhook_link,
+    test_structured_content,
     test_technical_menus,
 )

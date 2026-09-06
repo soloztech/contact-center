@@ -5,11 +5,12 @@ from unittest import mock
 from psycopg2 import IntegrityError
 
 from odoo import fields
-from odoo.exceptions import ValidationError
+from odoo.exceptions import UserError, ValidationError
 from odoo.tests.common import SavepointCase
 from odoo.tools import mute_logger
 
 from odoo.addons.queue_job.exception import RetryableJobError
+from odoo.addons.queue_job.job import Job
 
 from ..services.adapter import (
     ProviderAdapter,
@@ -17,8 +18,9 @@ from ..services.adapter import (
     UnsupportedEventError,
     adapter_registry,
 )
-from ..services.dto import AdapterResult, EventDTO
+from ..services.dto import AdapterResult, CommandDTO, EventDTO
 from ..services.job import QUEUE_ATTEMPT_CEILING
+from .test_structured_content import outbound_specs
 
 
 @adapter_registry.register("test.phase1.delivery")
@@ -56,6 +58,336 @@ class Phase1DeliveryAdapter(ProviderAdapter):
 
 
 class TestPhase1Delivery(SavepointCase):
+    def test_structured_send_is_persisted_and_idempotency_compares_options(self):
+        channel, _binding, _identity = self._channel_binding()
+        card = {
+            "type": "buttons",
+            "buttons": [{"type": "reply", "id": "yes", "title": "Sim"}],
+        }
+        self.connection.capabilities_json = {
+            "send_message": True,
+            "outbound_structured_content": outbound_specs("buttons"),
+        }
+        api = (
+            self.env["contact.center.ui.api"]
+            .with_user(self.agent)
+            .with_context(contact_center_skip_enqueue=True)
+        )
+        request_id = str(uuid.uuid4())
+        with mock.patch.object(
+            Phase1DeliveryAdapter,
+            "validate_outbound_structured_content",
+            return_value=True,
+        ):
+            result = api.send_message(
+                channel.id,
+                "Confirmar?",
+                client_request_id=request_id,
+                structured_content=card,
+            )
+            replay = api.send_message(
+                channel.id,
+                "Confirmar?",
+                client_request_id=request_id,
+                structured_content=card,
+            )
+            self.assertEqual(result["message_id"], replay["message_id"])
+            self.assertEqual(result["message"]["structured_content"], card)
+            outbox = self.env["contact.center.outbox.command"].browse(
+                result["outbox_command_id"]
+            )
+            self.assertEqual(outbox.message_binding_id.structured_content_json, card)
+            self.assertTrue(
+                outbox._validate_command_scope(
+                    CommandDTO.from_dict(outbox.command_json)
+                )
+            )
+            changed = {
+                "type": "buttons",
+                "buttons": [{"type": "reply", "id": "no", "title": "Não"}],
+            }
+            with self.assertRaises(ValidationError):
+                api.send_message(
+                    channel.id,
+                    "Confirmar?",
+                    client_request_id=request_id,
+                    structured_content=changed,
+                )
+            command = dict(outbox.command_json)
+            command["message"] = dict(command["message"], structured_content=changed)
+            with self.assertRaises(ValidationError):
+                outbox._validate_command_scope(CommandDTO.from_dict(command))
+            self.connection.capabilities_json = {"send_message": True}
+            with self.assertRaises(ValidationError):
+                outbox._validate_command_scope(
+                    CommandDTO.from_dict(outbox.command_json)
+                )
+
+    def test_structured_safe_retry_keeps_card_and_creates_only_one_attempt(self):
+        channel, _binding, _identity = self._channel_binding()
+        card = {
+            "type": "contacts",
+            "contacts": [{"name": "Ana", "phones": ["+5511999999999"]}],
+        }
+        self.connection.capabilities_json = {
+            "send_message": True,
+            "outbound_structured_content": outbound_specs("contacts"),
+        }
+        api = (
+            self.env["contact.center.ui.api"]
+            .with_user(self.agent)
+            .with_context(contact_center_skip_enqueue=True)
+        )
+        with mock.patch.object(
+            Phase1DeliveryAdapter,
+            "validate_outbound_structured_content",
+            return_value=True,
+        ):
+            result = api.send_message(channel.id, "", structured_content=card)
+            source = self.env["contact.center.outbox.command"].browse(
+                result["outbox_command_id"]
+            )
+            source._finish_failure("dead", ValidationError("Rejected by provider"))
+            retried = api.resend_message(
+                channel.id, result["message_id"], str(uuid.uuid4())
+            )
+            replay = api.resend_message(
+                channel.id, result["message_id"], str(uuid.uuid4())
+            )
+            self.assertEqual(retried["message_id"], replay["message_id"])
+            retry = self.env["contact.center.outbox.command"].browse(
+                retried["outbox_command_id"]
+            )
+            self.assertEqual(retry.retry_of_id, source)
+            self.assertEqual(retry.message_binding_id.structured_content_json, card)
+            self.assertEqual(retry.command_json["message"]["structured_content"], card)
+            self.assertEqual(source.state, "dead")
+            self.assertTrue(
+                retry._validate_command_scope(CommandDTO.from_dict(retry.command_json))
+            )
+
+    def test_structured_send_rejects_unsupported_before_creating_message(self):
+        channel, _binding, _identity = self._channel_binding()
+        api = (
+            self.env["contact.center.ui.api"]
+            .with_user(self.agent)
+            .with_context(contact_center_skip_enqueue=True)
+        )
+        count = self.env["mail.message"].search_count([])
+        card = {"type": "location", "latitude": -23.5, "longitude": -46.6}
+        with self.assertRaises(UserError):
+            api.send_message(channel.id, "", structured_content=card)
+        self.assertEqual(self.env["mail.message"].search_count([]), count)
+        self.connection.capabilities_json = {
+            "send_message": True,
+            "outbound_structured_content": outbound_specs("location"),
+        }
+        with self.assertRaises(ValidationError):
+            api.send_message(
+                channel.id, "caption cannot be sent", structured_content=card
+            )
+        with self.assertRaises(ValidationError):
+            api.send_message(
+                channel.id, "", media_refs=[str(uuid.uuid4())], structured_content=card
+            )
+
+    def test_contact_card_has_preview_and_no_signature(self):
+        channel, _binding, _identity = self._channel_binding()
+        card = {
+            "type": "contacts",
+            "contacts": [{"name": "Ana", "phones": ["+5511999999999"]}],
+        }
+        self.account.outbound_signature_enabled = True
+        self.connection.capabilities_json = {
+            "send_message": True,
+            "outbound_structured_content": outbound_specs("contacts"),
+        }
+        api = (
+            self.env["contact.center.ui.api"]
+            .with_user(self.agent)
+            .with_context(contact_center_skip_enqueue=True)
+        )
+        with mock.patch.object(
+            Phase1DeliveryAdapter,
+            "validate_outbound_structured_content",
+            return_value=True,
+        ):
+            result = api.send_message(channel.id, "", structured_content=card)
+        self.assertEqual(result["message"]["body_text"], "Ana")
+        outbox = self.env["contact.center.outbox.command"].browse(
+            result["outbox_command_id"]
+        )
+        self.assertFalse(outbox.command_json["options"].get("sender_signature"))
+        self.assertEqual(outbox.command_json["message"]["text"], "")
+
+    def test_structured_provider_limits_apply_before_admission_and_again_in_queue(self):
+        channel, _binding, _identity = self._channel_binding()
+        specs = outbound_specs("buttons")
+        specs["buttons"].update(
+            action_types=["reply"],
+            max_buttons=5,
+            max_button_title_length=40,
+            max_body_length=2048,
+        )
+        self.connection.capabilities_json = {
+            "send_message": True,
+            "outbound_structured_content": specs,
+        }
+        api = (
+            self.env["contact.center.ui.api"]
+            .with_user(self.agent)
+            .with_context(contact_center_skip_enqueue=True)
+        )
+        forbidden = {
+            "type": "buttons",
+            "buttons": [{"type": "url", "url": "https://example.com", "title": "Open"}],
+        }
+        count = self.env["mail.message"].search_count([])
+        with mock.patch.object(
+            Phase1DeliveryAdapter,
+            "validate_outbound_structured_content",
+            return_value=True,
+        ):
+            with self.assertRaises(ValidationError):
+                api.send_message(channel.id, "Choose", structured_content=forbidden)
+            self.assertEqual(self.env["mail.message"].search_count([]), count)
+            card = {
+                "type": "buttons",
+                "buttons": [
+                    {"type": "reply", "id": str(i), "title": "A" * 40} for i in range(5)
+                ],
+            }
+            result = api.send_message(channel.id, "B" * 1500, structured_content=card)
+            outbox = self.env["contact.center.outbox.command"].browse(
+                result["outbox_command_id"]
+            )
+            command = CommandDTO.from_dict(outbox.command_json)
+            self.assertTrue(outbox._validate_command_scope(command))
+            specs["buttons"]["max_buttons"] = 3
+            self.connection.capabilities_json = {
+                "send_message": True,
+                "outbound_structured_content": specs,
+            }
+            with self.assertRaises(ValidationError):
+                outbox._validate_command_scope(command)
+
+    def test_contact_body_is_real_payload_and_preview_does_not_change_replay_or_retry(
+        self,
+    ):
+        channel, _binding, _identity = self._channel_binding()
+        specs = outbound_specs("contacts")
+        specs["contacts"].update(body_mode="optional", max_body_length=200)
+        self.connection.capabilities_json = {
+            "send_message": True,
+            "outbound_structured_content": specs,
+        }
+        self.account.outbound_signature_enabled = True
+        api = (
+            self.env["contact.center.ui.api"]
+            .with_user(self.agent)
+            .with_context(contact_center_skip_enqueue=True)
+        )
+        card = {"type": "contacts", "contacts": [{"name": "Ana"}]}
+        with mock.patch.object(
+            Phase1DeliveryAdapter,
+            "validate_outbound_structured_content",
+            return_value=True,
+        ):
+            for body in ("", "Contact for tomorrow"):
+                with self.subTest(body=body):
+                    request_id = str(uuid.uuid4())
+                    result = api.send_message(
+                        channel.id,
+                        body,
+                        client_request_id=request_id,
+                        structured_content=card,
+                    )
+                    replay = api.send_message(
+                        channel.id,
+                        body,
+                        client_request_id=request_id,
+                        structured_content=card,
+                    )
+                    self.assertEqual(result["message_id"], replay["message_id"])
+                    self.assertEqual(result["message"]["body_text"], body or "Ana")
+                    with self.assertRaises(ValidationError):
+                        api.send_message(
+                            channel.id,
+                            "Changed",
+                            client_request_id=request_id,
+                            structured_content=card,
+                        )
+                    source = self.env["contact.center.outbox.command"].browse(
+                        result["outbox_command_id"]
+                    )
+                    self.assertEqual(source.command_json["message"]["text"], body)
+                    self.assertFalse(
+                        source.command_json["options"].get("sender_signature")
+                    )
+                    source._finish_failure("dead", ValidationError("Provider refusal"))
+                    retried = api.resend_message(
+                        channel.id, result["message_id"], str(uuid.uuid4())
+                    )
+                    retry = self.env["contact.center.outbox.command"].browse(
+                        retried["outbox_command_id"]
+                    )
+                    self.assertEqual(retry.command_json["message"]["text"], body)
+                    self.assertEqual(retried["message"]["body_text"], body or "Ana")
+                    retry._process_one()
+                    self.assertEqual(retry.state, "done")
+
+    def test_malformed_card_capabilities_are_hidden_and_rejected_server_side(self):
+        channel, _binding, _identity = self._channel_binding()
+        self.connection.capabilities_json = {
+            "send_message": True,
+            "outbound_structured_content": {"location": {"allow_live": True}},
+        }
+        api = (
+            self.env["contact.center.ui.api"]
+            .with_user(self.agent)
+            .with_context(contact_center_skip_enqueue=True)
+        )
+        capabilities = api.get_conversation(channel.id)["item"]["capabilities"]
+        self.assertEqual(capabilities["outbound_structured_content"], {})
+        self.assertNotIn("structured_content", capabilities)
+        card = {"type": "location", "latitude": 1, "longitude": 2}
+        with mock.patch.object(
+            Phase1DeliveryAdapter,
+            "validate_outbound_structured_content",
+            return_value=True,
+        ), self.assertRaises(ValidationError):
+            api.send_message(channel.id, "", structured_content=card)
+
+    def test_external_device_card_is_projected_once_and_redacted_on_delete(self):
+        _channel, binding, _identity = self._channel_binding()
+        event = self._from_me_event(
+            binding, "rich-card-1", text="Shared contact"
+        ).to_dict()
+        card = {
+            "type": "contacts",
+            "contacts": [{"name": "Ana", "phones": ["+5511999999999"]}],
+        }
+        event["message"].update(content_type="contacts", structured_content=card)
+        application = self.env["contact.center.application"]
+        event = EventDTO.from_dict(event)
+        application._process_event(self.connection, event)
+        application._process_event(self.connection, event)
+        projected = self.env["contact.center.message.binding"].search(
+            [
+                ("channel_binding_id", "=", binding.id),
+                ("external_message_id", "=", "rich-card-1"),
+            ]
+        )
+        self.assertEqual(len(projected), 1)
+        self.assertEqual(projected.structured_content_json, card)
+        projected.write({"message_state": "deleted", "deleted_display_mode": "redact"})
+        serialized = (
+            self.env["contact.center.ui.api"]
+            .with_user(self.agent)
+            ._serialize_message(projected.message_id, projected)
+        )
+        self.assertEqual(serialized["structured_content"], {})
+
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -269,6 +601,25 @@ class TestPhase1Delivery(SavepointCase):
                 },
             }
         )
+
+    def _inbound_reply_event(self, target_external_id):
+        values = self._unknown_direct_from_me_event().to_dict()
+        values.update(
+            direction="inbound",
+            is_from_me=False,
+            origin="provider",
+            actor={
+                "display_name": "Remote reply author",
+                "addresses": values["conversation"]["addresses"],
+            },
+            reply_to={"external_message_id": target_external_id},
+        )
+        values["message"].update(
+            text="Human content with a quoted message",
+            reply_to_external_id=target_external_id,
+            protocol_snapshot={"reply_to": {"external_message_id": target_external_id}},
+        )
+        return EventDTO.from_dict(values)
 
     def _receipt_event(
         self,
@@ -1265,6 +1616,137 @@ class TestPhase1Delivery(SavepointCase):
         self.assertEqual(message_b.delivery_state, "queued")
         self.assertEqual(message_a.channel_binding_id, binding_a)
         self.assertEqual(message_b.channel_binding_id, binding_b)
+
+    def test_inbound_reply_waits_briefly_then_links_its_late_target(self):
+        target_external_id = "late-quote-%s" % uuid.uuid4()
+        event = self._inbound_reply_event(target_external_id)
+        inbox = self._inbox_event(event)
+        inbox._enqueue()
+        job = Job.load(self.env, inbox.queue_job_uuid)
+        binding_model = self.env["contact.center.message.binding"].sudo()
+
+        for retry, seconds in enumerate((5, 10), start=1):
+            with self.assertRaises(RetryableJobError) as raised:
+                job.perform()
+            self.assertEqual(raised.exception.seconds, seconds)
+            self.assertFalse(raised.exception.ignore_retry)
+            self.assertEqual(job.retry, retry)
+            self.assertEqual(inbox.attempts, 0)
+            # OCA rolls back the failed business transaction, then persists its
+            # retry counter separately before the next execution.
+            job.store()
+            self.assertFalse(
+                binding_model.search(
+                    [("external_message_id", "=", event.message.external_message_id)]
+                )
+            )
+
+        target_values = event.to_dict()
+        target_values.update(event_id="late-target-%s" % uuid.uuid4(), reply_to={})
+        target_values["message"].update(
+            external_message_id=target_external_id,
+            text="The original arrived after its reply",
+            reply_to_external_id="",
+            protocol_snapshot={},
+        )
+        original = (
+            self.env["contact.center.application"]
+            .with_context(contact_center_skip_enqueue=True)
+            ._process_event(self.connection, EventDTO.from_dict(target_values))
+        )
+
+        self.assertTrue(job.perform())
+        reply = binding_model.search(
+            [("source_inbox_event_id", "=", inbox.id)]
+        ).ensure_one()
+        self.assertEqual(inbox.state, "done")
+        self.assertEqual(inbox.attempts, 3)
+        self.assertEqual(reply.message_id.parent_id, original)
+        self.assertEqual(reply.reply_to_binding_id.message_id, original)
+        self.assertEqual(reply.direction, "inbound")
+        self.assertEqual(reply.message_id.author_guest_id, original.author_guest_id)
+
+    def test_orphan_inbound_reply_preserves_media_at_retry_ceiling(self):
+        target_external_id = "uncaptured-quote-%s" % uuid.uuid4()
+        values = self._inbound_reply_event(target_external_id).to_dict()
+        values["message"].update(
+            content_type="image",
+            media=[
+                {
+                    "kind": "image",
+                    "mime_type": "image/png",
+                    "file_name": "human-evidence.png",
+                    "remote_locator": {"fixture": True},
+                }
+            ],
+        )
+        event = EventDTO.from_dict(values)
+        inbox = self._inbox_event(event)
+        inbox.attempts = QUEUE_ATTEMPT_CEILING - 1
+
+        self.assertTrue(self._run_inbox_job(inbox))
+        reply = (
+            self.env["contact.center.message.binding"]
+            .sudo()
+            .search([("source_inbox_event_id", "=", inbox.id)])
+            .ensure_one()
+        )
+        self.assertEqual(inbox.state, "done")
+        self.assertEqual(inbox.attempts, QUEUE_ATTEMPT_CEILING)
+        self.assertFalse(inbox.last_error_class)
+        self.assertFalse(reply.reply_to_binding_id)
+        self.assertFalse(reply.message_id.parent_id)
+        self.assertIn(event.message.text, reply.message_id.body)
+        self.assertEqual(reply.media_ids.kind, "image")
+        self.assertEqual(reply.media_ids.file_name, "human-evidence.png")
+        self.assertEqual(
+            reply.protocol_snapshot_json["reply_to"]["external_message_id"],
+            target_external_id,
+        )
+        self.assertEqual(
+            inbox.normalized_dto_json["message"]["reply_to_external_id"],
+            target_external_id,
+        )
+        replay_values = event.to_dict()
+        replay_values["event_id"] = "duplicate-quote-%s" % uuid.uuid4()
+        replay = self._inbox_event(EventDTO.from_dict(replay_values))
+        self.assertTrue(self._run_inbox_job(replay))
+        self.assertEqual(replay.state, "done")
+        self.assertEqual(
+            self.env["contact.center.message.binding"]
+            .sudo()
+            .search_count(
+                [
+                    ("channel_binding_id", "=", reply.channel_binding_id.id),
+                    ("external_message_id", "=", event.message.external_message_id),
+                ]
+            ),
+            1,
+        )
+        self.assertEqual(len(reply.media_ids), 1)
+        self.assertEqual(reply.source_inbox_event_id, inbox)
+
+    def test_orphan_reply_never_links_another_conversation(self):
+        channel, binding, _identity = self._channel_binding()
+        target_external_id = "other-conversation-quote-%s" % uuid.uuid4()
+        original = self._post_bound_message(channel, binding, target_external_id)
+        original.external_message_id = target_external_id
+        event = self._inbound_reply_event(target_external_id)
+        inbox = self._inbox_event(event)
+        inbox.attempts = 2
+
+        self.assertTrue(self._run_inbox_job(inbox))
+        reply = (
+            self.env["contact.center.message.binding"]
+            .sudo()
+            .search([("source_inbox_event_id", "=", inbox.id)])
+            .ensure_one()
+        )
+        self.assertEqual(inbox.state, "done")
+        self.assertNotEqual(reply.channel_binding_id, binding)
+        self.assertFalse(reply.reply_to_binding_id)
+        self.assertFalse(reply.message_id.parent_id)
+        self.assertIn(event.message.text, reply.message_id.body)
 
     def test_orphan_receipt_and_mutation_use_inbox_retry_pattern(self):
         _channel, channel_binding, _identity = self._channel_binding()

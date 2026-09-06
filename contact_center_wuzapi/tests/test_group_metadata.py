@@ -1,6 +1,7 @@
 import copy
 import hashlib
 import json
+import traceback
 from unittest import mock
 
 import requests
@@ -386,6 +387,8 @@ class TestWuzapiGroupMetadata(WuzapiCase):
 
         for status, expected_error in (
             (401, ProviderPausedError),
+            (408, TransientAdapterError),
+            (425, TransientAdapterError),
             (429, ProviderRateLimitError),
             (503, TransientAdapterError),
             (400, AdapterError),
@@ -446,6 +449,23 @@ class TestWuzapiGroupMetadata(WuzapiCase):
             self.adapter.fetch_group_metadata(self.connection, GROUP_REF)
 
         self.assertTrue(response.closed)
+
+    def test_group_response_errors_are_bounded_and_do_not_expose_private_urls(self):
+        secret = "https://pps.whatsapp.net/avatar?token=private-synthetic-token"
+        responses = (
+            FakeBinaryResponse(200, content=b"[" * 2000 + b"0" + b"]" * 2000),
+            FakeBinaryResponse(200, interruption=requests.ConnectionError(secret)),
+        )
+        for response in responses:
+            with self.subTest(response=response), self.assertRaises(
+                AdapterError
+            ) as caught:
+                self.adapter._group_limited_json_object(response, 64 * 1024, "WuzAPI")
+            self.assertTrue(response.closed)
+            self.assertIsNone(caught.exception.__cause__)
+            self.assertNotIn(
+                secret, "".join(traceback.format_exception(caught.exception))
+            )
 
     @mock.patch(DNS_PATCH)
     @mock.patch(REQUEST_PATCH)

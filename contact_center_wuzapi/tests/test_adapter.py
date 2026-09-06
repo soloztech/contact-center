@@ -5,6 +5,7 @@ import datetime
 import hashlib
 import hmac
 import json
+import traceback
 from unittest import mock
 
 import requests
@@ -34,7 +35,15 @@ from odoo.addons.contact_center_base.services.media import (
 )
 
 from ..controllers.webhook import sanitize_webhook_envelope
-from ..services.adapter import WUZAPI_COMMIT, WUZAPI_VERSION, WuzapiAdapter, _address
+from ..services.adapter import (
+    WUZAPI_COMMIT,
+    WUZAPI_VERSION,
+    WuzapiAdapter,
+    _address,
+    _limited_json_object,
+    _safe_attribution_url,
+)
+from ..services.structured_content import OUTBOUND_STRUCTURED_CONTENT
 from .common import WuzapiCase
 
 REQUEST_PATCH = "odoo.addons.contact_center_wuzapi.services.adapter.requests.request"
@@ -141,6 +150,7 @@ class TestWuzapiAdapter(WuzapiCase):
         target_namespace=None,
         own_protocol_participant=None,
         target_protocol_participant=None,
+        structured_content=None,
     ):
         if target_value is None:
             target_value = (
@@ -173,12 +183,19 @@ class TestWuzapiAdapter(WuzapiCase):
             target_protocol_participant=target_protocol_participant,
             message=(
                 MessageDTO(
-                    content_type=media[0].kind if media else "text",
+                    content_type=(
+                        structured_content["type"]
+                        if structured_content
+                        else media[0].kind
+                        if media
+                        else "text"
+                    ),
                     text=text,
                     client_message_id=CLIENT_MESSAGE_ID,
                     reply_to_external_id=reply_to.get("external_message_id", ""),
                     protocol_snapshot=protocol_snapshot or {},
                     media=media,
+                    structured_content=structured_content or {},
                 )
                 if command_type in ("send_message", "edit_message")
                 else None
@@ -283,6 +300,9 @@ class TestWuzapiAdapter(WuzapiCase):
                 "send_message": True,
                 "sender_signature": True,
                 "media": capabilities["media"],
+                "outbound_structured_content": capabilities[
+                    "outbound_structured_content"
+                ],
                 "reply": True,
                 "reply_requires_participant": True,
                 "react": True,
@@ -1244,6 +1264,542 @@ class TestWuzapiAdapter(WuzapiCase):
                 self.assertTrue(normalized.is_forwarded)
                 self.assertIsNone(normalized.forwarding_score)
 
+    @mock.patch(REQUEST_PATCH)
+    def test_structured_outbound_uses_pinned_handlers_and_stable_ids(self, request):
+        cases = (
+            (
+                {
+                    "type": "buttons",
+                    "title": "Atendimento",
+                    "footer": "Equipe",
+                    "buttons": [
+                        {"type": "reply", "id": "sales", "title": "Vendas"},
+                        {
+                            "type": "url",
+                            "url": "https://example.com/catalog",
+                            "title": "Catálogo",
+                        },
+                        {"type": "phone", "phone": "+5511999999999", "title": "Ligar"},
+                    ],
+                },
+                "/chat/send/buttons",
+                {
+                    "Body": "Escolha uma opção",
+                    "Title": "Atendimento",
+                    "Footer": "Equipe",
+                    "Buttons": [
+                        {"type": "reply", "id": "sales", "title": "Vendas"},
+                        {
+                            "type": "cta_url",
+                            "url": "https://example.com/catalog",
+                            "title": "Catálogo",
+                        },
+                        {
+                            "type": "cta_call",
+                            "phone_number": "+5511999999999",
+                            "title": "Ligar",
+                        },
+                    ],
+                },
+            ),
+            (
+                {
+                    "type": "list",
+                    "title": "Horários",
+                    "footer": "Equipe",
+                    "button_text": "Ver horários",
+                    "sections": [
+                        {
+                            "title": "Manhã",
+                            "rows": [
+                                {
+                                    "id": "slot-9",
+                                    "title": "09:00",
+                                    "description": "Horário local",
+                                }
+                            ],
+                        },
+                    ],
+                },
+                "/chat/send/list",
+                {
+                    "Desc": "Escolha uma opção",
+                    "TopText": "Horários",
+                    "FooterText": "Equipe",
+                    "ButtonText": "Ver horários",
+                    "Sections": [
+                        {
+                            "title": "Manhã",
+                            "rows": [
+                                {
+                                    "RowId": "slot-9",
+                                    "title": "09:00",
+                                    "desc": "Horário local",
+                                }
+                            ],
+                        },
+                    ],
+                },
+            ),
+            (
+                {
+                    "type": "contacts",
+                    "contacts": [
+                        {
+                            "name": "Pessoa; Exemplo",
+                            "phones": ["+5511999999999"],
+                            "emails": ["person@example.com"],
+                        }
+                    ],
+                },
+                "/chat/send/contact",
+                {
+                    "Name": "Pessoa; Exemplo",
+                    "Vcard": (
+                        "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Pessoa\\; Exemplo\r\n"
+                        "TEL;TYPE=CELL:+5511999999999\r\n"
+                        "EMAIL;TYPE=INTERNET:person@example.com\r\nEND:VCARD\r\n"
+                    ),
+                },
+            ),
+            (
+                {
+                    "type": "location",
+                    "latitude": -22.7253,
+                    "longitude": -47.6492,
+                    "name": "Entrada principal",
+                },
+                "/chat/send/location",
+                {
+                    "Latitude": -22.7253,
+                    "Longitude": -47.6492,
+                    "Name": "Entrada principal",
+                },
+            ),
+        )
+        for content, endpoint, expected in cases:
+            for conversation_type in ("direct", "group"):
+                with self.subTest(kind=content["type"], conversation=conversation_type):
+                    request.reset_mock()
+                    request.return_value = FakeResponse(
+                        200, {"success": True, "data": {"Id": CLIENT_MESSAGE_ID}}
+                    )
+                    command = self._command(
+                        structured_content=content,
+                        text="Escolha uma opção"
+                        if content["type"] in ("buttons", "list")
+                        else "",
+                        conversation_type=conversation_type,
+                    )
+
+                    result = self.adapter.execute_command(self.connection, command)
+
+                    self.assertEqual(result.status, "success")
+                    self.assertEqual(result.external_message_id, CLIENT_MESSAGE_ID)
+                    self.assertEqual(
+                        request.call_args.args[1],
+                        self.connection.wuzapi_base_url + endpoint,
+                    )
+                    self.assertEqual(
+                        request.call_args.kwargs["json"],
+                        dict(
+                            expected,
+                            Phone=command.target_address.value_normalized,
+                            Id=CLIENT_MESSAGE_ID,
+                        ),
+                    )
+                    self.assertFalse(request.call_args.kwargs["allow_redirects"])
+
+    @mock.patch(REQUEST_PATCH)
+    def test_structured_outbound_rejects_provider_limitations_before_dispatch(
+        self, request
+    ):
+        contact = {"name": "Pessoa", "phones": ["+5511999999999"], "emails": []}
+        cases = (
+            (
+                {"type": "contacts", "contacts": [contact, contact]},
+                "contact count limit",
+            ),
+            ({"type": "location", "latitude": 0, "longitude": 20}, "longitude zero"),
+            ({"type": "location", "latitude": 20, "longitude": 0}, "longitude zero"),
+            (
+                {"type": "location", "latitude": 20, "longitude": 30, "live": True},
+                "live locations",
+            ),
+            (
+                {"type": "selection", "id": "button-a", "title": "Opção A"},
+                "not sendable",
+            ),
+        )
+        for content, reason in cases:
+            with self.subTest(kind=content["type"]):
+                with self.assertRaisesRegex(AdapterError, reason):
+                    self.adapter.validate_outbound_structured_content(
+                        self.connection, content, ""
+                    )
+                with self.assertRaisesRegex(AdapterError, reason):
+                    self.adapter._build_send_request(
+                        self._command(structured_content=content, text="")
+                    )
+        request.assert_not_called()
+
+    @mock.patch(REQUEST_PATCH)
+    def test_neutral_cards_above_wuz_limits_are_rejected_before_http(self, request):
+        capabilities = self.adapter.get_capabilities(self.connection)
+        self.assertEqual(
+            capabilities["outbound_structured_content"], OUTBOUND_STRUCTURED_CONTENT
+        )
+        self.assertNotIn("structured_content", capabilities)
+        button = {"type": "reply", "id": "yes", "title": "Yes"}
+        cases = [
+            (
+                {
+                    "type": "buttons",
+                    "buttons": [{"type": "phone", "phone": "1" * 31, "title": "Call"}],
+                },
+                "Choose",
+            ),
+            (
+                {
+                    "type": "buttons",
+                    "buttons": [dict(button, id=str(i)) for i in range(4)],
+                },
+                "Choose",
+            ),
+            ({"type": "buttons", "buttons": [dict(button, title="A" * 21)]}, "Choose"),
+            ({"type": "buttons", "buttons": [dict(button, id="A" * 201)]}, "Choose"),
+            ({"type": "buttons", "title": "A" * 61, "buttons": [button]}, "Choose"),
+            ({"type": "buttons", "buttons": [button]}, "A" * 1025),
+            (
+                {
+                    "type": "list",
+                    "button_text": "Choose",
+                    "sections": [
+                        {
+                            "title": "Options",
+                            "rows": [{"id": str(i), "title": "Row"} for i in range(11)],
+                        }
+                    ],
+                },
+                "Choose",
+            ),
+            (
+                {
+                    "type": "list",
+                    "button_text": "Choose",
+                    "sections": [
+                        {"title": "Options", "rows": [{"id": "one", "title": "A" * 25}]}
+                    ],
+                },
+                "Choose",
+            ),
+            (
+                {"type": "contacts", "contacts": [{"name": "Contact"}]},
+                "Caption must not disappear",
+            ),
+            ({"type": "contacts", "contacts": [{"name": "A" * 121}]}, ""),
+            (
+                {"type": "location", "latitude": 1, "longitude": 2},
+                "Caption must not disappear",
+            ),
+        ]
+        for content, body in cases:
+            with self.subTest(kind=content["type"], body_length=len(body)):
+                MessageDTO(structured_content=content)
+                command = self._command(structured_content=content, text=body)
+                with self.assertRaises(AdapterError):
+                    self.adapter.prepare_request_snapshot(self.connection, command)
+                with self.assertRaises(AdapterError):
+                    self.adapter.execute_command(self.connection, command)
+        request.assert_not_called()
+
+    def test_normalize_native_and_legacy_choices_preserves_only_neutral_fields(self):
+        cases = (
+            (
+                {
+                    "buttonsMessage": {
+                        "Header": {"Text": "Atendimento"},
+                        "contentText": "Escolha",
+                        "footerText": "Equipe",
+                        "buttons": [
+                            {
+                                "buttonID": "sales",
+                                "buttonText": {"displayText": "Vendas"},
+                                "type": 1,
+                            }
+                        ],
+                    }
+                },
+                {
+                    "type": "buttons",
+                    "title": "Atendimento",
+                    "footer": "Equipe",
+                    "buttons": [{"type": "reply", "id": "sales", "title": "Vendas"}],
+                },
+                "Escolha",
+            ),
+            (
+                {
+                    "interactiveMessage": {
+                        "InteractiveMessage": {
+                            "NativeFlowMessage": {
+                                "buttons": [
+                                    {
+                                        "name": "quick_reply",
+                                        "buttonParamsJSON": json.dumps(
+                                            {
+                                                "id": "support",
+                                                "display_text": "Suporte",
+                                                "untrusted": "opaque-secret",
+                                            }
+                                        ),
+                                    }
+                                ]
+                            }
+                        },
+                        "body": {"text": "Como ajudar?"},
+                        "header": {"title": "Atendimento"},
+                        "footer": {"text": "Equipe"},
+                    }
+                },
+                {
+                    "type": "buttons",
+                    "title": "Atendimento",
+                    "footer": "Equipe",
+                    "buttons": [{"type": "reply", "id": "support", "title": "Suporte"}],
+                },
+                "Como ajudar?",
+            ),
+            (
+                {
+                    "listMessage": {
+                        "title": "Horários",
+                        "description": "Escolha",
+                        "buttonText": "Ver opções",
+                        "footerText": "Equipe",
+                        "sections": [
+                            {
+                                "title": "Manhã",
+                                "rows": [
+                                    {
+                                        "rowID": "slot-9",
+                                        "title": "09:00",
+                                        "description": "Horário local",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                },
+                {
+                    "type": "list",
+                    "title": "Horários",
+                    "footer": "Equipe",
+                    "button_text": "Ver opções",
+                    "sections": [
+                        {
+                            "title": "Manhã",
+                            "rows": [
+                                {
+                                    "id": "slot-9",
+                                    "title": "09:00",
+                                    "description": "Horário local",
+                                }
+                            ],
+                        }
+                    ],
+                },
+                "Escolha",
+            ),
+            (
+                {
+                    "interactiveResponseMessage": {
+                        "InteractiveResponseMessage": {
+                            "NativeFlowResponseMessage": {
+                                "name": "quick_reply",
+                                "paramsJSON": json.dumps(
+                                    {
+                                        "id": "sales",
+                                        "display_text": "Vendas",
+                                        "token": "opaque-secret",
+                                    }
+                                ),
+                            }
+                        },
+                        "body": {"text": "Seleção"},
+                    }
+                },
+                {"type": "selection", "id": "sales", "title": "Vendas"},
+                "Vendas",
+            ),
+        )
+        for payload, expected, body in cases:
+            with self.subTest(kind=expected["type"]):
+                envelope = self.load_fixture("message_text_lid.json")
+                envelope["event"]["Message"] = payload
+                event = self.adapter.normalize_event(
+                    self.connection, sanitize_webhook_envelope(envelope)
+                )
+                self.assertEqual(event.message.structured_content, expected)
+                self.assertEqual(event.message.content_type, expected["type"])
+                self.assertEqual(event.message.text, body)
+                self.assertNotIn("opaque-secret", repr(event.to_dict()))
+                self.assertNotIn("paramsJSON", repr(event.to_dict()))
+
+    def test_native_selection_malformed_or_unknown_payload_keeps_human_body(self):
+        cases = (
+            ("quick_reply", "{invalid-json"),
+            ("quick_reply", "[]"),
+            ("quick_reply", json.dumps({"id": "x" * 201, "display_text": "Escolhi"})),
+            ("quick_reply", "x" * 16385),
+            ("flow", json.dumps({"id": "flow-token", "display_text": "Escolhi"})),
+        )
+        for name, params in cases:
+            with self.subTest(name=name, size=len(params)):
+                envelope = self.load_fixture("message_text_lid.json")
+                envelope["event"]["Message"] = {
+                    "interactiveResponseMessage": {
+                        "InteractiveResponseMessage": {
+                            "NativeFlowResponseMessage": {
+                                "name": name,
+                                "paramsJSON": params,
+                            }
+                        },
+                        "body": {"text": "Escolha recebida"},
+                    }
+                }
+                event = self.adapter.normalize_event(
+                    self.connection, sanitize_webhook_envelope(envelope)
+                )
+                self.assertEqual(event.message.text, "Escolha recebida")
+                self.assertFalse(event.message.structured_content)
+
+    def test_vcard_contacts_unfold_decode_and_project_bounded_fields(self):
+        envelope = self.load_fixture("message_text_lid.json")
+        envelope["event"]["Message"] = {
+            "contactMessage": {
+                "vcard": (
+                    "BEGIN:VCARD\r\nVERSION:3.0\r\n"
+                    "FN;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:Jos=C3=A9=\r\n Silva\r\n"
+                    "item1.TEL;TYPE=CELL:tel:+55 (11) 99999-9999\r\n"
+                    "EMAIL;TYPE=INTERNET:jose@exam\r\n ple.com\r\n"
+                    "EMAIL:invalid@example.com?subject=Injected\r\n"
+                    "NOTE:opaque-secret\r\nURL:javascript:alert(1)\r\nEND:VCARD\r\n"
+                )
+            }
+        }
+        event = self.adapter.normalize_event(
+            self.connection, sanitize_webhook_envelope(envelope)
+        )
+        self.assertEqual(event.message.content_type, "contacts")
+        self.assertEqual(
+            event.message.structured_content,
+            {
+                "type": "contacts",
+                "contacts": [
+                    {
+                        "name": "José Silva",
+                        "phones": ["+5511999999999"],
+                        "emails": ["jose@example.com"],
+                    }
+                ],
+            },
+        )
+        self.assertNotIn("opaque-secret", repr(event.to_dict()))
+        self.assertNotIn("BEGIN:VCARD", repr(event.to_dict()))
+        self.assertNotIn("javascript", repr(event.to_dict()))
+
+    def test_vcard_card_and_field_limits_preserve_contact_name(self):
+        card = (
+            "BEGIN:VCARD\nFN:Pessoa\\, Exemplo\n"
+            + "".join(
+                "TEL:+55119999999%02d\nEMAIL:p%s@example.com\n" % (index, index)
+                for index in range(8)
+            )
+            + "END:VCARD"
+        )
+        envelope = self.load_fixture("message_text_lid.json")
+        envelope["event"]["Message"] = {
+            "contactsArrayMessage": {"contacts": [{"vcard": card}] * 12}
+        }
+        event = self.adapter.normalize_event(
+            self.connection, sanitize_webhook_envelope(envelope)
+        )
+        contacts = event.message.structured_content["contacts"]
+        self.assertEqual(len(contacts), 10)
+        self.assertEqual(contacts[0]["name"], "Pessoa, Exemplo")
+        self.assertEqual(len(contacts[0]["phones"]), 5)
+        self.assertEqual(len(contacts[0]["emails"]), 5)
+        envelope["event"]["Message"] = {
+            "contactMessage": {"displayName": "Nome preservado", "vcard": "x" * 32769}
+        }
+        event = self.adapter.normalize_event(self.connection, envelope)
+        self.assertEqual(
+            event.message.structured_content["contacts"],
+            [{"name": "Nome preservado", "phones": [], "emails": []}],
+        )
+
+    def test_structured_location_preserves_zero_and_marks_live_snapshot(self):
+        for kind in ("locationMessage", "liveLocationMessage"):
+            with self.subTest(kind=kind):
+                envelope = self.load_fixture("message_text_lid.json")
+                envelope["event"]["Message"] = {
+                    kind: {
+                        "degreesLatitude": 0,
+                        "degreesLongitude": 0,
+                        "name": "Ponto",
+                        "caption": "A caminho",
+                        "address": "Endereço",
+                    }
+                }
+                event = self.adapter.normalize_event(
+                    self.connection, sanitize_webhook_envelope(envelope)
+                )
+                self.assertEqual(
+                    event.message.structured_content,
+                    {
+                        "type": "location",
+                        "latitude": 0.0,
+                        "longitude": 0.0,
+                        "name": "A caminho"
+                        if kind == "liveLocationMessage"
+                        else "Ponto",
+                        "address": "Endereço",
+                        "live": kind == "liveLocationMessage",
+                    },
+                )
+
+    def test_circular_video_sanitizer_preserves_only_its_download_key(self):
+        envelope = self.load_fixture("message_video.json")
+        payload = envelope["event"]["Message"].pop("videoMessage")
+        envelope["event"]["Message"]["ptvMessage"] = payload
+        payload["contextInfo"] = {"mediaKey": "quoted-key-must-be-dropped"}
+        envelope["shadow"] = {"ptvMessage": {"mediaKey": "shadow-key-must-be-dropped"}}
+        sanitized = sanitize_webhook_envelope(envelope)
+        event = self.adapter.normalize_event(self.connection, sanitized)
+        self.assertEqual(event.message.content_type, "video")
+        self.assertEqual(event.message.media[0].kind, "video")
+        self.assertEqual(
+            event.message.media[0].remote_locator["media_key"], payload["mediaKey"]
+        )
+        request = self.adapter._prepare_download_request(event.message.media[0])
+        self.assertEqual(request["endpoint"], "/chat/downloadvideo")
+        self.assertNotIn("quoted-key-must-be-dropped", repr(sanitized))
+        self.assertNotIn("shadow-key-must-be-dropped", repr(sanitized))
+
+    def test_invalid_large_location_number_keeps_human_label_without_card(self):
+        envelope = self.load_fixture("message_text_lid.json")
+        envelope["event"]["Message"] = {
+            "locationMessage": {
+                "degreesLatitude": 10**400,
+                "degreesLongitude": 20,
+                "name": "Ponto recebido",
+            }
+        }
+        event = self.adapter.normalize_event(self.connection, envelope)
+        self.assertEqual(event.message.text, "Localização: Ponto recebido")
+        self.assertFalse(event.message.structured_content)
+
     def test_normalize_provider_neutral_human_content_variants(self):
         cases = (
             (
@@ -1289,7 +1845,7 @@ class TestWuzapiAdapter(WuzapiCase):
                         "caption": "Estou chegando",
                     }
                 },
-                "live_location",
+                "location",
                 "Localização em tempo real: Estou chegando\n-22.725300, -47.649200",
                 "",
             ),
@@ -1303,7 +1859,7 @@ class TestWuzapiAdapter(WuzapiCase):
                         ),
                     }
                 },
-                "contact",
+                "contacts",
                 "Contato: Contato sintético",
                 "",
             ),
@@ -1373,10 +1929,10 @@ class TestWuzapiAdapter(WuzapiCase):
                 {
                     "buttonsResponseMessage": {
                         "selectedButtonID": "provider-row-id",
-                        "selectedDisplayText": "Quero atendimento",
+                        "Response": {"SelectedDisplayText": "Quero atendimento"},
                     }
                 },
-                "interactive_response",
+                "selection",
                 "Quero atendimento",
                 "",
             ),
@@ -1387,7 +1943,7 @@ class TestWuzapiAdapter(WuzapiCase):
                         "singleSelectReply": {"selectedRowID": "provider-row-id"},
                     }
                 },
-                "interactive_response",
+                "selection",
                 "Opção escolhida",
                 "",
             ),
@@ -1430,8 +1986,72 @@ class TestWuzapiAdapter(WuzapiCase):
                 self.assertEqual(event.message.reply_to_external_id, reply_target)
                 serialized = repr(event.to_dict())
                 self.assertNotIn("BEGIN:VCARD", serialized)
-                self.assertNotIn("provider-row-id", serialized)
+                self.assertNotIn("provider-row-id", event.message.text)
                 self.assertNotIn("provider-template-id", serialized)
+
+    def test_button_reply_go_oneof_survives_webhook_sanitization(self):
+        cases = (
+            (
+                "buttonsResponseMessage",
+                {
+                    "selectedButtonID": "provider-button-id-must-not-project",
+                    "Response": {"SelectedDisplayText": " Quero\n atendimento\x00 "},
+                },
+            ),
+            (
+                "templateButtonReplyMessage",
+                {
+                    "selectedID": "provider-button-id-must-not-project",
+                    "selectedDisplayText": " Quero\n atendimento\x00 ",
+                },
+            ),
+        )
+        for kind, content in cases:
+            with self.subTest(kind=kind):
+                envelope = self.load_fixture("message_text_lid.json")
+                content["contextInfo"] = {"stanzaID": "BUTTON-REPLY-TARGET"}
+                envelope["event"]["Message"] = {kind: content}
+
+                event = self.adapter.normalize_event(
+                    self.connection, sanitize_webhook_envelope(envelope)
+                )
+
+                self.assertEqual(event.message.text, "Quero atendimento")
+                self.assertEqual(event.message.content_type, "selection")
+                self.assertEqual(
+                    event.message.reply_to_external_id, "BUTTON-REPLY-TARGET"
+                )
+                self.assertEqual(
+                    event.message.structured_content["id"],
+                    "provider-button-id-must-not-project",
+                )
+                self.assertNotIn("provider-button-id", event.message.text)
+
+    def test_button_reply_go_oneof_label_is_bounded_and_never_uses_provider_id(self):
+        cases = (
+            ({"SelectedDisplayText": "x" * 5000}, "x" * 4096),
+            (
+                {"SelectedDisplayText": {"opaque": "not-human-text"}},
+                "[Resposta interativa]",
+            ),
+            (None, "[Resposta interativa]"),
+        )
+        for response, expected in cases:
+            with self.subTest(response_type=type(response).__name__):
+                envelope = self.load_fixture("message_text_lid.json")
+                envelope["event"]["Message"] = {
+                    "buttonsResponseMessage": {
+                        "selectedButtonID": "provider-button-id-must-not-project",
+                        "Response": response,
+                    }
+                }
+
+                event = self.adapter.normalize_event(
+                    self.connection, sanitize_webhook_envelope(envelope)
+                )
+
+                self.assertEqual(event.message.text, expected)
+                self.assertNotIn("provider-button-id", event.message.text)
 
     @mock.patch(REQUEST_PATCH)
     def test_sanitized_sticker_and_associated_child_media_download(self, request):
@@ -3650,6 +4270,8 @@ class TestWuzapiAdapter(WuzapiCase):
 
         for status_code, error_class in (
             (401, ProviderPausedError),
+            (408, TransientAdapterError),
+            (425, TransientAdapterError),
             (429, ProviderRateLimitError),
             (503, TransientAdapterError),
             (400, AdapterError),
@@ -3714,25 +4336,58 @@ class TestWuzapiAdapter(WuzapiCase):
         media = self.adapter.normalize_event(
             self.connection, self.load_fixture("message_image.json")
         ).message.media[0]
-        request.side_effect = requests.Timeout("provider did not answer")
-        with self.assertRaises(TransientAdapterError):
+        secret = "https://mmg.whatsapp.net/media?token=private-synthetic-token"
+        request.side_effect = requests.Timeout(secret)
+        with self.assertRaises(TransientAdapterError) as caught:
             self.adapter.download_media(self.connection, media)
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertNotIn(secret, "".join(traceback.format_exception(caught.exception)))
 
         interrupted = FakeResponse(200, {})
         interrupted.iter_content = mock.Mock(
-            side_effect=requests.ConnectionError("stream interrupted")
+            side_effect=requests.ConnectionError(secret)
         )
         request.side_effect = None
         request.return_value = interrupted
-        with self.assertRaises(TransientAdapterError):
+        with self.assertRaises(TransientAdapterError) as caught:
             self.adapter.download_media(self.connection, media)
         self.assertTrue(interrupted.closed)
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertNotIn(secret, "".join(traceback.format_exception(caught.exception)))
+
+    def test_provider_json_readers_reject_deep_or_private_invalid_payloads(self):
+        readers = (
+            lambda response: _limited_json_object(response, 64 * 1024, "WuzAPI"),
+            lambda response: self.adapter._limited_download_json(response, 64 * 1024),
+        )
+        for reader in readers:
+            for raw in (
+                b"[" * 2000 + b"0" + b"]" * 2000,
+                b'{"private-synthetic-token":"\xff"}',
+            ):
+                response = FakeResponse(200)
+                response.iter_content = mock.Mock(return_value=iter([raw]))
+                with self.subTest(reader=reader, raw_size=len(raw)), self.assertRaises(
+                    AdapterError
+                ) as caught:
+                    reader(response)
+                self.assertTrue(response.closed)
+                self.assertIsNone(caught.exception.__cause__)
+                self.assertNotIn(
+                    "private-synthetic-token",
+                    "".join(traceback.format_exception(caught.exception)),
+                )
+
+    def test_malformed_optional_attribution_url_does_not_drop_the_message(self):
+        self.assertEqual(_safe_attribution_url("https://[invalid"), "")
 
     def test_http_failures_are_classified_without_real_network(self):
         cases = (
             (400, {}, "permanent", 0),
             (401, {}, "paused", 0),
             (403, {}, "paused", 0),
+            (408, {}, "uncertain", 0),
+            (425, {}, "uncertain", 0),
             (429, {}, "transient", 60),
             (429, {"Retry-After": "17"}, "transient", 17),
             (429, {"Retry-After": "7200"}, "transient", 3600),

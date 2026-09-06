@@ -18,8 +18,12 @@ The inbox provides:
 * localized, color-coded conversation states and compact connection-health details;
 * paged conversation and message timelines with unread pointers;
 * provider, platform, origin, reply, delivery, and dispatch context;
-* a text and media composer with preview, removal, reply mode, and idempotent client
-  request identifiers;
+* a text and media composer with up to ten files, individual previews, removal,
+  reply mode, and one idempotent request identifier per message;
+* a single caption on the first compatible file, or one separate text message;
+  partial batches retain only unconfirmed operations within the open session;
+* capability-gated buttons, lists, contacts and location forms, plus readable
+  received selections and shared-content cards;
 * consecutive-message grouping without hiding the run boundaries;
 * an internal image/video/PDF viewer, audio player with playback-speed control, and
   safe direct download for other documents;
@@ -88,7 +92,12 @@ The client consumes these authenticated operations:
   ``create_and_link_central_company``; and
 * ``send_message``, ``react_message``, ``edit_message``, and ``delete_message``.
 
-``send_message`` accepts text and/or an opaque media reference. Files are uploaded to
+``send_message`` accepts text and/or one opaque media reference, or a validated
+``structured_content`` card. The multi-file composer admits independent commands;
+it does not promise a native provider album. A definite rejection permits correction;
+an ambiguous result preserves the original request identifier until confirmation.
+Pending files and cards survive conversation changes in the open interface, but
+are not restored after reloading the browser. Files are uploaded to
 the authenticated ``/contact_center/media/upload`` route, and ready attachments are
 served by ``/contact_center/media/<id>/content`` only after ACL and record-rule checks;
 operational users are scoped by native membership.

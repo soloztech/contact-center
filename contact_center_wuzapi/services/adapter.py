@@ -1,5 +1,6 @@
 import base64
 import binascii
+import copy
 import datetime
 import hashlib
 import hmac
@@ -47,6 +48,12 @@ from odoo.addons.contact_center_base.services.media import (
 )
 
 from .group import WuzapiGroupMetadataMixin
+from .structured_content import (
+    OUTBOUND_STRUCTURED_CONTENT,
+    build_outbound_content,
+    normalize_structured_content,
+    validate_outbound_content,
+)
 
 WUZAPI_VERSION = "v1.0.8"
 WUZAPI_COMMIT = "9487eca"
@@ -937,7 +944,10 @@ def _safe_attribution_url(value):
     value = _provider_string(value, maximum=2048)
     if not value:
         return ""
-    parsed = urlsplit(value)
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return ""
     if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc:
         return ""
     return value
@@ -1380,6 +1390,8 @@ def _human_lines(values):
 def _valid_coordinate(value, minimum, maximum):
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
+    if not minimum <= value <= maximum:
+        return None
     value = float(value)
     if not math.isfinite(value) or not minimum <= value <= maximum:
         return None
@@ -1481,8 +1493,16 @@ def _poll_content(provider_poll):
 
 def _interactive_content(provider_interactive, kind):
     if kind in ("buttonsResponseMessage", "templateButtonReplyMessage"):
+        # WuzAPI uses encoding/json on the pinned Go protobuf structs. The
+        # buttons response is a oneof (Response.SelectedDisplayText), while a
+        # template button reply exposes selectedDisplayText directly.
+        response = (
+            _lookup(provider_interactive, "response")
+            if kind == "buttonsResponseMessage"
+            else provider_interactive
+        )
         text = _human_fragment(
-            _lookup(provider_interactive, "selectedDisplayText", "title"),
+            _lookup(response, "selectedDisplayText"),
             maximum=4096,
         )
         return text or "[Resposta interativa]"
@@ -1611,6 +1631,14 @@ def _sticker_media_kind(sticker):
 
 
 def _structured_message_content(message, external_message_id):
+    circular_video = _lookup(message, "ptvMessage")
+    if isinstance(circular_video, dict):
+        return (
+            "",
+            _lookup(circular_video, "contextInfo") or {},
+            (_media_descriptor("video", circular_video, external_message_id),),
+            "video",
+        )
     sticker = _lookup(message, "stickerMessage")
     if isinstance(sticker, dict):
         media_kind = _sticker_media_kind(sticker)
@@ -2025,7 +2053,7 @@ def _retry_after(response):
 def _response_json(response):
     try:
         payload = response.json()
-    except (TypeError, ValueError, requests.RequestException):
+    except (TypeError, ValueError, RecursionError, requests.RequestException):
         return None
     return payload if isinstance(payload, dict) else None
 
@@ -2087,15 +2115,15 @@ def _configuration_stream_json(response, maximum_bytes, error_prefix):
         chunks.append(chunk)
     try:
         return json.loads(b"".join(chunks).decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise AdapterError("%s response is not valid JSON" % error_prefix) from error
+    except (ValueError, RecursionError):
+        raise AdapterError("%s response is not valid JSON" % error_prefix) from None
 
 
 def _configuration_direct_json(response, maximum_bytes, error_prefix):
     try:
         payload = response.json()
-    except (TypeError, ValueError) as error:
-        raise AdapterError("%s response is not valid JSON" % error_prefix) from error
+    except (TypeError, ValueError, RecursionError):
+        raise AdapterError("%s response is not valid JSON" % error_prefix) from None
     encoded = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     if len(encoded) > maximum_bytes:
         raise AdapterError("%s response is too large" % error_prefix)
@@ -2116,10 +2144,10 @@ def _limited_json_object(response, maximum_bytes, error_prefix):
         if not isinstance(payload, dict):
             raise AdapterError("%s response is not a JSON object" % error_prefix)
         return payload
-    except requests.RequestException as error:
+    except requests.RequestException:
         raise TransientAdapterError(
             "%s response stream failed" % error_prefix
-        ) from error
+        ) from None
     finally:
         close = getattr(response, "close", None)
         if callable(close):
@@ -2160,7 +2188,7 @@ def _error_result(status, retry_after_seconds=0):
             error_message="WuzAPI rate limit was reached",
             retry_after_seconds=retry_after_seconds or 60,
         )
-    if status >= 500:
+    if status in (408, 425) or status >= 500:
         return AdapterResult(
             status="uncertain",
             error_code="http_%s" % status,
@@ -2531,6 +2559,7 @@ class WuzapiAdapter(WuzapiGroupMetadataMixin, ProviderAdapter):
         if conversation_type == "group" and mutation_event_type:
             mutation = _normalize_group_mutation(mutation, conversation_ref)
         attribution = ()
+        structured_content = {}
         if mutation_event_type == "message.updated":
             text = mutation.get("new_text") or ""
             context = mutation_context or {}
@@ -2571,6 +2600,19 @@ class WuzapiAdapter(WuzapiGroupMetadataMixin, ProviderAdapter):
                     is_from_me,
                     preferred_context=context,
                 )
+                if not media:
+                    human_message, _association = _unwrap_human_message(message)
+                    structured_content, structured_body = normalize_structured_content(
+                        human_message
+                    )
+                    if structured_content:
+                        content_type = structured_content["type"]
+                        if structured_body is not None:
+                            text = structured_body
+                        elif content_type == "selection" and _lookup(
+                            human_message, "interactiveResponseMessage"
+                        ):
+                            text = structured_content["title"]
         reply_to_external_id, reply_to = _reply_values(context)
         is_forwarded, forwarding_score = _forwarding_values(context)
         normalized_message_id = (
@@ -2603,6 +2645,7 @@ class WuzapiAdapter(WuzapiGroupMetadataMixin, ProviderAdapter):
                 is_forwarded=is_forwarded,
                 forwarding_score=forwarding_score,
                 protocol_snapshot=snapshot,
+                structured_content=structured_content,
                 media=media,
             )
         normalized_event_type = mutation_event_type or "message.created"
@@ -2795,7 +2838,7 @@ class WuzapiAdapter(WuzapiGroupMetadataMixin, ProviderAdapter):
             )
             error.retry_after_seconds = _retry_after(response)
             raise error
-        if status >= 500:
+        if status in (408, 425) or status >= 500:
             error = TransientAdapterError(
                 "WuzAPI webhook configuration failed with HTTP %s" % status
             )
@@ -2816,10 +2859,10 @@ class WuzapiAdapter(WuzapiGroupMetadataMixin, ProviderAdapter):
                 allow_redirects=False,
                 stream=True,
             )
-        except requests.RequestException as error:
+        except requests.RequestException:
             raise TransientAdapterError(
                 "WuzAPI webhook configuration endpoint did not respond"
-            ) from error
+            ) from None
         if not 200 <= response.status_code < 300:
             try:
                 self._webhook_configuration_http_error(response)
@@ -2930,10 +2973,10 @@ class WuzapiAdapter(WuzapiGroupMetadataMixin, ProviderAdapter):
                 allow_redirects=False,
                 stream=True,
             )
-        except requests.RequestException as error:
+        except requests.RequestException:
             raise TransientAdapterError(
                 "WuzAPI HMAC configuration endpoint did not respond"
-            ) from error
+            ) from None
         if not 200 <= response.status_code < 300:
             try:
                 self._webhook_configuration_http_error(response)
@@ -2971,6 +3014,10 @@ class WuzapiAdapter(WuzapiGroupMetadataMixin, ProviderAdapter):
 
         super().validate_outbound_signature(connection, text, sender_signature)
         _signed_whatsapp_text(text, {"sender_signature": sender_signature})
+        return True
+
+    def validate_outbound_structured_content(self, connection, content, text):
+        validate_outbound_content(content, text)
         return True
 
     def validate_recorded_audio_upload(
@@ -3254,6 +3301,56 @@ class WuzapiAdapter(WuzapiGroupMetadataMixin, ProviderAdapter):
             provider_response=_safe_send_response(response, response_payload),
         )
 
+    def _build_media_send_payload(self, media_items, message_text, audit_only):
+        if len(media_items) != 1:
+            raise AdapterError("WuzAPI sends exactly one media attachment per command")
+        media = media_items[0]
+        kind = media.kind
+        if kind not in _MEDIA_FIELDS:
+            raise AdapterError("WuzAPI outbound media kind is not implemented")
+        if kind == "audio" and message_text:
+            raise AdapterError("WuzAPI audio messages do not support captions")
+        content, mime_type, file_name = self._outbound_media_content(media)
+        if kind == "audio" and (media.is_voice_note or media.duration_seconds):
+            self._validate_recorded_audio_content(
+                content=content,
+                mimetype=mime_type,
+                is_voice_note=bool(media.is_voice_note),
+                duration_seconds=media.duration_seconds or 0,
+            )
+        if kind == "audio" and media.is_voice_note:
+            mime_type = "audio/ogg; codecs=opus"
+        _provider_field, payload_field, endpoint, _download_path = _MEDIA_FIELDS[kind]
+        data_mime = mime_type.replace(" ", "")
+        payload = {"MimeType": mime_type}
+        if audit_only:
+            payload[payload_field] = {
+                "content_omitted": True,
+                "kind": kind,
+                "mime_type": mime_type,
+                "file_name": file_name,
+                "size_bytes": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
+            }
+        else:
+            payload[payload_field] = "data:%s;base64,%s" % (
+                data_mime,
+                base64.b64encode(content).decode("ascii"),
+            )
+        if message_text:
+            if len(message_text) > _MAX_TEXT_CHARS:
+                raise AdapterError("WuzAPI media caption exceeds the text limit")
+            payload["Caption"] = message_text
+        if kind == "document":
+            payload["FileName"] = file_name
+        if kind == "audio":
+            payload["ptt"] = bool(media.is_voice_note)
+            payload["mimetype"] = mime_type
+            payload.pop("MimeType", None)
+            if media.duration_seconds:
+                payload["Seconds"] = media.duration_seconds
+        return endpoint, payload
+
     def _build_send_request(self, command, audit_only=False):
         if not command.message:
             raise AdapterError("WuzAPI send_message requires a message")
@@ -3261,62 +3358,23 @@ class WuzapiAdapter(WuzapiGroupMetadataMixin, ProviderAdapter):
         client_message_id = self._client_message_id(command)
         message_text = _signed_whatsapp_text(command.message.text, command.options)
         media_items = command.message.media
-        if media_items:
-            if len(media_items) != 1:
+        structured_content = command.message.structured_content
+        if structured_content:
+            if command.options.get("sender_signature"):
                 raise AdapterError(
-                    "WuzAPI sends exactly one media attachment per command"
+                    "WuzAPI structured messages cannot use a sender signature"
                 )
-            media = media_items[0]
-            kind = media.kind
-            if kind not in _MEDIA_FIELDS:
-                raise AdapterError("WuzAPI outbound media kind is not implemented")
-            if kind == "audio" and message_text:
-                raise AdapterError("WuzAPI audio messages do not support captions")
-            content, mime_type, file_name = self._outbound_media_content(media)
-            if kind == "audio" and (media.is_voice_note or media.duration_seconds):
-                self._validate_recorded_audio_content(
-                    content=content,
-                    mimetype=mime_type,
-                    is_voice_note=bool(media.is_voice_note),
-                    duration_seconds=media.duration_seconds or 0,
-                )
-            if kind == "audio" and media.is_voice_note:
-                mime_type = "audio/ogg; codecs=opus"
-            _provider_field, payload_field, endpoint, _download_path = _MEDIA_FIELDS[
-                kind
-            ]
-            data_mime = mime_type.replace(" ", "")
-            payload = {
-                "Phone": phone,
-                "Id": client_message_id,
-                "MimeType": mime_type,
-            }
-            if audit_only:
-                payload[payload_field] = {
-                    "content_omitted": True,
-                    "kind": kind,
-                    "mime_type": mime_type,
-                    "file_name": file_name,
-                    "size_bytes": len(content),
-                    "sha256": hashlib.sha256(content).hexdigest(),
-                }
-            else:
-                payload[payload_field] = "data:%s;base64,%s" % (
-                    data_mime,
-                    base64.b64encode(content).decode("ascii"),
-                )
-            if message_text:
-                if len(message_text) > _MAX_TEXT_CHARS:
-                    raise AdapterError("WuzAPI media caption exceeds the text limit")
-                payload["Caption"] = message_text
-            if kind == "document":
-                payload["FileName"] = file_name
-            if kind == "audio":
-                payload["ptt"] = bool(media.is_voice_note)
-                payload["mimetype"] = mime_type
-                payload.pop("MimeType", None)
-                if media.duration_seconds:
-                    payload["Seconds"] = media.duration_seconds
+            if media_items:
+                raise AdapterError("WuzAPI structured messages cannot contain media")
+            if command.message.content_type != structured_content.get("type"):
+                raise AdapterError("WuzAPI structured message type is inconsistent")
+            if command.conversation.conversation_type not in ("direct", "group"):
+                raise AdapterError("WuzAPI structured conversation is unsupported")
+            endpoint, payload = build_outbound_content(structured_content, message_text)
+        elif media_items:
+            endpoint, payload = self._build_media_send_payload(
+                media_items, message_text, audit_only
+            )
         else:
             if (
                 command.message.content_type != "text"
@@ -3325,11 +3383,8 @@ class WuzapiAdapter(WuzapiGroupMetadataMixin, ProviderAdapter):
             ):
                 raise AdapterError("WuzAPI send_message requires text or one media")
             endpoint = "/chat/send/text"
-            payload = {
-                "Phone": phone,
-                "Body": message_text,
-                "Id": client_message_id,
-            }
+            payload = {"Body": message_text}
+        payload.update(Phone=phone, Id=client_message_id)
         context_info = _reply_context(command)
         if context_info:
             payload["ContextInfo"] = context_info
@@ -3563,7 +3618,7 @@ class WuzapiAdapter(WuzapiGroupMetadataMixin, ProviderAdapter):
             error = ProviderRateLimitError("WuzAPI media download was rate limited")
             error.retry_after_seconds = _retry_after(response)
             raise error
-        if status >= 500:
+        if status in (408, 425) or status >= 500:
             if _is_invalid_media_hmac_response(status, response_payload):
                 error = _InvalidMediaHmacError(
                     "WuzAPI media download failed integrity authentication"
@@ -3618,8 +3673,8 @@ class WuzapiAdapter(WuzapiGroupMetadataMixin, ProviderAdapter):
                     chunks.append(chunk)
                 raw_payload = b"".join(chunks)
                 payload = json.loads(raw_payload.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError) as error:
-                raise AdapterError("WuzAPI media response is not valid JSON") from error
+            except (ValueError, RecursionError):
+                raise AdapterError("WuzAPI media response is not valid JSON") from None
             finally:
                 close = getattr(response, "close", None)
                 if callable(close):
@@ -3721,10 +3776,10 @@ class WuzapiAdapter(WuzapiGroupMetadataMixin, ProviderAdapter):
                 allow_redirects=False,
                 stream=True,
             )
-        except requests.RequestException as error:
+        except requests.RequestException:
             raise TransientAdapterError(
                 "WuzAPI media download did not return a response"
-            ) from error
+            ) from None
         if not 200 <= response.status_code < 300:
             response_payload = (
                 self._limited_download_error_json(response)
@@ -3737,10 +3792,10 @@ class WuzapiAdapter(WuzapiGroupMetadataMixin, ProviderAdapter):
             response_payload = self._limited_download_json(
                 response, request_values["maximum"]
             )
-        except requests.RequestException as error:
+        except requests.RequestException:
             raise TransientAdapterError(
                 "WuzAPI media download response was interrupted"
-            ) from error
+            ) from None
         finally:
             response.close()
         return response, response_payload
@@ -3891,11 +3946,15 @@ class WuzapiAdapter(WuzapiGroupMetadataMixin, ProviderAdapter):
             "delete_message": True,
             "identity_avatar": True,
             "media": _media_capabilities(),
+            "outbound_structured_content": copy.deepcopy(OUTBOUND_STRUCTURED_CONTENT),
             "conversation_types": {
                 "group": {
                     "send_message": True,
                     "sender_signature": True,
                     "media": _media_capabilities(),
+                    "outbound_structured_content": copy.deepcopy(
+                        OUTBOUND_STRUCTURED_CONTENT
+                    ),
                     "reply": True,
                     "reply_requires_participant": True,
                     "react": True,

@@ -7,11 +7,16 @@ import os
 import uuid
 from unittest import mock
 
+from psycopg2 import errorcodes
+from psycopg2.errors import SerializationFailure
+
 from odoo import fields
 from odoo.exceptions import ValidationError
 from odoo.tests import tagged
 from odoo.tests.common import HttpCase
+from odoo.tools import mute_logger
 
+from ..controllers import webhook as webhook_controller
 from ..controllers.webhook import (
     MAX_WEBHOOK_BODY_BYTES,
     _read_bounded_body,
@@ -150,12 +155,99 @@ class TestWuzapiWebhook(HttpCase):
             content_length = None
             environ = {"wsgi.input": io.BytesIO(b"123456")}
 
-        self.assertEqual(_read_bounded_body(FakeRequest(), 4), b"12345")
+        request = FakeRequest()
+        self.assertEqual(_read_bounded_body(request, 4), b"12345")
+        self.assertEqual(_read_bounded_body(request, 4), b"12345")
 
         class CachedRequest:
             _cached_data = b"abcdef"
 
         self.assertEqual(_read_bounded_body(CachedRequest(), 4), b"abcde")
+
+    def test_serialization_retry_preserves_signed_body_and_deduplication(self):
+        class ConcurrentUpdate(SerializationFailure):
+            pgcode = errorcodes.SERIALIZATION_FAILURE
+
+        body = json.dumps(
+            {"type": "Message", "event": {"fixture": "transaction-retry"}},
+            separators=(",", ":"),
+        ).encode()
+        original_lock = webhook_controller._locked_ingress_response
+        attempts = []
+        connection_id = self.connection.id
+
+        def fail_once(connection, adapter, headers, signed_body):
+            attempts.append(signed_body)
+            if len(attempts) == 1:
+                raise ConcurrentUpdate("synthetic ingress admission conflict")
+            return original_lock(connection, adapter, headers, signed_body)
+
+        with mock.patch.object(
+            webhook_controller, "_locked_ingress_response", new=fail_once
+        ):
+            response = self._post(body)
+
+        self.assertEqual(response.status_code, 202, response.text)
+        self.assertEqual(attempts, [body, body])
+        self.assertFalse(response.json()["duplicate"])
+        replay = self._post(body)
+        self.assertEqual(replay.status_code, 200, replay.text)
+        self.assertTrue(replay.json()["duplicate"])
+        self.assertEqual(response.json()["event_id"], replay.json()["event_id"])
+        with self.registry.cursor() as cr:
+            cr.execute(
+                """
+                SELECT count(*)
+                  FROM contact_center_inbox_event
+                 WHERE provider_connection_id = %s
+                """,
+                [connection_id],
+            )
+            self.assertEqual(cr.fetchone()[0], 1)
+
+    def test_unique_collision_retries_http_and_acknowledges_existing_inbox(self):
+        body = json.dumps(
+            {"type": "Message", "event": {"fixture": "concurrent-duplicate"}}
+        ).encode()
+        first = self._post(body)
+        self.assertEqual(first.status_code, 202, first.text)
+        inbox_class = type(self.env["contact.center.inbox.event"])
+        original_search = inbox_class.search
+        dedupe_domain = [
+            ("provider_connection_id", "=", self.connection.id),
+            (
+                "inbox_dedupe_key",
+                "=",
+                "wuzapi:json:sha256:%s" % hashlib.sha256(body).hexdigest(),
+            ),
+        ]
+        hidden_lookups = []
+
+        def stale_search(recordset, domain, *args, **kwargs):
+            if domain == dedupe_domain and body_reader.call_count == 1:
+                # Keep the winner invisible for the entire first transaction;
+                # the following real INSERT must hit PostgreSQL's constraint.
+                hidden_lookups.append(True)
+                return recordset.browse()
+            return original_search(recordset, domain, *args, **kwargs)
+
+        with mock.patch.object(
+            webhook_controller,
+            "_read_bounded_body",
+            wraps=webhook_controller._read_bounded_body,
+        ) as body_reader, mock.patch.object(
+            inbox_class, "search", new=stale_search
+        ), mute_logger(
+            "odoo.sql_db"
+        ):
+            response = self._post(body)
+
+        self.assertEqual(hidden_lookups, [True])
+        self.assertEqual(body_reader.call_count, 2)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(response.json()["duplicate"])
+        self.assertEqual(response.json()["event_id"], first.json()["event_id"])
+        self.assertEqual(len(self._connection_inboxes()), 1)
 
     def test_signed_webhook_is_accepted_and_replay_is_idempotent(self):
         body = json.dumps(

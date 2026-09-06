@@ -11,6 +11,7 @@ from odoo.addons.contact_center_base.services.adapter import (
     AdapterError,
     AmbiguousTimeoutError,
     ProviderRateLimitError,
+    TransientAdapterError,
 )
 from odoo.addons.contact_center_base.services.dto import (
     AddressDTO,
@@ -22,6 +23,7 @@ from odoo.addons.contact_center_base.services.dto import (
 from odoo.addons.contact_center_base.services.tokens import CONTACT_CENTER_POST_TOKEN
 from odoo.addons.queue_job.tests.common import trap_jobs
 
+from ..services import outbound as outbound_service
 from ..services.messaging import atomic_events, sanitize_webhook_envelope
 from .common import MetaCase
 
@@ -355,7 +357,7 @@ class TestMetaPhase64Outbound(MetaCase):
         with self.assertRaisesRegex(AdapterError, "direct text messages"):
             adapter.prepare_request_snapshot(self.connection, wrong_connection)
 
-    def test_phase64_rejects_media_mutations_and_wrong_target_namespace(self):
+    def test_rejects_unbound_media_and_wrong_target_namespace(self):
         _binding, remote_id = self._seed_inbound()
         valid = self._command(self.connection, remote_id)
         adapter = self.connection.get_adapter()
@@ -372,7 +374,7 @@ class TestMetaPhase64Outbound(MetaCase):
         media_command = CommandDTO.from_dict(
             {**valid.to_dict(), "message": media_message.to_dict()}
         )
-        with self.assertRaisesRegex(AdapterError, "direct text messages"):
+        with self.assertRaisesRegex(AdapterError, "MIME type is unsupported"):
             adapter.prepare_request_snapshot(self.connection, media_command)
 
         wrong_target = {
@@ -615,3 +617,268 @@ class TestMetaPhase64Outbound(MetaCase):
         )
         outbound_binding.invalidate_recordset(["delivery_state"])
         self.assertEqual(outbound_binding.delivery_state, "sent")
+
+    def _media_outbox(
+        self, connection=None, *, kind="image", mime_type="image/png", reply=False
+    ):
+        connection = connection or self.connection
+        inbound, remote_id = self._seed_inbound(connection)
+        content = b"synthetic-private-media-for-meta-tests"
+        attachment = (
+            self.env["ir.attachment"]
+            .sudo()
+            .with_context(image_no_postprocess=True)
+            .create(
+                {
+                    "name": "evidência.png",
+                    "type": "binary",
+                    "raw": content,
+                    "mimetype": mime_type,
+                    "res_model": "contact.center.media.upload",
+                    "res_id": 0,
+                }
+            )
+        )
+        upload = (
+            self.env["contact.center.media.upload"]
+            .sudo()
+            .create(
+                {
+                    "reference": str(uuid.uuid4()),
+                    "channel_binding_id": inbound.channel_binding_id.id,
+                    "uploaded_by_user_id": self.agent.id,
+                    "attachment_id": attachment.id,
+                    "kind": kind,
+                    "mime_type": mime_type,
+                    "file_name": attachment.name,
+                    "size_bytes": len(content),
+                    "sha256": hashlib.sha256(content).hexdigest(),
+                }
+            )
+        )
+        attachment.res_id = upload.id
+        connection.capabilities_json = connection.get_adapter().get_capabilities(
+            connection
+        )
+        with trap_jobs():
+            result = (
+                self.env["contact.center.ui.api"]
+                .with_user(self.agent)
+                .send_message(
+                    inbound.channel_binding_id.channel_id.id,
+                    "",
+                    media_refs=[upload.reference],
+                    reply_to_message_id=inbound.message_id.id if reply else None,
+                )
+            )
+        outbox = (
+            self.env["contact.center.outbox.command"]
+            .sudo()
+            .search(
+                [
+                    ("message_binding_id.message_id", "=", result["message_id"]),
+                ]
+            )
+        )
+        self.assertEqual(len(outbox), 1)
+        self.assertFalse(attachment.public)
+        return outbox, content, remote_id
+
+    @mock.patch("odoo.addons.meta_api_base.services.graph.requests.request")
+    def test_private_media_upload_and_send_use_page_route_for_both_platforms(
+        self, request
+    ):
+        for connection in (self.connection, self._instagram_connection()):
+            with self.subTest(platform=connection.account_id.platform):
+                outbox, content, remote_id = self._media_outbox(connection, reply=True)
+                _connection, command, adapter, snapshot = outbox._prepare_dispatch()
+                self.assertNotIn(content.decode(), json.dumps(snapshot))
+                self.assertNotIn("https://", json.dumps(snapshot))
+                self.assertEqual(
+                    snapshot["upload"]["endpoint"],
+                    "/%s/message_attachments" % self.ACTIVE_PAGE_ID,
+                )
+                request.side_effect = [
+                    self._graph_response({"attachment_id": "123456789"}),
+                    self._graph_response(
+                        {
+                            "recipient_id": remote_id,
+                            "message_id": "m_media_%s" % connection.id,
+                        }
+                    ),
+                ]
+                request.reset_mock()
+                result = adapter.execute_command(connection, command)
+                self.assertEqual(result.status, "success")
+                self.assertEqual(request.call_count, 2)
+                upload, send = request.call_args_list
+                self.assertTrue(
+                    upload.args[1].endswith(
+                        "/%s/message_attachments" % self.ACTIVE_PAGE_ID
+                    )
+                )
+                filename, uploaded, mimetype = upload.kwargs["files"]["filedata"]
+                self.assertEqual(uploaded, content)
+                self.assertTrue(filename.isascii())
+                self.assertEqual(mimetype, "image/png")
+                self.assertEqual(
+                    upload.kwargs["data"].get("platform"),
+                    "instagram"
+                    if connection.account_id.platform == "instagram"
+                    else None,
+                )
+                self.assertIn("appsecret_proof", upload.kwargs["data"])
+                self.assertEqual(
+                    send.kwargs["json"]["message"],
+                    {
+                        "attachment": {
+                            "type": "image",
+                            "payload": {"attachment_id": "123456789"},
+                        }
+                    },
+                )
+                self.assertEqual(
+                    send.kwargs["json"]["reply_to"],
+                    {"mid": command.message.reply_to_external_id},
+                )
+
+    @mock.patch("odoo.addons.meta_api_base.services.graph.requests.request")
+    def test_upload_ambiguity_retries_without_sending_and_final_send_remains_uncertain(
+        self, request
+    ):
+        import requests
+
+        outbox, _content, _remote_id = self._media_outbox()
+        connection, command, adapter, _snapshot = outbox._prepare_dispatch()
+        request.side_effect = requests.Timeout("synthetic timeout")
+        with self.assertRaises(TransientAdapterError):
+            adapter.execute_command(connection, command)
+        self.assertEqual(request.call_count, 1)
+        request.reset_mock()
+        request.side_effect = [
+            self._graph_response({"attachment_id": "123456789"}),
+            requests.Timeout("synthetic timeout"),
+        ]
+        with self.assertRaises(AmbiguousTimeoutError):
+            adapter.execute_command(connection, command)
+        self.assertEqual(request.call_count, 2)
+        request.reset_mock()
+        request.side_effect = None
+        request.return_value = self._graph_response({"attachment_id": "invalid"})
+        with self.assertRaises(TransientAdapterError):
+            adapter.execute_command(connection, command)
+        self.assertEqual(request.call_count, 1)
+
+    @mock.patch("odoo.addons.meta_api_base.services.graph.requests.request")
+    def test_private_media_preflight_rejects_caption_and_attachment_tamper(
+        self, request
+    ):
+        outbox, _content, _remote_id = self._media_outbox()
+        connection, command, adapter, _snapshot = outbox._prepare_dispatch()
+        captioned = CommandDTO.from_dict(
+            {
+                **command.to_dict(),
+                "message": {**command.message.to_dict(), "text": "caption"},
+            }
+        )
+        with self.assertRaisesRegex(AdapterError, "without a caption"):
+            adapter.prepare_request_snapshot(connection, captioned)
+        forged = CommandDTO.from_dict(
+            {
+                **command.to_dict(),
+                "message": {
+                    **command.message.to_dict(),
+                    "media": [
+                        {**command.message.media[0].to_dict(), "sha256": "0" * 64}
+                    ],
+                },
+            }
+        )
+        with self.assertRaisesRegex(AdapterError, "exact message ownership"):
+            adapter.execute_command(connection, forged)
+        request.assert_not_called()
+
+    @mock.patch("odoo.addons.meta_api_base.services.graph.requests.request")
+    def test_media_window_closing_during_upload_blocks_final_send(self, request):
+        outbox, _content, _remote_id = self._media_outbox()
+        connection, command, adapter, _snapshot = outbox._prepare_dispatch()
+        request.return_value = self._graph_response({"attachment_id": "123456789"})
+        original_window = outbound_service._latest_eligible_inbound_at
+        times = [
+            fields.Datetime.now(),
+            fields.Datetime.now() + datetime.timedelta(hours=25),
+        ]
+
+        def clock_advances_during_upload(env, connection, command):
+            return original_window(env, connection, command, now=times.pop(0))
+
+        with mock.patch.object(
+            outbound_service,
+            "_latest_eligible_inbound_at",
+            side_effect=clock_advances_during_upload,
+        ):
+            with self.assertRaisesRegex(AdapterError, "response window is closed"):
+                adapter.execute_command(connection, command)
+        request.assert_called_once()
+        self.assertTrue(request.call_args.args[1].endswith("/message_attachments"))
+
+    @mock.patch("odoo.addons.meta_api_base.services.graph.requests.request")
+    def test_media_outbox_retries_upload_but_never_repeats_an_ambiguous_send(
+        self, request
+    ):
+        import requests
+
+        from odoo.addons.queue_job.exception import RetryableJobError
+
+        outbox, _content, _remote_id = self._media_outbox()
+        if not outbox.queue_job_uuid:
+            outbox.queue_job_uuid = str(uuid.uuid4())
+        job = outbox.with_context(job_uuid=outbox.queue_job_uuid)
+        with mock.patch.object(
+            type(outbox),
+            "_commit_job_transaction",
+            autospec=True,
+            side_effect=lambda record: record.env.flush_all(),
+        ):
+            request.side_effect = requests.Timeout("synthetic upload timeout")
+            # Odoo's assertRaises adds a rollback savepoint. Keep the queue's
+            # persisted retry state, as a real worker does after its commit.
+            try:
+                job._job_process()
+            except RetryableJobError as error:
+                self.assertIn("Meta attachment upload needs a retry", str(error))
+            else:
+                self.fail("The upload timeout must schedule a safe retry")
+            self.assertEqual(request.call_count, 1)
+            self.assertEqual(outbox.state, "retry")
+            self.assertFalse(outbox.dispatch_started_at)
+            self.assertEqual(request.call_count, 1)
+            request.side_effect = [
+                self._graph_response({"attachment_id": "123456789"}),
+                requests.Timeout("synthetic send timeout"),
+            ]
+            self.assertTrue(job._job_process())
+            self.assertEqual(outbox.state, "uncertain")
+            self.assertFalse(job._job_process())
+            self.assertEqual(request.call_count, 3)
+
+    def test_media_capabilities_keep_page_linked_limits_and_no_caption(self):
+        instagram = self._instagram_connection()
+        for connection in (self.connection, instagram):
+            media = connection.get_adapter().get_capabilities(connection)["media"]
+            self.assertEqual(set(media), {"image", "audio", "video", "document"})
+            self.assertTrue(
+                all(
+                    policy["enabled"] and not policy["caption"]
+                    for policy in media.values()
+                )
+            )
+            self.assertEqual(media["document"]["mimetypes"], ["application/pdf"])
+        instagram_media = instagram.get_adapter().get_capabilities(instagram)["media"]
+        messenger_media = self.connection.get_adapter().get_capabilities(
+            self.connection
+        )["media"]
+        self.assertEqual(messenger_media["image"]["max_bytes"], 16 * 1024 * 1024)
+        self.assertEqual(instagram_media["image"]["max_bytes"], 8_000_000)
+        self.assertNotIn("audio/ogg", instagram_media["audio"]["mimetypes"])
+        self.assertNotIn("image/gif", instagram_media["image"]["mimetypes"])

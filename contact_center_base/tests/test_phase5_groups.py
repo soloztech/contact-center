@@ -25,6 +25,7 @@ from ..services.adapter import (
     adapter_registry,
 )
 from ..services.dto import AddressDTO, CommandDTO, DTOValidationError, EventDTO
+from .test_structured_content import outbound_specs
 
 
 @adapter_registry.register("test.group")
@@ -1415,24 +1416,74 @@ class TestContactCenterGroups(SavepointCase):
 
                 self.assertEqual(self._projection_counts(), counts_before)
 
-    def test_unknown_group_reply_failure_rolls_back_bootstrap_projection(self):
-        counts_before = self._projection_counts()
+    def test_unknown_group_reply_preserves_external_device_content_without_parent(self):
+        values = self._event(
+            message_id="unknown-group-reply-before-target",
+            conversation_ref="120363888888889@g.us",
+            direction="outbound",
+            is_from_me=True,
+            origin="external_device",
+            reply_to_external_id="unknown-group-reply-target",
+        ).to_dict()
+        values["message"]["protocol_snapshot"]["reply_to"] = {
+            "external_message_id": "unknown-group-reply-target"
+        }
+        event = EventDTO.from_dict(values)
+        first = self._process(event)
+        message_binding = (
+            self.env["contact.center.message.binding"]
+            .sudo()
+            .search([("message_id", "=", first.id)])
+            .ensure_one()
+        )
 
+        self.assertIn(event.message.text, first.body)
+        self.assertEqual(first.author_id, self.account.technical_author_id)
+        self.assertEqual(message_binding.origin, "external_device")
+        self.assertFalse(first.parent_id)
+        self.assertFalse(message_binding.reply_to_binding_id)
+        self.assertEqual(self._process(event), first)
+        replay_values = event.to_dict()
+        replay_values["event_id"] = "same-quote-new-envelope-%s" % uuid.uuid4()
+        self.assertEqual(self._process(EventDTO.from_dict(replay_values)), first)
+        missing_context_values = event.to_dict()
+        missing_context_values["event_id"] = "quote-context-omitted-%s" % uuid.uuid4()
+        missing_context_values["message"]["reply_to_external_id"] = ""
+        missing_context_values["message"]["protocol_snapshot"]["reply_to"] = {}
+        self.assertEqual(
+            self._process(EventDTO.from_dict(missing_context_values)), first
+        )
+        self.assertEqual(
+            message_binding.protocol_snapshot_json["reply_to"]["external_message_id"],
+            "unknown-group-reply-target",
+        )
+        self.assertEqual(self._process(event), first)
+        self.assertEqual(
+            self.env["contact.center.message.binding"]
+            .sudo()
+            .search_count(
+                [
+                    ("channel_binding_id", "=", message_binding.channel_binding_id.id),
+                    ("external_message_id", "=", event.message.external_message_id),
+                ]
+            ),
+            1,
+        )
+        conflicting_values = event.to_dict()
+        conflicting_values["event_id"] = "conflicting-quote-%s" % uuid.uuid4()
+        conflicting_values["message"]["reply_to_external_id"] = "another-target"
+        conflicting_values["message"]["protocol_snapshot"]["reply_to"] = {
+            "external_message_id": "another-target"
+        }
         with self.assertRaisesRegex(
-            TransientAdapterError, "reply arrived before its target"
+            ValidationError, "reply target conflicts"
         ), self.env.cr.savepoint():
-            self._process(
-                self._event(
-                    message_id="unknown-group-reply-before-target",
-                    conversation_ref="120363888888889@g.us",
-                    direction="outbound",
-                    is_from_me=True,
-                    origin="external_device",
-                    reply_to_external_id="unknown-group-reply-target",
-                )
-            )
-
-        self.assertEqual(self._projection_counts(), counts_before)
+            self._process(EventDTO.from_dict(conflicting_values))
+        self.assertFalse(message_binding.reply_to_binding_id)
+        self.assertEqual(
+            message_binding.protocol_snapshot_json["reply_to"]["external_message_id"],
+            "unknown-group-reply-target",
+        )
 
     def test_unknown_group_external_device_media_bootstraps_and_replays_once(self):
         fixtures = (
@@ -1668,6 +1719,116 @@ class TestContactCenterGroups(SavepointCase):
         self.assertEqual(
             self.env["contact.center.outbox.command"].sudo().search_count([]),
             outbox_count,
+        )
+
+    def test_group_structured_send_preserves_card_replay_and_queue_guards(self):
+        self._process(self._event(message_id="group-structured-bootstrap"))
+        binding = self._group_binding()
+        _profile, own_participant = self._seed_own_group_participant(binding)
+        capabilities = copy.deepcopy(self.connection.capabilities_json)
+        capabilities["conversation_types"]["group"][
+            "outbound_structured_content"
+        ] = outbound_specs("list", "contacts")
+        self.connection.capabilities_json = capabilities
+        self.account.outbound_signature_enabled = True
+        now = fields.Datetime.now()
+        self.connection.sudo().write(
+            {"last_health_at": now, "last_state_observed_at": now}
+        )
+        card = {
+            "type": "list",
+            "button_text": "Horários",
+            "sections": [
+                {"title": "Manhã", "rows": [{"id": "slot-9", "title": "09:00"}]}
+            ],
+        }
+        api = (
+            self.env["contact.center.ui.api"]
+            .with_user(self.agent)
+            .with_context(contact_center_skip_enqueue=True)
+        )
+        request_id = str(uuid.uuid4())
+        with patch.object(
+            GroupTestAdapter, "validate_outbound_structured_content", return_value=True
+        ):
+            result = api.send_message(
+                binding.channel_id.id,
+                "Escolha um horário",
+                client_request_id=request_id,
+                structured_content=card,
+            )
+            replay = api.send_message(
+                binding.channel_id.id,
+                "Escolha um horário",
+                client_request_id=request_id,
+                structured_content=card,
+            )
+            self.assertEqual(result["message_id"], replay["message_id"])
+            self.assertEqual(result["outbox_command_id"], replay["outbox_command_id"])
+            self.assertEqual(result["message"]["structured_content"], card)
+            outbox = (
+                self.env["contact.center.outbox.command"]
+                .sudo()
+                .browse(result["outbox_command_id"])
+            )
+            command = CommandDTO.from_dict(outbox.command_json)
+            self.assertEqual(command.message.structured_content, card)
+            self.assertEqual(command.own_protocol_participant, own_participant)
+            self.assertFalse(command.options.get("sender_signature"))
+            self.assertTrue(outbox._validate_command_scope(command))
+
+            changed = copy.deepcopy(card)
+            changed["sections"][0]["rows"][0]["id"] = "slot-10"
+            with self.assertRaises(ValidationError):
+                api.send_message(
+                    binding.channel_id.id,
+                    "Escolha um horário",
+                    client_request_id=request_id,
+                    structured_content=changed,
+                )
+            tampered = command.to_dict()
+            tampered["message"]["structured_content"] = changed
+            with self.assertRaises(ValidationError):
+                outbox._validate_command_scope(CommandDTO.from_dict(tampered))
+            tampered = command.to_dict()
+            tampered["own_protocol_participant"] = None
+            with self.assertRaises(ValidationError):
+                outbox._validate_command_scope(CommandDTO.from_dict(tampered))
+            unavailable = copy.deepcopy(capabilities)
+            unavailable["conversation_types"]["group"][
+                "outbound_structured_content"
+            ] = {}
+            self.connection.capabilities_json = unavailable
+            with self.assertRaises(ValidationError):
+                outbox._validate_command_scope(command)
+            self.connection.capabilities_json = capabilities
+
+            outbox._process_one()
+
+            contact = {"type": "contacts", "contacts": [{"name": "Group contact"}]}
+            card_result = api.send_message(
+                binding.channel_id.id, "", structured_content=contact
+            )
+            card_outbox = self.env["contact.center.outbox.command"].browse(
+                card_result["outbox_command_id"]
+            )
+            self.assertEqual(card_outbox.command_json["message"]["text"], "")
+            self.assertEqual(card_result["message"]["body_text"], "Group contact")
+            with patch.object(
+                GroupTestAdapter,
+                "execute_command",
+                return_value=AdapterResult.success(
+                    external_message_id="group-contact-card"
+                ),
+            ):
+                card_outbox._process_one()
+            self.assertEqual(card_outbox.state, "done")
+
+        self.assertEqual(outbox.state, "done")
+        self.assertEqual(outbox.message_binding_id.structured_content_json, card)
+        self.assertEqual(
+            AddressDTO.from_dict(outbox.message_binding_id.protocol_participant_json),
+            own_participant,
         )
 
     def test_group_dispatch_success_projects_own_participant_without_echo(self):
@@ -3977,6 +4138,7 @@ class TestContactCenterGroups(SavepointCase):
             item["capabilities"],
             {
                 "send_message": True,
+                "outbound_structured_content": {},
                 "sender_signature": True,
                 "media": {
                     kind: {"enabled": True}

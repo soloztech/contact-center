@@ -7,6 +7,8 @@ import re
 from typing import Any, Dict, Iterable, Optional, Tuple
 from urllib.parse import urlsplit
 
+from .structured_content import validate_structured_content
+
 SCHEMA_VERSION = 1
 ATTRIBUTION_SCHEMA_VERSION = 1
 
@@ -1148,8 +1150,13 @@ class MessageDTO:
     forwarding_score: Optional[int] = None
     protocol_snapshot: Dict[str, Any] = dataclasses.field(default_factory=dict)
     media: Tuple[MediaDTO, ...] = ()
+    structured_content: Dict[str, Any] = dataclasses.field(default_factory=dict)
 
     def __post_init__(self):
+        try:
+            validate_structured_content(self.structured_content)
+        except (TypeError, ValueError) as error:
+            raise DTOValidationError("invalid message structured content") from error
         for field_name in (
             "external_message_id",
             "client_message_id",

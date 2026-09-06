@@ -169,6 +169,119 @@
             </div>
         </div>
         <p t-if="message.body_text" t-esc="message.body_text" />
+        <section
+            t-if="structuredCard"
+            t-attf-class="cc-structured-card cc-structured-card--#{structuredCard.type}"
+        >
+            <strong
+                t-if="structuredCard.title &amp;&amp; structuredCard.type !== 'selection'"
+                t-esc="structuredCard.title"
+            />
+            <div
+                t-if="structuredCard.type === 'buttons'"
+                class="cc-structured-card__options"
+            >
+                <t
+                    t-foreach="structuredCard.buttons"
+                    t-as="button"
+                    t-key="button_index"
+                >
+                    <a
+                        t-if="button.href"
+                        t-att-href="button.href"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        t-esc="button.title"
+                    />
+                    <span t-else=""><t t-esc="button.title" /><small
+                            t-if="button.type === 'phone'"
+                            t-esc="button.phone"
+                        /></span>
+                </t>
+            </div>
+            <div
+                t-elif="structuredCard.type === 'list'"
+                class="cc-structured-card__options"
+            >
+                <strong t-esc="structuredCard.button_text" />
+                <div
+                    t-foreach="structuredCard.sections"
+                    t-as="section"
+                    t-key="section_index"
+                >
+                    <strong t-esc="section.title" />
+                    <div
+                        t-foreach="section.rows"
+                        t-as="row"
+                        t-key="row.id"
+                        class="cc-structured-card__option"
+                    ><span t-esc="row.title" /><small
+                            t-if="row.description"
+                            t-esc="row.description"
+                        /></div>
+                </div>
+            </div>
+            <div t-elif="structuredCard.type === 'contacts'">
+                <article
+                    t-foreach="structuredCard.contacts"
+                    t-as="contact"
+                    t-key="contact_index"
+                >
+                    <strong><i class="fa fa-address-card-o" aria-hidden="true" /> <t
+                            t-esc="contact.name"
+                        /></strong>
+                    <span
+                        t-foreach="contact.phones || []"
+                        t-as="phone"
+                        t-key="phone_index"
+                        t-esc="phone"
+                    />
+                    <span
+                        t-foreach="contact.emails || []"
+                        t-as="email"
+                        t-key="email_index"
+                        t-esc="email"
+                    />
+                </article>
+            </div>
+            <div t-elif="structuredCard.type === 'location'">
+                <strong><i class="fa fa-map-marker" aria-hidden="true" /> <t
+                        t-esc="structuredCard.name || 'Localização'"
+                    /></strong>
+                <p t-if="structuredCard.address" t-esc="structuredCard.address" />
+                <small
+                    t-if="structuredCard.live"
+                >Localização compartilhada ao vivo no aplicativo de origem; este ponto é uma captura.</small>
+                <a
+                    t-if="structuredCard.href"
+                    t-att-href="structuredCard.href"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                >Abrir no mapa</a>
+            </div>
+            <div t-elif="structuredCard.type === 'selection'"><small
+                >Opção selecionada</small><strong t-esc="structuredCard.title" /></div>
+            <div t-elif="structuredCard.type === 'shared'">
+                <article
+                    t-foreach="structuredCard.items"
+                    t-as="item"
+                    t-key="item_index"
+                >
+                    <small
+                        t-esc="item.kind === 'reel' ? 'Reel' : item.kind === 'story' ? 'Story' : item.kind === 'post' ? 'Publicação' : 'Link compartilhado'"
+                    />
+                    <a
+                        t-if="item.href"
+                        t-att-href="item.href"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        t-esc="item.title || 'Abrir conteúdo'"
+                    />
+                    <span t-else="" t-esc="item.title || 'Conteúdo compartilhado'" />
+                </article>
+            </div>
+            <small t-if="structuredCard.footer" t-esc="structuredCard.footer" />
+        </section>
     </t>
 
     <t t-name="contact_center_ui.MediaViewer" owl="1">

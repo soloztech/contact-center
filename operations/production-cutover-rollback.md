@@ -21,17 +21,18 @@ Contact Center schema. The existing SERVIDOR05 laboratory is different: its form
 Base-owned pipeline XML IDs must be removed by the laboratory release procedure while
 Base, Kanban and CRM are upgraded in the same stopped Odoo invocation.
 
-## Defined window
+## Window status after the 2026-09-05 audit
 
-- Change window: **Saturday 2026-09-05, 07:00–10:00 BRT**.
-- Deployment and canary target: complete by 08:00 BRT.
-- Mandatory go/no-go decision: no later than 08:30 BRT.
-- Rollback reserve: 08:30–10:00 BRT.
-- Heightened observation: 24 hours after go-live.
+The former **2026-09-05, 07:00–10:00 BRT** window is cancelled. Its prerequisite
+controlled drill had stopped after 14 of 4,800 webhooks returned HTTP 400, before the
+recovery scenarios. The required acceptance was not available before 06:00 BRT, and the
+window has elapsed. This document does not authorize a later deploy.
 
-If the immutable RC, controlled resilience drill or capacity report is not green by
-06:00 BRT, the window is automatically cancelled. A cancelled window makes no production
-change.
+Before a new window, record its date, operator, canary deadline, go/no-go deadline and
+rollback reserve against the exact coordinated source revisions and updated
+[audit evidence](../reviews/2026-09-05-greenfield-audit.md). Require all acceptance
+gates to pass at least one hour before the window; otherwise cancel it. Retain 24 hours
+of heightened observation after go-live.
 
 The explicit product decision for this first window is to defer edge rate limiting. That
 waiver does not remove ingress telemetry: webhook request rate, response code, latency,
@@ -53,14 +54,21 @@ the release evidence before T0.
 1. Freeze the release commit and create signed/private tag `16.0.1.0.0-rc1`.
 2. Record the exact commit and SHA-256 tree of both private repositories.
 3. Prove CI, isolated Odoo suites, QUnit and authenticated desktop/mobile smoke against
-   that exact tree.
+   that exact tree. Dispatch each repository's test workflow on its release revision
+   with `peer_ref` set to the other repository's full commit SHA. Record both workflow
+   run IDs; the default PR baseline alone does not validate the final coordinated pair.
 4. Prove the controlled provider-failure and 20-inbox capacity drills against that exact
    tree; no unexplained `dead`, `uncertain` or orphaned queue record may remain.
 5. Inventory production prerequisites, disk, PostgreSQL health, filestore, queue runner,
    workers, cron, bus/websocket routing and provider credentials without exposing
    secrets in evidence.
 6. Export the intended account/connection/team mapping. Every provider asset must map to
-   exactly one logical inbox and one active primary connection.
+   exactly one logical inbox and one active primary connection. For inboxes that import
+   messages sent from another device, configure the account's **Technical Author**
+   explicitly and validate one such message plus its receipt. Provider readiness alone
+   does not configure that optional author. Without it, external-device echoes remain
+   unsupported and receipts may await their message; never attribute them automatically
+   to an operator who did not send them.
 7. Disable automatic module updates and unrelated deployments for the entire window.
 8. Announce a short agent maintenance period. Browser sessions may remain open but are
    not considered valid until reloaded after the release.
@@ -166,3 +174,31 @@ Mode C is a forward recovery with provider reconciliation, not a database rewind
   valid only for this first observation period.
 - Close the change only after the 24-hour review records zero unexplained duplicate,
   access, routing or queue-recovery incident.
+
+## Rich messaging candidate — 2026-09-06
+
+The local candidate additionally requires the new
+`contact.center.message.binding.structured_content_json` field and refreshed UI assets.
+Update the base and provider/UI addons together. Meta attachment upload uses the shared
+`meta_api_base` multipart client from the same approved Marketing tree.
+
+Local evidence is recorded in `reviews/2026-09-06-rich-messaging.md`: 1,719 tests on a
+clean install of all 24 addons and a successful registry update replay. The UI gate now
+requires all 166 Contact Center tests; filtering must include the new structured message
+suite. This is local validation and does not replace the pilot/provider checks.
+
+For the pilot, verify one image and one supported document on each enabled Meta
+transport, and reply/list/contact/location on WhatsApp. Confirm provider permissions and
+the response window. A Meta upload retry can leave an unattached media object; an
+uncertain final send must remain fenced under rollback mode C. Multiple selected files
+are independent messages, not a native album.
+
+The subsequent
+[channel capability revision](../reviews/2026-09-06-channel-capabilities.md) replaces
+the outgoing card type list with `outbound_structured_content` specifications. Its
+evidence supersedes the above test counts for release acceptance. On an existing
+laboratory database, run the normal connection capability refresh after updating the
+complete source pair; the old capability key intentionally does not enable cards. Verify
+the actual advertised action types and limits for each pilot connection before sending.
+A rendered card received from a provider is not evidence that outbound cards are
+supported by that adapter.

@@ -11,6 +11,12 @@ Implemented baseline
   addressing, capability gates and fail-closed roster validation.
 * Per-participant group delivered/read receipts in a dedicated Odoo ledger; aggregate
   message delivery is not promoted and the UI receives counts only.
+* Bounded reply/URL/phone buttons, lists, contact cards and static locations in direct
+  and group conversations, using the pinned provider endpoints and the same queue.
+* Received selections retain their stable identifiers; contact and location payloads
+  become typed cards. Circular video is downloaded and rendered as ordinary video.
+* Album children remain individual media messages. The pinned revision has no native
+  album-send endpoint; coordination envelopes do not create empty human messages.
 
 Next increments
 ===============

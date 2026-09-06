@@ -1094,6 +1094,11 @@ class ContactCenterInboxEvent(models.Model):
                 self._process_normalized(
                     event_dto, attribution_touchpoints=attribution_touchpoints
                 )
+        except (SerializationFailure, DeadlockDetected) as error:
+            # Let OCA discard the aborted transaction without consuming the
+            # adapter retry budget. Contention can occur before our savepoints,
+            # so no ledger write is safe here, even at the attempt ceiling.
+            raise RetryableJobError(str(error), seconds=5, ignore_retry=True) from error
         except IdentityConflictError as error:
             self._record_identity_conflict(error)
             self._finish_failure("blocked", error, attempts=attempt)
@@ -1226,8 +1231,9 @@ class ContactCenterInboxEvent(models.Model):
             if job:
                 # Inbox retries roll back the ledger transaction, while queue_job
                 # persists its own retry counter.  The ledger value is therefore
-                # the baseline from a previous/legacy job and job.retry is the
-                # number of failed executions of the current job.
+                # baseline from previously completed jobs (for example while
+                # waiting for a group roster), and job.retry counts failed
+                # executions of the current job.
                 return self.attempts + job.retry + 1
         return self.attempts + 1
 
@@ -1702,6 +1708,13 @@ class ContactCenterOutboxCommand(models.Model):
                         not media
                         and message_binding
                         and message_binding.content_type == "text"
+                        and not message_binding.structured_content_json
+                    )
+                    or (
+                        not media
+                        and message_binding.structured_content_json
+                        and message_binding.content_type
+                        == message_binding.structured_content_json.get("type")
                     )
                     or (
                         len(media) == 1
@@ -2082,6 +2095,7 @@ class ContactCenterOutboxCommand(models.Model):
             or command_dto.client_message_id != (binding.client_message_id or "")
             or message_dto.client_message_id != (binding.client_message_id or "")
             or message_dto.content_type != binding.content_type
+            or message_dto.structured_content != (binding.structured_content_json or {})
         ):
             return False
         return external_message_id, command_dto, evidence["local_error_class"]
@@ -2826,6 +2840,30 @@ class ContactCenterOutboxCommand(models.Model):
             return []
         mismatches = []
         message = command_dto.message
+        if message:
+            content = message.structured_content
+            if content != (self.message_binding_id.structured_content_json or {}):
+                mismatches.append("message.structured_content")
+            if content:
+                if (
+                    message.media
+                    or message.content_type != content["type"]
+                    or message.content_type != self.message_binding_id.content_type
+                ):
+                    mismatches.append("message.structured_content.shape")
+                if command_dto.options.get("sender_signature"):
+                    mismatches.append("message.structured_content.signature")
+                try:
+                    self.env[
+                        "contact.center.application"
+                    ]._check_outbound_structured_capability(
+                        self.provider_connection_id,
+                        self.channel_binding_id.conversation_type,
+                        content,
+                        message.text,
+                    )
+                except (UserError, ValidationError):
+                    mismatches.append("message.structured_content.capability")
         ledger_client_message_id = self.message_binding_id.client_message_id or ""
         if not command_dto.target_address:
             mismatches.append("target_address")
@@ -3156,6 +3194,13 @@ class ContactCenterOutboxCommand(models.Model):
             mismatches.append("message.media.ledger")
             return mismatches
         if not command_media:
+            if message.structured_content:
+                if (
+                    message.content_type != message.structured_content["type"]
+                    or message_binding.content_type != message.content_type
+                ):
+                    mismatches.append("message.content")
+                return mismatches
             if (
                 message.content_type != "text"
                 or message_binding.content_type != "text"
@@ -3267,6 +3312,12 @@ class ContactCenterOutboxCommand(models.Model):
             for field_name, expected_value in expected.items()
             if getattr(command_dto, field_name) != expected_value
         ]
+        if (
+            command_dto.command_type != "send_message"
+            and command_dto.message
+            and command_dto.message.structured_content
+        ):
+            mismatches.append("message.structured_content")
         if command_dto.conversation.conversation_type != binding.conversation_type:
             mismatches.append("conversation.conversation_type")
         allowed_addresses = {
@@ -3310,6 +3361,10 @@ class ContactCenterOutboxCommand(models.Model):
                 != self.target_message_binding_id.external_message_id
             ):
                 mismatches.append("options.target_external_message_id")
+        if command_dto.command_type == "edit_message" and not self.env[
+            "contact.center.application"
+        ]._outbound_text_edit_supported(self.target_message_binding_id):
+            mismatches.append("target_message_binding.editable_content")
         if mismatches:
             raise ValidationError(
                 _(

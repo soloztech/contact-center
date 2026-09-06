@@ -233,12 +233,10 @@ class WuzapiGroupMetadataMixin:
                     raise AdapterError("%s response exceeds the size limit" % label)
                 chunks.append(chunk)
             payload = json.loads(b"".join(chunks).decode("utf-8"))
-        except requests.RequestException as error:
-            raise TransientAdapterError(
-                "%s response was interrupted" % label
-            ) from error
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise AdapterError("%s response is not valid JSON" % label) from error
+        except requests.RequestException:
+            raise TransientAdapterError("%s response was interrupted" % label) from None
+        except (ValueError, RecursionError):
+            raise AdapterError("%s response is not valid JSON" % label) from None
         finally:
             if callable(close):
                 close()
@@ -644,7 +642,7 @@ class WuzapiGroupMetadataMixin:
             error = ProviderRateLimitError("WuzAPI %s request was rate limited" % label)
             error.retry_after_seconds = retry_after_seconds
             raise error
-        if status >= 500:
+        if status in (408, 425) or status >= 500:
             error = TransientAdapterError(
                 "WuzAPI %s request failed with HTTP %s" % (label, status)
             )
@@ -711,10 +709,10 @@ class WuzapiGroupMetadataMixin:
                 allow_redirects=False,
                 stream=True,
             )
-        except requests.RequestException as error:
+        except requests.RequestException:
             raise TransientAdapterError(
                 "WuzAPI group metadata request did not return a response"
-            ) from error
+            ) from None
         if not 200 <= response.status_code < 300:
             status = response.status_code
             retry_after_seconds = self._provider_retry_after(response)
@@ -797,10 +795,10 @@ class WuzapiGroupMetadataMixin:
                 if total > _MAX_AVATAR_BYTES:
                     raise AdapterError("WuzAPI %s exceeds the size limit" % label)
                 chunks.append(chunk)
-        except requests.RequestException as error:
+        except requests.RequestException:
             raise TransientAdapterError(
                 "WuzAPI %s response was interrupted" % label
-            ) from error
+            ) from None
         finally:
             response.close()
         content = b"".join(chunks)
@@ -819,10 +817,10 @@ class WuzapiGroupMetadataMixin:
                 allow_redirects=False,
                 stream=True,
             )
-        except requests.RequestException as error:
+        except requests.RequestException:
             raise TransientAdapterError(
                 "WuzAPI %s lookup did not return a response" % label
-            ) from error
+            ) from None
         if not 200 <= response.status_code < 300:
             error_message = self._group_bounded_provider_error(response)
             status = response.status_code
@@ -864,10 +862,10 @@ class WuzapiGroupMetadataMixin:
                 allow_redirects=False,
                 stream=True,
             )
-        except requests.RequestException as error:
+        except requests.RequestException:
             raise TransientAdapterError(
                 "WuzAPI %s download did not return a response" % label
-            ) from error
+            ) from None
         if image_response.status_code in (404, 410):
             image_response.close()
             return AvatarResult(
@@ -930,10 +928,10 @@ class WuzapiGroupMetadataMixin:
                 allow_redirects=False,
                 stream=True,
             )
-        except requests.RequestException as error:
+        except requests.RequestException:
             raise TransientAdapterError(
                 "WuzAPI %s request did not return a response" % label
-            ) from error
+            ) from None
         if not 200 <= response.status_code < 300:
             status = response.status_code
             retry_after_seconds = self._provider_retry_after(response)

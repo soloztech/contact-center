@@ -3273,6 +3273,122 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
     }
 }
 
+.cc-composer-attachments {
+    display: grid;
+    width: 100%;
+    max-width: 56rem;
+    max-height: 15rem;
+    margin: 0 auto 0.5rem;
+    overflow-y: auto;
+    gap: 0.35rem;
+
+    .cc-composer-attachment {
+        margin-bottom: 0;
+    }
+}
+
+.cc-composer-attachments__hint {
+    max-width: 56rem;
+    margin: 0 auto 0.5rem;
+    color: var(--cc-steel);
+    font-size: 0.7rem;
+}
+
+.cc-composer-card-choice select,
+.cc-structured-form input,
+.cc-structured-form textarea,
+.cc-structured-form select {
+    width: 100%;
+    min-height: 2rem;
+    padding: 0.3rem 0.45rem;
+    border: 1px solid var(--cc-border, #c5d0d2);
+    border-radius: 0.3rem;
+    color: var(--cc-ink);
+    background: var(--cc-surface, #fff);
+    font: inherit;
+}
+
+.cc-structured-form {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(#{"min(100%, 12rem)"}, 1fr));
+    max-width: 56rem;
+    max-height: 18rem;
+    margin: 0 auto 0.6rem;
+    padding: 0.6rem;
+    overflow-y: auto;
+    border: 1px solid var(--cc-border, #c5d0d2);
+    border-radius: 0.4rem;
+    gap: 0.5rem;
+    font-size: 0.75rem;
+
+    legend {
+        width: auto;
+        margin: 0;
+        padding: 0 0.25rem;
+        font-size: 0.8rem;
+    }
+
+    label {
+        display: grid;
+        min-width: 0;
+        margin: 0;
+        gap: 0.2rem;
+    }
+}
+
+.cc-structured-form__row {
+    display: flex;
+    grid-column: 1 / -1;
+    align-items: end;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+
+    label {
+        flex: 1 1 8rem;
+    }
+}
+
+.cc-structured-form__hint,
+.cc-structured-form__add {
+    grid-column: 1 / -1;
+    margin: 0;
+}
+
+.cc-structured-card {
+    display: grid;
+    min-width: 10rem;
+    margin-top: 0.4rem;
+    padding: 0.6rem;
+    border: 1px solid currentColor;
+    border-radius: 0.4rem;
+    gap: 0.5rem;
+    overflow-wrap: anywhere;
+
+    article,
+    .cc-structured-card__options,
+    .cc-structured-card__option {
+        display: grid;
+        gap: 0.3rem;
+    }
+
+    article + article,
+    .cc-structured-card__option {
+        margin-top: 0.4rem;
+        padding-top: 0.4rem;
+        border-top: 1px solid rgba(128, 128, 128, 0.25);
+    }
+
+    small {
+        display: block;
+        opacity: 0.8;
+    }
+}
+
+.cc-structured-card--location a {
+    display: block;
+    margin-top: 0.35rem;
+}
+
 .cc-composer-attachment,
 .cc-composer-upload-error {
     width: 100%;
@@ -5619,8 +5735,16 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
     }
 
     .cc-conversation-header {
+        display: grid;
         min-height: 4.35rem;
+        grid-template-columns: auto minmax(0, 1fr);
         padding: 0.6rem;
+    }
+
+    .cc-conversation-header__actions {
+        grid-column: 1 / -1;
+        flex-wrap: wrap;
+        justify-content: flex-end;
     }
 
     .cc-conversation-header__identity h2 {

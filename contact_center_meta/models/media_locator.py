@@ -312,7 +312,7 @@ class ContactCenterMetaMediaLocator(models.Model):
             or not locator.inbox_event_id
             or locator.inbox_event_id.provider_connection_id.id != connection.id
             or locator.inbox_event_id.company_id.id != locator.company_id.id
-            or not locator.slot.startswith("attachment:")
+            or not (locator.slot.startswith("attachment:") or locator.slot == "story")
         ):
             raise ValidationError(
                 _("Meta private locator is outside this routed message.")

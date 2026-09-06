@@ -241,7 +241,12 @@ class CrmLead(models.Model):
         return result
 
     def _contact_center_sync_case_stages(self, *, links=None, contract_maps=None):
-        origin_case_id = self.env.context.get("contact_center_crm_origin_case_id")
+        origin_case_id = (
+            self.env.context.get("contact_center_crm_origin_case_id")
+            if self.env.context.get("contact_center_crm_stage_sync")
+            is CRM_CASE_STAGE_SYNC_TOKEN
+            else None
+        )
         links = links if links is not None else self.sudo().contact_center_case_link_ids
         contract_maps = contract_maps or links._contact_center_contract_maps()
         links_by_lead = {}

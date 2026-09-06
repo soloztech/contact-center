@@ -10,6 +10,7 @@ from odoo.addons.contact_center_base.services.adapter import (
 from odoo.addons.contact_center_base.services.dto import AdapterResult, CommandDTO
 
 from .api import graph_request, resolve_graph_runtime
+from .outbound_media import private_media_content, upload_private_media
 
 _GRAPH_ID_PATTERN = re.compile(r"^[0-9]{5,40}$")
 _RESPONSE_WINDOW = datetime.timedelta(hours=24)
@@ -215,7 +216,7 @@ def _reply_message_id(command):
     return reference_reply_id
 
 
-def _text_payload(connection, command):
+def _message_payload(connection, command):
     if not isinstance(command, CommandDTO):
         raise AdapterError("Meta outbound requires a CommandDTO")
     contract = _connection_contract(connection)
@@ -224,28 +225,44 @@ def _text_payload(connection, command):
         or command.connection_ref != connection.external_ref
         or command.command_type != "send_message"
         or not command.message
-        or command.message.content_type != "text"
-        or command.message.media
+        or command.message.structured_content
         or command.options
         or command.extensions
         or command.own_protocol_participant
         or command.target_protocol_participant
     ):
-        raise AdapterError("Meta outbound supports direct text messages only")
-    text = command.message.text
-    if not isinstance(text, str) or not text.strip():
-        raise AdapterError("Meta outbound text is empty")
-    if any(ord(character) == 0 for character in text):
-        raise AdapterError("Meta outbound text contains invalid control data")
-    maximum_characters = contract["maximum_text_characters"]
-    maximum_bytes = contract["maximum_text_bytes"]
-    if maximum_characters and len(text) > maximum_characters:
-        raise AdapterError("Meta outbound text exceeds the provider limit")
-    if maximum_bytes and len(text.encode("utf-8")) > maximum_bytes:
-        raise AdapterError("Meta outbound text exceeds the provider byte limit")
+        raise AdapterError(
+            "Meta outbound supports direct text messages or private media only"
+        )
+    if command.message.media:
+        message = {
+            "attachment": {
+                "type": "file"
+                if command.message.content_type == "document"
+                else command.message.content_type,
+                "payload": {},
+            }
+        }
+    else:
+        text = command.message.text
+        if (
+            command.message.content_type != "text"
+            or not isinstance(text, str)
+            or not text.strip()
+        ):
+            raise AdapterError("Meta outbound text is empty")
+        if any(ord(character) == 0 for character in text):
+            raise AdapterError("Meta outbound text contains invalid control data")
+        maximum_characters = contract["maximum_text_characters"]
+        maximum_bytes = contract["maximum_text_bytes"]
+        if maximum_characters and len(text) > maximum_characters:
+            raise AdapterError("Meta outbound text exceeds the provider limit")
+        if maximum_bytes and len(text.encode("utf-8")) > maximum_bytes:
+            raise AdapterError("Meta outbound text exceeds the provider byte limit")
+        message = {"text": text}
     target_id = _target_id(connection, command, contract)
     reply_message_id = _reply_message_id(command)
-    payload = {"recipient": {"id": target_id}, "message": {"text": text}}
+    payload = {"recipient": {"id": target_id}, "message": message}
     if contract["messaging_type"]:
         payload["messaging_type"] = contract["messaging_type"]
     if reply_message_id:
@@ -253,9 +270,9 @@ def _text_payload(connection, command):
     return contract, target_id, payload
 
 
-def prepare_text_request(env, connection, command, *, now=None):
+def prepare_send_request(env, connection, command, *, now=None):
     _active_route(connection)
-    contract, _target_id_value, payload = _text_payload(connection, command)
+    contract, _target_id_value, payload = _message_payload(connection, command)
     page_id = _page_send_route(connection, contract)
     latest = _latest_eligible_inbound_at(
         env,
@@ -264,7 +281,7 @@ def prepare_text_request(env, connection, command, *, now=None):
         now=now,
     )
     expires_at = latest + _RESPONSE_WINDOW
-    return {
+    snapshot = {
         "provider": "meta",
         "provider_version": connection.meta_api_app_id.graph_version,
         "method": "POST",
@@ -276,16 +293,39 @@ def prepare_text_request(env, connection, command, *, now=None):
             "expires_at": fields.Datetime.to_string(expires_at),
         },
     }
+    if command.message.media:
+        _media, _content, descriptor = private_media_content(env, connection, command)
+        # The provider attachment ID is allocated only during dispatch. Record the
+        # immutable upload intent without persisting bytes or a publicly served URL.
+        payload["message"]["attachment"]["payload"]["attachment_id"] = {
+            "from_private_upload": descriptor
+        }
+        snapshot["upload"] = {
+            "method": "POST",
+            "endpoint": "/%s/message_attachments" % page_id,
+            "filedata": descriptor,
+        }
+        if contract["platform"] == "instagram":
+            snapshot["upload"]["platform"] = "instagram"
+    return snapshot
 
 
-def execute_text_request(env, connection, command):
+def execute_send_request(env, connection, command):
     _active_route(connection)
     runtime, page_token, _page_revision = resolve_graph_runtime(connection)
-    contract, target_id, payload = _text_payload(connection, command)
+    contract, target_id, payload = _message_payload(connection, command)
     page_id = _page_send_route(connection, contract)
     # Re-evaluate immediately before crossing the network boundary.  A command
     # prepared just inside the window cannot be dispatched after it closes.
     _latest_eligible_inbound_at(env, connection, command)
+    if command.message.media:
+        media, content, descriptor = private_media_content(env, connection, command)
+        attachment_id = upload_private_media(
+            runtime, page_token, page_id, contract, media, content, descriptor
+        )
+        payload["message"]["attachment"]["payload"]["attachment_id"] = attachment_id
+        _active_route(connection)
+        _latest_eligible_inbound_at(env, connection, command)
     response = graph_request(
         runtime,
         page_token,

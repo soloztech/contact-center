@@ -21,6 +21,7 @@ from ..services.tokens import CONTACT_CENTER_MEMBERSHIP_TOKEN
 _logger = logging.getLogger(__name__)
 _COMPANY_PORTABLE_IDENTITY_NAMESPACES = frozenset({"whatsapp.pn"})
 _ALIAS_LAST_SEEN_WRITE_INTERVAL = datetime.timedelta(minutes=5)
+_REPLY_TARGET_RETRY_DELAYS = (5, 10)
 
 
 class IdentityConflictError(Exception):
@@ -340,7 +341,11 @@ class ContactCenterApplication(models.AbstractModel):
             raise UnsupportedEventError(
                 "event type is persisted but not implemented yet: %s" % event.event_type
             )
-        if not event.message or (not event.message.text and not event.message.media):
+        if not event.message or (
+            not event.message.text
+            and not event.message.media
+            and not event.message.structured_content
+        ):
             raise UnsupportedEventError(
                 "message events require text or a supported media descriptor"
             )
@@ -446,7 +451,9 @@ class ContactCenterApplication(models.AbstractModel):
                     _("Group messages marked from_me must have outbound direction.")
                 )
             if not event.message or (
-                not event.message.text and not event.message.media
+                not event.message.text
+                and not event.message.media
+                and not event.message.structured_content
             ):
                 raise UnsupportedEventError(
                     "from_me group messages require text or media content"
@@ -464,7 +471,11 @@ class ContactCenterApplication(models.AbstractModel):
             raise UnsupportedEventError(
                 "only inbound provider group messages are supported"
             )
-        if not event.message or (not event.message.text and not event.message.media):
+        if not event.message or (
+            not event.message.text
+            and not event.message.media
+            and not event.message.structured_content
+        ):
             raise UnsupportedEventError(
                 "group metadata without human message content is unsupported"
             )
@@ -762,7 +773,14 @@ class ContactCenterApplication(models.AbstractModel):
         return target_participant
 
     @api.model
-    def _event_reply_binding(self, channel_binding, event):
+    def _event_reply_binding(self, channel_binding, event, inbox_event=None):
+        """Give reordered quotes a short grace without dropping human content.
+
+        An original from before capture began may never arrive. Keep that external
+        reference in the normalized event/provider snapshot, without inventing a
+        local parent or making the new message depend on historical availability.
+        """
+
         reply_external_id = event.message.reply_to_external_id if event.message else ""
         if not reply_external_id:
             return self.env["contact.center.message.binding"]
@@ -777,8 +795,11 @@ class ContactCenterApplication(models.AbstractModel):
                 limit=1,
             )
         )
-        if not reply_binding:
-            raise TransientAdapterError("message reply arrived before its target")
+        attempt = inbox_event.attempts if inbox_event else 0
+        if not reply_binding and 1 <= attempt <= len(_REPLY_TARGET_RETRY_DELAYS):
+            error = TransientAdapterError("message reply arrived before its target")
+            error.retry_after_seconds = _REPLY_TARGET_RETRY_DELAYS[attempt - 1]
+            raise error
         return reply_binding
 
     def _process_group_metadata_hint(self, connection, event):
@@ -1143,12 +1164,28 @@ class ContactCenterApplication(models.AbstractModel):
         )
         participant_changed = False
         previous_external_message_id = message_binding.external_message_id or ""
+        observed_snapshot = dict(event.message.protocol_snapshot or {})
         if event.conversation.conversation_type == "group":
             persisted_reply = message_binding.reply_to_binding_id
+            persisted_reply_external_id = persisted_reply.external_message_id or ""
             observed_reply_external_id = event.message.reply_to_external_id or ""
+            if not persisted_reply and message_binding.origin == "external_device":
+                # An imported human message may quote uncaptured history. Its
+                # repeated observation must agree with that durable reference;
+                # locally composed replies still require their real bound target.
+                persisted_reference = (
+                    message_binding.protocol_snapshot_json or {}
+                ).get("reply_to")
+                if isinstance(persisted_reference, dict):
+                    persisted_reply_external_id = (
+                        persisted_reference.get("external_message_id") or ""
+                    )
+                    if persisted_reply_external_id and not observed_reply_external_id:
+                        # Echoes can omit quote context. Absence must not erase the
+                        # reference needed to recognize a later complete replay.
+                        observed_snapshot["reply_to"] = dict(persisted_reference)
             if observed_reply_external_id and (
-                not persisted_reply
-                or persisted_reply.external_message_id != observed_reply_external_id
+                persisted_reply_external_id != observed_reply_external_id
             ):
                 raise ValidationError(
                     _(
@@ -1167,7 +1204,7 @@ class ContactCenterApplication(models.AbstractModel):
             message_binding.channel_binding_id, event.conversation.addresses
         )
         snapshot = dict(message_binding.protocol_snapshot_json or {})
-        snapshot.update(event.message.protocol_snapshot or {})
+        snapshot.update(observed_snapshot)
         if snapshot != (message_binding.protocol_snapshot_json or {}):
             message_binding.sudo().write({"protocol_snapshot_json": snapshot})
         message_binding._contact_center_apply_delivery(
@@ -1277,7 +1314,9 @@ class ContactCenterApplication(models.AbstractModel):
                     {"message_id": existing.message_id.id},
                 )
             return existing.message_id
-        reply_binding = self._event_reply_binding(channel_binding, event)
+        reply_binding = self._event_reply_binding(
+            channel_binding, event, inbox_event=inbox_event
+        )
         message = channel_binding.channel_id.sudo()._contact_center_post(
             origin="external_device",
             body=html_escape(event.message.text or ""),
@@ -1308,6 +1347,7 @@ class ContactCenterApplication(models.AbstractModel):
                         event.message.forwarding_score is not None
                     ),
                     "protocol_snapshot_json": event.message.protocol_snapshot,
+                    "structured_content_json": event.message.structured_content,
                     "protocol_participant_json": {},
                     "reply_to_binding_id": reply_binding.id if reply_binding else False,
                     "delivery_state": "queued",
@@ -2601,7 +2641,9 @@ class ContactCenterApplication(models.AbstractModel):
             )
         public_user = self.env.ref("base.public_user")
         occurred_at = self._event_datetime(event)
-        reply_binding = self._event_reply_binding(binding, event)
+        reply_binding = self._event_reply_binding(
+            binding, event, inbox_event=inbox_event
+        )
         guest = identity.mail_guest_id.sudo()
         participant = (
             self._group_protocol_participant(event)
@@ -2642,6 +2684,7 @@ class ContactCenterApplication(models.AbstractModel):
                         event.message.forwarding_score is not None
                     ),
                     "protocol_snapshot_json": event.message.protocol_snapshot,
+                    "structured_content_json": event.message.structured_content,
                     "protocol_participant_json": (
                         participant.to_dict() if participant else {}
                     ),

@@ -5,6 +5,9 @@ from psycopg2.errors import SerializationFailure
 from odoo import SUPERUSER_ID, api, fields
 from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
+from odoo.tools import mute_logger
+
+from ..controllers.webhook import _find_or_create_inbox
 
 
 @tagged("-at_install", "post_install")
@@ -101,6 +104,61 @@ class TestWuzapiOnboardingConcurrency(TransactionCase):
                 fixture["account_id"]
             ).exists().unlink()
             cr.commit()  # pylint: disable=invalid-commit
+
+    def test_duplicate_callback_requires_fresh_repeatable_read_snapshot(self):
+        fixture = self._setup_committed_fixture(uuid.uuid4().hex)
+        values = {
+            "provider_connection_id": fixture["connection_id"],
+            "inbox_dedupe_key": "wuzapi:snapshot:%s" % fixture["onboarding_ref"],
+            "provider_schema_version": "v1.0.8",
+            "raw_envelope_json": {"type": "Disconnected", "event": {}},
+            "state": "blocked",
+        }
+        domain = [
+            ("provider_connection_id", "=", fixture["connection_id"]),
+            ("inbox_dedupe_key", "=", values["inbox_dedupe_key"]),
+        ]
+        try:
+            with self.registry.cursor() as stale_cr:
+                stale_env = api.Environment(stale_cr, SUPERUSER_ID, {})
+                stale_model = stale_env["contact.center.inbox.event"].with_context(
+                    contact_center_skip_enqueue=True
+                )
+                self.assertFalse(stale_model.search(domain))
+                with self.registry.cursor() as winner_cr:
+                    winner_env = api.Environment(winner_cr, SUPERUSER_ID, {})
+                    winner_model = winner_env[
+                        "contact.center.inbox.event"
+                    ].with_context(contact_center_skip_enqueue=True)
+                    winner, duplicate = _find_or_create_inbox(
+                        winner_model, domain, values
+                    )
+                    self.assertFalse(duplicate)
+                    winner_id = winner.id
+                    winner_cr.commit()  # pylint: disable=invalid-commit
+
+                # PostgreSQL uniqueness sees the committed winner, while this
+                # older MVCC snapshot cannot see it in an ORM search.
+                self.assertFalse(stale_model.search(domain))
+                with mute_logger("odoo.sql_db"), self.assertRaises(
+                    SerializationFailure
+                ) as caught:
+                    _find_or_create_inbox(stale_model, domain, values)
+                self.assertEqual(caught.exception.pgcode, "40001")
+
+            with self.registry.cursor() as fresh_cr:
+                fresh_env = api.Environment(fresh_cr, SUPERUSER_ID, {})
+                fresh_model = fresh_env["contact.center.inbox.event"].with_context(
+                    contact_center_skip_enqueue=True
+                )
+                duplicate, already_received = _find_or_create_inbox(
+                    fresh_model, domain, values
+                )
+                self.assertTrue(already_received)
+                self.assertEqual(duplicate.id, winner_id)
+                self.assertEqual(fresh_model.search_count(domain), 1)
+        finally:
+            self._cleanup_committed_fixture(fixture)
 
     def test_buffered_callback_forces_old_activation_snapshot_to_retry(self):
         token = uuid.uuid4().hex

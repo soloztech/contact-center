@@ -7,6 +7,7 @@ from odoo.exceptions import ValidationError
 from odoo.tests.common import SavepointCase
 
 from ..models.application import GroupRosterRefreshRequired
+from ..services.tokens import CONTACT_CENTER_MEMBERSHIP_TOKEN
 
 
 class TestQueueRecovery(SavepointCase):
@@ -621,7 +622,9 @@ class TestQueueRecovery(SavepointCase):
             for name, scope in scopes.items()
         }
         scopes["binding-archived"][3].write({"active": False})
-        scopes["channel-archived"][2].write({"active": False})
+        scopes["channel-archived"][2].with_context(
+            contact_center_membership_token=CONTACT_CENTER_MEMBERSHIP_TOKEN
+        ).write({"active": False})
         scopes["account-archived"][0].write({"active": False})
         scopes["connection-archived"][1].write({"active": False})
         merge_scope = scopes["binding-merged"]

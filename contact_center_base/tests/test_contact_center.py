@@ -14,6 +14,7 @@ from odoo.tests.common import SavepointCase
 from odoo.tools import mute_logger
 
 from odoo.addons.queue_job.exception import RetryableJobError
+from odoo.addons.queue_job.job import Job
 from odoo.addons.queue_job.tests.common import trap_jobs
 
 from ..models.application import IdentityConflictError
@@ -680,7 +681,9 @@ class TestContactCenter(SavepointCase):
         self.assertEqual(self.agent.partner_id, merge_target)
         self.assertIn(merge_target, channel.channel_member_ids.partner_id)
 
-        channel.write({"active": False})
+        channel.with_context(
+            contact_center_membership_token=CONTACT_CENTER_MEMBERSHIP_TOKEN
+        ).write({"active": False})
         self.team.write({"agent_ids": [(5, 0, 0)]})
         channel.invalidate_recordset(["channel_member_ids"])
         self.assertEqual(channel.channel_member_ids.partner_id, supervisor.partner_id)
@@ -815,7 +818,7 @@ class TestContactCenter(SavepointCase):
         )
         self.assertIn(self.agent.partner_id, external.starred_partner_ids)
 
-    def test_native_channel_matrix_blocks_local_reaction_and_keeps_archive(self):
+    def test_native_channel_matrix_blocks_local_reaction_and_native_archive(self):
         channel, _binding, _identity = self._channel_binding()
         channel_as_agent = channel.with_user(self.agent)
         info = channel_as_agent.channel_info()[0]
@@ -862,9 +865,21 @@ class TestContactCenter(SavepointCase):
         self.assertEqual(
             self.env["contact.center.outbox.command"].search_count([]), outbox_before
         )
-        channel_as_agent.write({"active": False})
+        with self.assertRaises(AccessError):
+            channel_as_agent.write({"active": False})
+        with self.assertRaises(AccessError):
+            channel_as_agent.action_archive()
+        with self.assertRaises(AccessError):
+            channel_as_agent.with_context(
+                contact_center_membership_token="forged-rpc-token"
+            ).write({"active": False})
         channel.invalidate_recordset(["active"])
-        self.assertFalse(channel.active)
+        self.assertTrue(channel.active)
+        self.env["contact.center.ui.api"].with_user(self.agent).update_conversation(
+            channel.id, {"state": "archived"}
+        )
+        self.assertEqual(channel.contact_center_state, "archived")
+        self.assertTrue(channel.active)
         explicit = channel_as_agent._contact_center_post(
             origin="outbound",
             body="Explicit but not queued by message_post",
@@ -1371,6 +1386,126 @@ class TestContactCenter(SavepointCase):
         self.assertEqual(fresh_outbox.state, "pending")
         self.assertFalse(fresh_outbox.message_binding_id.reply_to_binding_id)
 
+    def test_outbound_edit_rejects_non_text_content_without_new_commands(self):
+        channel, _binding, _identity, target = self._outbound_mutation_target()
+        self.connection.capabilities_json = {
+            "send_message": True,
+            "edit_message": True,
+            "delete_message": True,
+        }
+        api = (
+            self.env["contact.center.ui.api"]
+            .with_user(self.agent)
+            .with_context(contact_center_skip_enqueue=True)
+        )
+        outbox_model = self.env["contact.center.outbox.command"].sudo()
+        mutation_model = self.env["contact.center.message.mutation"].sudo()
+        outbox_count = outbox_model.search_count([])
+        mutation_count = mutation_model.search_count([])
+        original_body = target.message_id.body
+        admission_revision = self.connection.outbound_admission_revision
+        for content_type in (
+            "image",
+            "audio",
+            "video",
+            "document",
+            "location",
+            "contact",
+            "sticker",
+            "poll",
+            "interactive",
+            "text",
+        ):
+            with self.subTest(content_type=content_type):
+                target.content_type = content_type
+                if content_type == "text":
+                    # A text label cannot make a message with media editable.
+                    self.env["contact.center.media.binding"].sudo().with_context(
+                        contact_center_skip_enqueue=True
+                    ).create({"message_binding_id": target.id, "kind": "image"})
+                message = api._serialize_message(target.message_id, target)
+                self.assertFalse(message["actions"]["edit"])
+                self.assertTrue(message["actions"]["delete"])
+                with self.assertRaisesRegex(UserError, "Only text messages"):
+                    api.edit_message(
+                        channel.id,
+                        target.message_id.id,
+                        "Replacement caption",
+                        str(uuid.uuid4()),
+                    )
+                self.assertEqual(outbox_model.search_count([]), outbox_count)
+                self.assertEqual(mutation_model.search_count([]), mutation_count)
+                self.assertEqual(target.message_id.body, original_body)
+                self.assertEqual(
+                    self.connection.outbound_admission_revision, admission_revision
+                )
+
+    def test_outbound_text_edit_remains_available_and_dispatches(self):
+        channel, _binding, _identity, target = self._outbound_mutation_target()
+        self.connection.capabilities_json = {
+            "send_message": True,
+            "edit_message": True,
+        }
+        api = (
+            self.env["contact.center.ui.api"]
+            .with_user(self.agent)
+            .with_context(contact_center_skip_enqueue=True)
+        )
+        self.assertTrue(
+            api._serialize_message(target.message_id, target)["actions"]["edit"]
+        )
+        result = api.edit_message(
+            channel.id, target.message_id.id, "Corrected text", str(uuid.uuid4())
+        )
+        outbox = (
+            self.env["contact.center.outbox.command"]
+            .sudo()
+            .browse(result["outbox_command_id"])
+        )
+        self._process_outbox(outbox)
+        self.assertEqual(outbox.state, "done")
+        self.assertEqual(target.message_state, "edited")
+        self.assertEqual(api._body_text(target.message_id.body), "Corrected text")
+
+    def test_queued_media_edit_is_rejected_before_provider_dispatch(self):
+        channel, _binding, _identity, target = self._outbound_mutation_target()
+        self.connection.capabilities_json = {
+            "send_message": True,
+            "edit_message": True,
+        }
+        result = (
+            self.env["contact.center.ui.api"]
+            .with_user(self.agent)
+            .with_context(contact_center_skip_enqueue=True)
+            .edit_message(
+                channel.id, target.message_id.id, "Invalid caption", str(uuid.uuid4())
+            )
+        )
+        outbox = (
+            self.env["contact.center.outbox.command"]
+            .sudo()
+            .browse(result["outbox_command_id"])
+        )
+        # Reproduce a media edit already admitted before the content guard existed.
+        target.content_type = "image"
+        original_body = target.message_id.body
+        with mock.patch.object(
+            FakeAdapter, "execute_command", autospec=True
+        ) as execute, mock.patch.object(
+            FakeAdapter, "prepare_request_snapshot", autospec=True
+        ) as prepare:
+            self._process_outbox(outbox)
+        execute.assert_not_called()
+        prepare.assert_not_called()
+        self.assertEqual(outbox.state, "dead")
+        self.assertEqual(outbox.mutation_id.state, "failed")
+        self.assertIn(
+            "target_message_binding.editable_content", outbox.last_error_message
+        )
+        self.assertFalse(outbox.dispatch_started_at)
+        self.assertEqual(target.message_state, "active")
+        self.assertEqual(target.message_id.body, original_body)
+
     def test_optional_agent_signature_only_changes_provider_text(self):
         channel, binding, _identity = self._channel_binding()
         self.account.outbound_signature_enabled = True
@@ -1669,7 +1804,7 @@ class TestContactCenter(SavepointCase):
         self.assertFalse(media.last_error_class)
         self.assertFalse(media.last_error_message)
 
-    def test_inbox_attempt_number_preserves_legacy_ledger_baseline(self):
+    def test_inbox_attempt_number_preserves_prior_job_attempts(self):
         inbox = (
             self.env["contact.center.inbox.event"]
             .sudo()
@@ -1677,7 +1812,7 @@ class TestContactCenter(SavepointCase):
             .create(
                 {
                     "provider_connection_id": self.connection.id,
-                    "inbox_dedupe_key": "legacy-attempts-%s" % uuid.uuid4(),
+                    "inbox_dedupe_key": "resumed-attempts-%s" % uuid.uuid4(),
                     "provider_schema_version": "fixture-v1",
                     "raw_envelope_json": {"fixture": True},
                     "attempts": 4,
@@ -1695,6 +1830,54 @@ class TestContactCenter(SavepointCase):
 
         self.assertEqual(inbox._job_attempt_number(queue_job.uuid), 4 + 3 + 1)
         self.assertEqual(inbox._job_attempt_number(str(uuid.uuid4())), 4 + 1)
+
+    def test_inbox_database_contention_does_not_consume_retry_budget(self):
+        inbox = (
+            self.env["contact.center.inbox.event"]
+            .sudo()
+            .with_context(contact_center_skip_enqueue=True)
+            .create(
+                {
+                    "provider_connection_id": self.connection.id,
+                    "inbox_dedupe_key": "db-contention-%s" % uuid.uuid4(),
+                    "provider_schema_version": "fixture-v1",
+                    "raw_envelope_json": {"fixture": True},
+                }
+            )
+        )
+        inbox._enqueue()
+        job = Job.load(self.env, inbox.queue_job_uuid)
+        for error_class in (SerializationFailure, DeadlockDetected) * (
+            QUEUE_ATTEMPT_CEILING + 1
+        ):
+            with self.subTest(error_class=error_class.__name__):
+                error = error_class("concurrent account update")
+                with mock.patch.object(
+                    type(self.env["contact.center.application"]),
+                    "_lock_inbound_account_scope",
+                    side_effect=error,
+                ), mock.patch.object(type(inbox), "_finish_failure") as finish:
+                    with self.assertRaises(RetryableJobError) as raised:
+                        job.perform()
+                self.assertIs(raised.exception.__cause__, error)
+                self.assertTrue(raised.exception.ignore_retry)
+                self.assertEqual(raised.exception.seconds, 5)
+                self.assertEqual(job.retry, 0)
+                finish.assert_not_called()
+                self.assertEqual(inbox.state, "pending")
+                self.assertEqual(inbox.attempts, 0)
+
+        # A real provider failure still gets its first retry after many database
+        # conflicts. Job.perform must not mistake those conflicts for attempts.
+        with mock.patch.object(
+            type(inbox), "_normalize_one", side_effect=TransientAdapterError("offline")
+        ), self.assertRaises(RetryableJobError) as raised, self.env.cr.savepoint():
+            job.perform()
+        self.assertFalse(raised.exception.ignore_retry)
+        self.assertEqual(job.retry, 1)
+        inbox.invalidate_recordset()
+        self.assertEqual(inbox.state, "pending")
+        self.assertEqual(inbox.attempts, 0)
 
     def test_outbox_worker_dispatches_persisted_command(self):
         channel, _binding, _identity = self._channel_binding()

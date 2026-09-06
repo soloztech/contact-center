@@ -329,31 +329,35 @@ class ContactCenterMediaController(http.Controller):
                     )
                 upload = existing
             else:
-                attachment = (
-                    request.env["ir.attachment"]
-                    .sudo()
-                    .with_context(image_no_postprocess=True)
-                    .create(
+                # Expected failures become HTTP responses below, so the request
+                # transaction itself will commit. Roll back the whole upload
+                # aggregate before returning a validation/access error.
+                with request.env.cr.savepoint():
+                    attachment = (
+                        request.env["ir.attachment"]
+                        .sudo()
+                        .with_context(image_no_postprocess=True)
+                        .create(
+                            {
+                                "name": values["file_name"],
+                                "type": "binary",
+                                "raw": content,
+                                "mimetype": values["mime_type"],
+                                "res_model": "contact.center.media.upload",
+                                "res_id": 0,
+                            }
+                        )
+                    )
+                    upload = upload_model.create(
                         {
-                            "name": values["file_name"],
-                            "type": "binary",
-                            "raw": content,
-                            "mimetype": values["mime_type"],
-                            "res_model": "contact.center.media.upload",
-                            "res_id": 0,
+                            **values,
+                            "reference": reference_value,
+                            "channel_binding_id": binding.id,
+                            "uploaded_by_user_id": request.env.user.id,
+                            "attachment_id": attachment.id,
                         }
                     )
-                )
-                upload = upload_model.create(
-                    {
-                        **values,
-                        "reference": reference_value,
-                        "channel_binding_id": binding.id,
-                        "uploaded_by_user_id": request.env.user.id,
-                        "attachment_id": attachment.id,
-                    }
-                )
-                attachment.write({"res_id": upload.id})
+                    attachment.write({"res_id": upload.id})
             return _json_response(
                 {
                     "schema_version": 1,

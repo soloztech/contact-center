@@ -5,6 +5,7 @@ import {useChildRef, useOwnedDialogs} from "@web/core/utils/hooks";
 import {DeferredImage} from "./deferred_image.esm";
 import {Dialog} from "@web/core/dialog/dialog";
 import {formatFileSize} from "./contact_center_model.esm";
+import {structuredMessageCard} from "./structured_content.esm";
 
 const MEDIA_LABELS = Object.freeze({
     image: "Imagem",
@@ -412,6 +413,10 @@ export class MessageContent extends Component {
 
     get message() {
         return this.props.message;
+    }
+
+    get structuredCard() {
+        return structuredMessageCard(this.message.structured_content);
     }
 
     get controlMeta() {

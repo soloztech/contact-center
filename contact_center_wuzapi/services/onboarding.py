@@ -75,12 +75,12 @@ def _bounded_json(response, maximum_bytes, label):
             encoded = json.dumps(payload, separators=(",", ":")).encode("utf-8")
             if len(encoded) > maximum_bytes:
                 raise AdapterError("%s response is too large" % label)
-    except (json.JSONDecodeError, TypeError, ValueError) as error:
-        raise AdapterError("%s response is not valid JSON" % label) from error
-    except requests.RequestException as error:
+    except (TypeError, ValueError, RecursionError):
+        raise AdapterError("%s response is not valid JSON" % label) from None
+    except requests.RequestException:
         raise TransientAdapterError(
             "%s response stream was interrupted" % label
-        ) from error
+        ) from None
     finally:
         close = getattr(response, "close", None)
         if callable(close):
@@ -126,16 +126,16 @@ class WuzapiOnboardingClient:
                 allow_redirects=False,
                 stream=True,
             )
-        except requests.RequestException as error:
+        except requests.RequestException:
             raise TransientAdapterError(
                 "WuzAPI setup endpoint did not respond"
-            ) from error
+            ) from None
         if response.status_code not in accepted:
             status = response.status_code
             response.close()
             if status == 429:
                 raise ProviderRateLimitError("WuzAPI setup was rate limited")
-            if status >= 500:
+            if status in (408, 425) or status >= 500:
                 raise TransientAdapterError("WuzAPI setup failed with HTTP %s" % status)
             raise AdapterError("WuzAPI setup failed with HTTP %s" % status)
         return _bounded_json(response, maximum_bytes, "WuzAPI setup")

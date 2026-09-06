@@ -4,7 +4,11 @@
   CRM bridge pending
 - Reviewed: 2026-08-25
 - Runtime baseline: WuzAPI `v1.0.8`, commit `9487eca`
-- Protocol reference: whatsmeow `v0.0.0-20260722203353-e9a033b24933`
+- Runtime dependency: whatsmeow `v0.0.0-20260630180629-b572e5bcb92b`, as pinned by
+  [WuzAPI's go.mod](https://github.com/asternic/wuzapi/blob/9487eca9a40f292d19953a44983979c85d91ccce/go.mod#L15)
+  (verified 2026-09-06)
+- Historical protocol research reference: whatsmeow
+  `v0.0.0-20260722203353-e9a033b24933`; this newer snapshot is not the runtime baseline
 
 This note records the provider payload evidence needed for the future Contact Center to
 CRM attribution bridge. It contains counts and field names only. Message bodies, phone

@@ -258,6 +258,17 @@ class ProviderAdapter(abc.ABC):
             raise AdapterError("outbound sender signature is invalid")
         return True
 
+    def validate_outbound_structured_content(self, connection, content, text):
+        """Validate transport details after the explicit outbound card spec.
+
+        Advertising ``outbound_structured_content`` alone never opts an adapter
+        into a send implementation: providers must also implement this hook.
+        """
+
+        if content:
+            raise AdapterError("structured content is unsupported by this provider")
+        return True
+
     def validate_recorded_audio_upload(
         self,
         connection,

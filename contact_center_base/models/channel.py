@@ -236,6 +236,18 @@ class MailChannel(models.Model):
         return super().create(vals_list)
 
     def write(self, values):
+        if (
+            "active" in values
+            and self.env.context.get("contact_center_membership_token")
+            is not _CONTACT_CENTER_MEMBERSHIP_TOKEN
+            and any(channel.channel_type == "contact_center" for channel in self)
+        ):
+            raise AccessError(
+                _(
+                    "Archive or reopen conversations from the Contact Center inbox. "
+                    "Native channel archival would disable incoming messages."
+                )
+            )
         protected_fields = {
             "contact_center_company_id",
             "contact_center_team_id",
@@ -1254,6 +1266,7 @@ class ContactCenterChannelBinding(models.Model):
         has_text=False,
         has_media=False,
         has_reply=False,
+        has_structured=False,
     ):
         """Allow only the explicitly opened outbound shape for each channel type."""
 
@@ -1270,7 +1283,9 @@ class ContactCenterChannelBinding(models.Model):
                 and not has_reply
             ):
                 return True
-            if operation == "send_message" and (has_text or has_media):
+            if operation == "send_message" and (
+                has_text or has_media or has_structured
+            ):
                 return True
         raise UserError(
             _("This group operation requires an explicit provider capability.")

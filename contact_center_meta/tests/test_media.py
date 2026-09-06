@@ -8,6 +8,7 @@ from odoo.addons.contact_center_base.services.dto import MediaDTO
 from odoo.addons.meta_webhook_base.services.tokens import META_WEBHOOK_INTERNAL_TOKEN
 from odoo.addons.queue_job.tests.common import trap_jobs
 
+from ..services.media import _request_media
 from .common import MetaCase
 
 REQUEST_PATCH = "odoo.addons.contact_center_meta.services.media.requests.request"
@@ -29,6 +30,22 @@ class FakeMediaResponse:
 
 
 class TestMetaPrivateMedia(MetaCase):
+    def test_malformed_media_url_is_classified_before_network(self):
+        with mock.patch(REQUEST_PATCH) as request_mock, self.assertRaises(AdapterError):
+            _request_media("https://[invalid")
+        request_mock.assert_not_called()
+
+    def test_temporary_http_errors_keep_profile_download_retryable(self):
+        from ..services.media import download_profile_avatar
+
+        for status in (408, 425, 429, 503):
+            response = FakeMediaResponse(status_code=status)
+            with self.subTest(status=status), mock.patch(
+                REQUEST_PATCH, return_value=response
+            ), self.assertRaises(TransientAdapterError):
+                download_profile_avatar("https://lookaside.fbsbx.com/avatar")
+            self.assertTrue(response.closed)
+
     def _media_envelope(self, url):
         return {
             "object": "page",

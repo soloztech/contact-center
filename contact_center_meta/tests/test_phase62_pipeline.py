@@ -310,7 +310,7 @@ class TestMetaPhase62Pipeline(MetaCase):
         with self.assertRaises(RetryableJobError) as raised:
             self._run_inbox_job(reply_inbox)
         self.assertFalse(raised.exception.ignore_retry)
-        self.assertIsNone(raised.exception.seconds)
+        self.assertEqual(raised.exception.seconds, 5)
         self.assertFalse(self._message_binding("m_phase62_messenger_reply"))
 
         self._process(target, suffix="target-after-reply")
@@ -406,7 +406,7 @@ class TestMetaPhase62Pipeline(MetaCase):
         message["attachments"] = ["invalid-attachment-shape"]
         atomic = list(atomic_events(sanitize_webhook_envelope(envelope)))[0]
         sanitized_message = atomic["messaging"]["message"]
-        self.assertEqual(sanitized_message["attachments"], [])
+        self.assertEqual(sanitized_message["attachments"], [{}])
         self.assertEqual(
             sanitized_message["sanitization_rejections"],
             [{"slot": "attachment:0", "reason": "invalid_attachment"}],

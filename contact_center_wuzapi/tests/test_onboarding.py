@@ -1,16 +1,21 @@
 import datetime
+import traceback
 import uuid
 from unittest import mock
 
+import requests
 from psycopg2 import IntegrityError
 
 from odoo.exceptions import ValidationError
 from odoo.tests.common import Form, SavepointCase
 
-from odoo.addons.contact_center_base.services.adapter import AdapterError
+from odoo.addons.contact_center_base.services.adapter import (
+    AdapterError,
+    TransientAdapterError,
+)
 from odoo.addons.queue_job.tests.common import trap_jobs
 
-from ..services.onboarding import WuzapiOnboardingClient
+from ..services.onboarding import WuzapiOnboardingClient, _bounded_json
 
 ADAPTER_PATH = "odoo.addons.contact_center_wuzapi.services.adapter.WuzapiAdapter"
 CLIENT_PATH = (
@@ -20,6 +25,31 @@ EXISTING_INSTANCE_TOKEN = "existing-instance-token-at-least-32-chars"
 
 
 class TestWuzapiOnboarding(SavepointCase):
+    def test_setup_response_errors_are_safe_and_bounded(self):
+        secret = "private-synthetic-admin-token"
+        for raw in (
+            b"[" * 2000 + b"0" + b"]" * 2000,
+            b'{"private-synthetic-admin-token":"\xff"}',
+        ):
+            response = mock.Mock(headers={})
+            response.iter_content.return_value = iter([raw])
+            with self.subTest(size=len(raw)), self.assertRaises(AdapterError) as caught:
+                _bounded_json(response, 64 * 1024, "WuzAPI setup")
+            response.close.assert_called_once()
+            self.assertIsNone(caught.exception.__cause__)
+            self.assertNotIn(
+                secret, "".join(traceback.format_exception(caught.exception))
+            )
+
+        client = WuzapiOnboardingClient("https://wuzapi.invalid", api_token=secret)
+        with mock.patch(
+            "odoo.addons.contact_center_wuzapi.services.onboarding.requests.request",
+            side_effect=requests.ConnectionError(secret),
+        ), self.assertRaises(TransientAdapterError) as caught:
+            client.status()
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertNotIn(secret, "".join(traceback.format_exception(caught.exception)))
+
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
