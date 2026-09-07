@@ -4,19 +4,19 @@
         <aside
             id="cc-crm-panel"
             class="cc-contact-panel cc-crm-panel"
-            aria-label="Oportunidades do cliente"
+            aria-label="Comercial do cliente"
             t-on-keydown="onKeydown"
         >
             <header class="cc-contact-panel__header cc-crm-panel__header">
                 <span class="cc-crm-panel__icon" aria-hidden="true"><i
                         class="fa fa-handshake-o"
                     /></span>
-                <div><p class="cc-kicker">CRM</p><h2>Oportunidades</h2></div>
+                <div><p class="cc-kicker">Cliente</p><h2>Comercial</h2></div>
                 <button
                     t-ref="closeButton"
                     type="button"
                     class="cc-icon-button"
-                    aria-label="Fechar oportunidades"
+                    aria-label="Fechar comercial do cliente"
                     t-on-click="props.onClose"
                 ><i class="fa fa-times" aria-hidden="true" /></button>
             </header>
@@ -31,9 +31,38 @@
                         t-esc="state.company.name"
                     />
                 </section>
+                <div
+                    class="cc-crm-panel__tabs"
+                    role="tablist"
+                    aria-label="Registros comerciais do cliente"
+                >
+                    <button
+                        t-foreach="state.tabs"
+                        t-as="tab"
+                        t-key="tab.id"
+                        type="button"
+                        role="tab"
+                        t-att-id="'cc-crm-tab-' + tab.id"
+                        t-att-class="tab.available === false ? 'is-unavailable' : ''"
+                        t-att-aria-selected="state.activeTab === tab.id ? 'true' : 'false'"
+                        t-att-tabindex="state.activeTab === tab.id ? '0' : '-1'"
+                        aria-controls="cc-crm-records"
+                        t-att-title="tab.available === false ? 'Indisponível: módulo não instalado ou acesso não permitido.' : tab.label"
+                        t-on-click="() => model.selectTab(tab.id)"
+                        t-on-keydown="onTabKeydown"
+                    >
+                        <t t-esc="tab.label" /><span
+                            t-if="tab.available === false"
+                            class="sr-only"
+                        > (indisponível)</span>
+                    </button>
+                </div>
                 <section
+                    id="cc-crm-records"
                     class="cc-detail-section cc-crm-panel__content"
-                    t-att-aria-busy="state.phase === 'loading' ? 'true' : 'false'"
+                    role="tabpanel"
+                    t-att-aria-labelledby="'cc-crm-tab-' + state.activeTab"
+                    t-att-aria-busy="page.phase === 'loading' ? 'true' : 'false'"
                 >
                     <p
                         t-if="state.operationError"
@@ -42,146 +71,136 @@
                         t-esc="state.operationError"
                     />
                     <p
-                        t-if="state.phase === 'loading' || state.phase === 'idle'"
+                        t-if="page.phase === 'loading' || page.phase === 'idle'"
                         class="cc-detail-copy"
                         role="status"
                     ><i
                             class="fa fa-circle-o-notch fa-spin"
                             aria-hidden="true"
-                        /> Carregando oportunidades…</p>
+                        /> Carregando registros…</p>
                     <p
-                        t-elif="state.phase === 'denied'"
+                        t-elif="page.phase === 'unavailable'"
                         class="cc-detail-copy"
                         role="status"
-                    >Você não tem acesso às oportunidades desta conversa.</p>
+                    >Esta aba está indisponível. O módulo necessário não está instalado ou seu usuário não tem acesso a esses registros.</p>
+                    <p
+                        t-elif="page.phase === 'denied'"
+                        class="cc-detail-copy"
+                        role="status"
+                    >Você não tem acesso aos registros deste cliente.</p>
                     <t t-else="">
                         <form
                             class="cc-crm-panel__search"
-                            t-on-submit.prevent="search"
-                            t-if="state.phase === 'ready' &amp;&amp; (state.partner || state.items.length || state.query)"
+                            t-on-submit.prevent="() => model.load()"
+                            t-if="page.phase === 'ready' &amp;&amp; state.partner"
                         >
                             <label
                                 class="cc-crm-panel__search-label"
                                 for="cc-crm-search"
-                            >Buscar oportunidade</label>
+                            >Buscar nesta aba</label>
                             <div><input
                                     id="cc-crm-search"
                                     type="search"
                                     maxlength="128"
-                                    placeholder="Nome da oportunidade"
-                                    t-model="state.query"
-                                    t-att-disabled="state.busyId !== false"
+                                    placeholder="Nome ou número do registro"
+                                    t-model="page.query"
                                 />
                                 <button
                                     type="submit"
                                     class="cc-icon-button"
-                                    aria-label="Buscar oportunidades"
-                                    t-att-disabled="state.busyId !== false"
-                                ><i
-                                        class="fa fa-search"
-                                        aria-hidden="true"
-                                    /></button></div>
+                                    aria-label="Buscar registros"
+                                ><i class="fa fa-search" aria-hidden="true" /></button>
+                            </div>
                         </form>
                         <p
-                            t-if="state.error"
+                            t-if="page.error"
                             class="cc-crm-panel__error"
                             role="alert"
-                            t-esc="state.error"
+                            t-esc="page.error"
                         />
                         <button
-                            t-if="state.error"
+                            t-if="page.error"
                             type="button"
                             class="cc-secondary-button"
-                            t-att-disabled="state.busyId !== false"
                             t-on-click="() => model.load()"
                         >Tentar novamente</button>
                         <p
-                            t-if="state.phase === 'ready' &amp;&amp; !state.partner"
+                            t-if="page.phase === 'ready' &amp;&amp; !state.partner"
                             class="cc-detail-copy"
-                        >Vincule um contato nos detalhes da conversa para encontrar as oportunidades do cliente.</p>
+                        >Vincule um contato nos detalhes da conversa para consultar os registros comerciais do cliente e da empresa.</p>
                         <p
-                            t-if="state.phase === 'ready' &amp;&amp; state.partner &amp;&amp; !state.items.length &amp;&amp; !state.error"
+                            t-if="page.phase === 'ready' &amp;&amp; state.partner &amp;&amp; !page.items.length &amp;&amp; !page.error"
                             class="cc-detail-copy"
                             role="status"
-                            t-esc="state.query.trim() ? 'Nenhuma oportunidade encontrada para esta busca.' : 'Este cliente ainda não tem oportunidades disponíveis.'"
+                            t-esc="page.appliedQuery ? 'Nenhum registro encontrado para esta busca.' : 'Este cliente ainda não tem registros disponíveis nesta aba.'"
                         />
-                        <ul class="cc-crm-panel__list" t-if="state.items.length">
+                        <ul class="cc-crm-panel__list" t-if="page.items.length">
                             <li
-                                t-foreach="state.items"
+                                t-foreach="page.items"
                                 t-as="item"
                                 t-key="item.id"
-                                t-att-class="item.linked ? 'cc-crm-opportunity is-linked' : 'cc-crm-opportunity'"
+                                class="cc-customer-record"
                             >
                                 <div
-                                    t-if="item.type === 'lead' || !item.active"
-                                    class="cc-crm-opportunity__markers"
+                                    t-if="item.type === 'lead' || !item.active || item.type === 'out_refund'"
+                                    class="cc-customer-record__markers"
                                 >
-                                    <span t-if="item.type === 'lead'">Lead</span>
+                                    <span
+                                        t-if="item.type === 'lead'"
+                                        t-esc="item.typeLabel || 'Lead'"
+                                    />
                                     <span t-if="!item.active">Arquivada</span>
+                                    <span
+                                        t-if="item.type === 'out_refund'"
+                                        t-esc="item.typeLabel || 'Nota de crédito'"
+                                    />
                                 </div>
-                                <span
-                                    t-if="item.linked"
-                                    class="cc-crm-opportunity__linked"
-                                ><i
-                                        class="fa fa-link"
-                                        aria-hidden="true"
-                                    /> Vinculada à conversa</span>
                                 <button
                                     type="button"
-                                    class="cc-record-link cc-crm-opportunity__name"
-                                    t-on-click="() => model.openOpportunity(item.id)"
-                                    t-att-aria-label="'Abrir oportunidade ' + item.name"
+                                    class="cc-record-link cc-customer-record__name"
+                                    t-on-click="() => model.openRecord(item.id)"
+                                    t-att-aria-label="'Abrir registro ' + item.name"
                                 ><span t-esc="item.name" /><i
                                         class="fa fa-external-link"
                                         aria-hidden="true"
                                     /></button>
-                                <div class="cc-crm-opportunity__summary"><span
-                                        t-if="item.stage"
-                                        t-att-class="item.won ? 'cc-crm-opportunity__stage is-won' : 'cc-crm-opportunity__stage'"
-                                        t-esc="item.stage.name"
-                                    /><strong
-                                        t-if="item.revenue !== false"
-                                        t-esc="revenueLabel(item)"
-                                    /></div>
-                                <dl class="cc-crm-opportunity__details"><div
-                                        t-if="item.team"
-                                    ><dt>Equipe</dt><dd
+                                <div class="cc-customer-record__summary">
+                                    <span
+                                        t-if="item.stage || item.state"
+                                        t-att-class="item.won ? 'cc-customer-record__state is-won' : 'cc-customer-record__state'"
+                                        t-esc="item.stage ? item.stage.name : item.state"
+                                    />
+                                    <strong
+                                        t-if="item.amount !== false"
+                                        t-esc="amountLabel(item)"
+                                    />
+                                </div>
+                                <dl class="cc-customer-record__details">
+                                    <div t-if="item.date"><dt>Data</dt><dd><time
+                                                t-att-datetime="item.date"
+                                                t-esc="dateLabel(item)"
+                                            /></dd></div>
+                                    <div t-if="item.team"><dt>Equipe</dt><dd
                                             t-esc="item.team.name"
-                                        /></div><div><dt>Vendedor</dt><dd
+                                        /></div>
+                                    <div t-if="item.model === 'crm.lead'"><dt
+                                        >Vendedor</dt><dd
                                             t-esc="item.user ? item.user.name : 'Sem vendedor'"
-                                        /></div></dl>
-                                <button
-                                    t-if="item.linked &amp;&amp; state.capabilities.unlink"
-                                    type="button"
-                                    class="cc-text-button cc-crm-opportunity__unlink"
-                                    t-att-disabled="state.busyId !== false"
-                                    t-on-click="() => model.setLinked(item.id, false)"
-                                ><i
-                                        t-if="state.busyId === item.id"
-                                        class="fa fa-circle-o-notch fa-spin"
-                                        aria-hidden="true"
-                                    /> Desvincular conversa</button>
-                                <button
-                                    t-elif="!item.linked &amp;&amp; state.capabilities.link"
-                                    type="button"
-                                    class="cc-secondary-button"
-                                    t-att-disabled="state.busyId !== false"
-                                    t-on-click="() => model.setLinked(item.id, true)"
-                                ><i
-                                        t-if="state.busyId === item.id"
-                                        class="fa fa-circle-o-notch fa-spin"
-                                        aria-hidden="true"
-                                    /> Vincular à conversa</button>
+                                        /></div>
+                                    <div t-if="item.paymentState"><dt>Pagamento</dt><dd
+                                            t-esc="item.paymentState"
+                                        /></div>
+                                </dl>
                             </li>
                         </ul>
                         <button
-                            t-if="state.hasMore"
+                            t-if="page.hasMore"
                             type="button"
                             class="cc-secondary-button cc-crm-panel__more"
-                            t-att-disabled="state.loadingMore || state.busyId !== false"
+                            t-att-disabled="page.loadingMore"
                             t-on-click="() => model.load({append: true})"
                         ><i
-                                t-if="state.loadingMore"
+                                t-if="page.loadingMore"
                                 class="fa fa-circle-o-notch fa-spin"
                                 aria-hidden="true"
                             /> Carregar mais</button>

@@ -26,7 +26,7 @@ deployment.
 | `contact_center_wuzapi` | WhatsApp transport, guided setup, health, group metadata and media                                         |
 | `contact_center_meta`   | Messenger and Page-linked Instagram messaging through shared Meta foundations                              |
 | `contact_center_kanban` | Optional service cases, pipelines, CRM stage synchronization and case follow-ups                          |
-| `contact_center_crm`    | CRM opportunities linked directly to conversations; usable without Kanban                    |
+| `contact_center_crm`    | Customer opportunities, quotations, orders and invoices in the chat; usable without Kanban               |
 
 Base has no CRM or Kanban dependency. CRM depends on the UI and native CRM; Kanban extends CRM. Meta's technical
 foundations, `meta_api_base` and `meta_webhook_base`, are distributed in
@@ -66,7 +66,8 @@ configuration and technical-ledger access.
 - Text and media composition, provider-supported replies and mutations, dispatch and
   delivery status, tags, assignments, identity naming and explicit contact linking.
 - Scoped quick replies, immutable internal notes and scheduled provider messages.
-  CRM links conversations to opportunities. Optional Kanban adds service cases,
+  The customer panel shows opportunities, quotations, orders and invoices by contact.
+  Historical CRM associations remain independent. Optional Kanban adds service cases,
   case follow-ups and CRM stage synchronization.
 - Conversation states `open`, `resolved` and `archived`. New inbound messages reopen
   resolved conversations; archived conversations stay archived until explicitly
@@ -165,7 +166,8 @@ retain provenance so removal does not revoke pre-existing manual permissions.
    prerequisites. For this repository, use `python -m pip install -r requirements.txt`
    in the Odoo environment.
 3. Install `queue_job`, `contact_center_base`, a provider addon and `contact_center_ui`.
-   Add `contact_center_crm` for direct opportunity links. Add `contact_center_kanban`
+   Add `contact_center_crm` for the customer panel; Sales and Accounting tabs use
+   those native modules when installed and permitted. Add `contact_center_kanban`
    when service pipelines and mapped CRM stages are needed.
    Meta also requires the matching `meta_api_base` and `meta_webhook_base` sources.
 4. Load `queue_job` server-wide and configure an active JobRunner. Keep cron and bus

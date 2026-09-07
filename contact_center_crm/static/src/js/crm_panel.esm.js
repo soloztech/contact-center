@@ -8,11 +8,18 @@ import {
     useRef,
     useState,
 } from "@odoo/owl";
+import {deserializeDate, formatDate} from "@web/core/l10n/dates";
 import {formatFloat} from "@web/views/fields/formatters";
 import {useService} from "@web/core/utils/hooks";
 import {validateEnvelope} from "@contact_center_ui/js/contact_center_model.esm";
 
 const PAGE_SIZE = 20;
+export const CUSTOMER_TABS = [
+    {id: "opportunities", label: "Oportunidades", model: "crm.lead"},
+    {id: "quotations", label: "Cotações", model: "sale.order"},
+    {id: "orders", label: "Pedidos", model: "sale.order"},
+    {id: "invoices", label: "Faturas", model: "account.move"},
+];
 
 function record(value) {
     return Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -24,100 +31,164 @@ function reference(value) {
         : false;
 }
 
-export function normalizeCrmPage(payload, channelId) {
-    validateEnvelope(payload);
-    if (payload.channel_id !== channelId || !record(payload.capabilities)) {
-        throw new TypeError("Unexpected CRM conversation projection");
-    }
-    const capabilities = {
-        view: payload.capabilities.view === true,
-        link: payload.capabilities.link === true,
-        unlink: payload.capabilities.unlink === true,
-    };
-    if (!capabilities.view) {
-        return {
-            capabilities,
-            partner: false,
-            company: false,
-            items: [],
-            hasMore: false,
-        };
-    }
-    if (!Array.isArray(payload.items) || typeof payload.has_more !== "boolean") {
-        throw new TypeError("Invalid CRM opportunity page");
-    }
-    const items = payload.items.map((item) => {
-        const opportunity = reference(item);
-        if (!opportunity || typeof item.linked !== "boolean") {
-            throw new TypeError("Invalid CRM opportunity");
-        }
-        return {
-            ...opportunity,
-            linked: item.linked,
-            type: item.type === "lead" ? "lead" : "opportunity",
-            active: item.active !== false,
-            stage: reference(item.stage),
-            won: Boolean(record(item.stage) && item.stage.is_won === true),
-            team: reference(item.team),
-            user: reference(item.user),
-            revenue:
-                typeof item.expected_revenue === "number" &&
-                Number.isFinite(item.expected_revenue)
-                    ? item.expected_revenue
-                    : false,
-            currency: record(item.currency)
-                ? {
-                      symbol:
-                          typeof item.currency.symbol === "string"
-                              ? item.currency.symbol
-                              : "",
-                      position: item.currency.position === "after" ? "after" : "before",
-                  }
-                : false,
-        };
-    });
-    if (payload.has_more && !items.length) {
-        throw new TypeError("CRM pagination did not advance");
+function label(value) {
+    return record(value) && typeof value.label === "string" ? value.label : "";
+}
+
+function normalizeCurrency(value) {
+    if (!record(value)) {
+        return false;
     }
     return {
-        capabilities,
-        partner: reference(payload.partner),
-        company: reference(payload.commercial_partner),
-        items,
-        hasMore: payload.has_more,
+        symbol: typeof value.symbol === "string" ? value.symbol : "",
+        position: value.position === "after" ? "after" : "before",
+        decimalPlaces:
+            Number.isSafeInteger(value.decimal_places) &&
+            value.decimal_places >= 0 &&
+            value.decimal_places <= 16
+                ? value.decimal_places
+                : 2,
     };
 }
 
-/** One mounted panel owns one conversation and discards late responses. */
+function normalizeItem(item, tab) {
+    const entry = reference(item);
+    if (!entry || item.model !== tab.model) {
+        throw new TypeError("Unexpected customer record model");
+    }
+    return {
+        ...entry,
+        model: item.model,
+        state: label(item.state),
+        amount:
+            typeof item.amount === "number" && Number.isFinite(item.amount)
+                ? item.amount
+                : false,
+        currency: normalizeCurrency(item.currency),
+        date:
+            typeof item.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(item.date)
+                ? item.date
+                : false,
+        stage: reference(item.stage),
+        won: Boolean(record(item.stage) && item.stage.is_won === true),
+        team: reference(item.team),
+        user: reference(item.user),
+        type: typeof item.type === "string" ? item.type : "",
+        typeLabel: typeof item.type_label === "string" ? item.type_label : "",
+        active: item.active !== false,
+        paymentState: label(item.payment_state),
+    };
+}
+
+function normalizeTabs(values) {
+    if (!Array.isArray(values) || values.length !== CUSTOMER_TABS.length) {
+        throw new TypeError("Invalid customer tabs");
+    }
+    return CUSTOMER_TABS.map((entry) => {
+        const matches = values.filter(
+            (value) => record(value) && value.id === entry.id
+        );
+        if (matches.length !== 1 || typeof matches[0].available !== "boolean") {
+            throw new TypeError("Invalid customer tab availability");
+        }
+        return {...entry, available: matches[0].available};
+    });
+}
+
+export function normalizeCustomerPage(payload, channelId, tabId) {
+    validateEnvelope(payload);
+    const tab = CUSTOMER_TABS.find((entry) => entry.id === tabId);
+    if (
+        !tab ||
+        payload.channel_id !== channelId ||
+        payload.tab !== tabId ||
+        !["ready", "unavailable"].includes(payload.status) ||
+        !Array.isArray(payload.items) ||
+        typeof payload.has_more !== "boolean"
+    ) {
+        throw new TypeError("Unexpected customer records projection");
+    }
+    const tabs = normalizeTabs(payload.tabs);
+    const available = tabs.find((entry) => entry.id === tabId).available;
+    if (available !== (payload.status === "ready")) {
+        throw new TypeError("Inconsistent customer tab availability");
+    }
+    const partner = reference(payload.partner);
+    const canRead = Boolean(available && partner);
+    const items = canRead ? payload.items.map((item) => normalizeItem(item, tab)) : [];
+    const hasMore = Boolean(canRead && payload.has_more);
+    if (hasMore && !items.length) {
+        throw new TypeError("Customer pagination did not advance");
+    }
+    return {
+        tabs,
+        partner,
+        company: reference(payload.commercial_partner),
+        items,
+        hasMore,
+        phase: available ? "ready" : "unavailable",
+    };
+}
+
+function emptyPage(query = "") {
+    return {
+        phase: "idle",
+        items: [],
+        query,
+        appliedQuery: "",
+        hasMore: false,
+        nextOffset: 0,
+        loadingMore: false,
+        error: "",
+    };
+}
+
+function customerKey(store) {
+    const conversation = store.selectedConversation;
+    const partner =
+        conversation && conversation.identity && conversation.identity.partner;
+    const company = partner && partner.company;
+    return `${partner ? partner.id : 0}:${company ? company.id : 0}`;
+}
+
+function sameCustomer(left, right) {
+    return (
+        (left.partner && left.partner.id) === (right.partner && right.partner.id) &&
+        (left.company && left.company.id) === (right.company && right.company.id)
+    );
+}
+
+/** One panel owns its customer; each tab keeps its search and reloads on selection. */
 export class CrmPanelModel {
     constructor({store, channelId, action, stateFactory = (state) => state}) {
         this.store = store;
         this.channelId = channelId;
+        this.customerKey = customerKey(store);
         this.action = action;
         this.request = 0;
         this.destroyed = false;
         this.state = stateFactory({
-            phase: "idle",
-            items: [],
+            activeTab: "opportunities",
+            tabs: CUSTOMER_TABS.map((tab) => ({...tab, available: null})),
+            pages: Object.fromEntries(
+                CUSTOMER_TABS.map((tab) => [tab.id, emptyPage()])
+            ),
             partner: false,
             company: false,
-            capabilities: {view: false, link: false, unlink: false},
-            query: "",
-            appliedQuery: "",
-            hasMore: false,
-            nextOffset: 0,
-            loadingMore: false,
-            error: "",
             operationError: "",
-            busyId: false,
         });
+    }
+
+    get page() {
+        return this.state.pages[this.state.activeTab];
     }
 
     current() {
         return (
             !this.destroyed &&
             this.store.state.selectedChannelId === this.channelId &&
-            this.store.capabilities.view_crm === true
+            this.store.capabilities.view_crm === true &&
+            customerKey(this.store) === this.customerKey
         );
     }
 
@@ -126,154 +197,158 @@ export class CrmPanelModel {
         this.request += 1;
     }
 
-    applyPage(page, {append, offset, query}) {
-        this.state.capabilities = page.capabilities;
-        this.state.partner = page.partner;
-        this.state.company = page.company;
-        const items = append && page.capabilities.view ? this.state.items : [];
-        this.state.items = Array.from(
-            new Map([...items, ...page.items].map((item) => [item.id, item])).values()
+    isCurrentRequest(request) {
+        return this.current() && request === this.request;
+    }
+
+    selectTab(tabId) {
+        if (
+            !this.current() ||
+            tabId === this.state.activeTab ||
+            !CUSTOMER_TABS.some((tab) => tab.id === tabId)
+        ) {
+            return false;
+        }
+        this.request += 1;
+        this.state.activeTab = tabId;
+        this.state.operationError = "";
+        this.state.pages[tabId] = emptyPage(this.page.query);
+        if (this.state.tabs.find((tab) => tab.id === tabId).available === false) {
+            this.page.phase = "unavailable";
+            return true;
+        }
+        return this.load();
+    }
+
+    applyPage(projection, {append, offset, query}) {
+        this.state.tabs = projection.tabs;
+        this.state.partner = projection.partner;
+        this.state.company = projection.company;
+        const items =
+            append && projection.phase === "ready" && projection.partner
+                ? this.page.items
+                : [];
+        this.page.items = Array.from(
+            new Map(
+                [...items, ...projection.items].map((item) => [item.id, item])
+            ).values()
         );
-        this.state.hasMore = page.hasMore;
-        this.state.nextOffset = offset + page.items.length;
-        this.state.appliedQuery = query;
-        this.state.phase = page.capabilities.view ? "ready" : "denied";
+        this.page.hasMore = projection.hasMore;
+        this.page.nextOffset = offset + projection.items.length;
+        this.page.appliedQuery = query;
+        this.page.phase = projection.phase;
     }
 
     failLoad(error, append) {
-        const denied =
-            error && error.data && error.data.name === "odoo.exceptions.AccessError";
-        if (denied) {
-            this.state.items = [];
+        if (error && error.data && error.data.name === "odoo.exceptions.AccessError") {
             this.state.partner = false;
             this.state.company = false;
-            this.state.capabilities = {view: false, link: false, unlink: false};
-            this.state.hasMore = false;
-            this.state.phase = "denied";
+            for (const tab of CUSTOMER_TABS) {
+                this.state.pages[tab.id] = emptyPage();
+            }
+            this.page.phase = "denied";
         } else {
-            this.state.phase = append ? "ready" : "error";
-            this.state.error = "Não foi possível carregar as oportunidades.";
+            this.page.phase = append ? "ready" : "error";
+            this.page.error = "Não foi possível carregar os registros do cliente.";
         }
     }
 
-    async load({append = false} = {}) {
+    restartForCustomer(query) {
+        this.state.partner = false;
+        this.state.company = false;
+        this.state.operationError = "";
+        for (const tab of CUSTOMER_TABS) {
+            this.state.pages[tab.id] = emptyPage(this.state.pages[tab.id].query);
+        }
+        this.page.appliedQuery = query;
+        return this.load({restart: true});
+    }
+
+    async load({append = false, restart = false} = {}) {
         if (
             !this.current() ||
-            (append && (!this.state.hasMore || this.state.loadingMore))
+            (append && (!this.page.hasMore || this.page.loadingMore))
         ) {
             return false;
         }
         const request = ++this.request;
-        const offset = append ? this.state.nextOffset : 0;
-        const query = append
-            ? this.state.appliedQuery
-            : this.state.query.trim().slice(0, 128);
-        this.state.error = "";
-        this.state.loadingMore = append;
+        const tabId = this.state.activeTab;
+        const offset = append ? this.page.nextOffset : 0;
+        const query =
+            append || restart
+                ? this.page.appliedQuery
+                : this.page.query.trim().slice(0, 128);
+        this.page.error = "";
+        this.page.loadingMore = append;
         if (!append) {
-            this.state.phase = "loading";
-            this.state.items = [];
-            this.state.hasMore = false;
-            this.state.nextOffset = 0;
+            this.page.phase = "loading";
+            this.page.items = [];
+            this.page.hasMore = false;
+            this.page.nextOffset = 0;
         }
         try {
-            const response = await this.store.call("get_crm_opportunities", [
+            const response = await this.store.call("get_customer_records", [
                 this.channelId,
+                tabId,
                 query,
                 offset,
                 PAGE_SIZE,
             ]);
-            if (!this.current() || request !== this.request) {
+            if (!this.isCurrentRequest(request)) {
                 return false;
             }
-            const page = normalizeCrmPage(response, this.channelId);
-            this.applyPage(page, {append, offset, query});
+            const projection = normalizeCustomerPage(response, this.channelId, tabId);
+            if (append && !sameCustomer(projection, this.state)) {
+                return this.restartForCustomer(query);
+            }
+            this.applyPage(projection, {
+                append,
+                offset,
+                query,
+            });
             return true;
         } catch (error) {
-            if (!this.current() || request !== this.request) {
+            if (!this.isCurrentRequest(request)) {
                 return false;
             }
             this.failLoad(error, append);
             return false;
         } finally {
-            if (this.current() && request === this.request) {
-                this.state.loadingMore = false;
+            if (this.isCurrentRequest(request)) {
+                this.page.loadingMore = false;
             }
         }
     }
 
-    canChangeLink(opportunityId, linked) {
-        const item = this.state.items.find((entry) => entry.id === opportunityId);
-        return Boolean(
-            this.current() &&
-                this.state.phase === "ready" &&
-                !this.state.busyId &&
-                typeof linked === "boolean" &&
-                item &&
-                item.linked !== linked &&
-                this.state.capabilities[linked ? "link" : "unlink"] === true
-        );
-    }
-
-    async setLinked(opportunityId, linked) {
-        if (!this.canChangeLink(opportunityId, linked)) {
+    async openRecord(recordId) {
+        const item = this.page.items.find((entry) => entry.id === recordId);
+        if (!this.current() || this.page.phase !== "ready" || !item) {
             return false;
         }
-        this.state.busyId = opportunityId;
-        this.state.operationError = "";
-        let accepted = false;
-        try {
-            const payload = await this.store.call(
-                linked ? "link_crm_opportunity" : "unlink_crm_opportunity",
-                [this.channelId, opportunityId]
-            );
-            validateEnvelope(payload);
-            if (
-                payload.channel_id !== this.channelId ||
-                payload.opportunity_id !== opportunityId ||
-                payload.linked !== linked
-            ) {
-                throw new TypeError("Unexpected CRM link acknowledgement");
-            }
-            accepted = true;
-        } catch (_error) {
-            if (this.current()) {
-                this.state.operationError =
-                    "Não foi possível confirmar a alteração. Confira o vínculo na lista atualizada.";
-            }
-        } finally {
-            if (this.current()) {
-                // Read back after an ambiguous response; never repeat a write automatically.
-                await this.load();
-                this.state.busyId = false;
-            }
-        }
-        return accepted;
-    }
-
-    async openOpportunity(opportunityId) {
-        const item = this.state.items.find((entry) => entry.id === opportunityId);
-        if (!this.current() || !this.state.capabilities.view || !item) {
-            return false;
-        }
+        const tabId = this.state.activeTab;
         this.state.operationError = "";
         try {
             await this.action.doAction(
                 {
                     type: "ir.actions.act_window",
                     name: item.name,
-                    res_model: "crm.lead",
+                    res_model: item.model,
                     res_id: item.id,
                     views: [[false, "form"]],
                     view_mode: "form",
                     target: "new",
                 },
-                {onClose: () => this.load()}
+                {
+                    onClose: () =>
+                        this.current() && this.state.activeTab === tabId
+                            ? this.load()
+                            : false,
+                }
             );
             return true;
         } catch (_error) {
-            if (this.current()) {
-                this.state.operationError = "Não foi possível abrir esta oportunidade.";
+            if (this.current() && this.state.activeTab === tabId) {
+                this.state.operationError = "Não foi possível abrir este registro.";
             }
             return false;
         }
@@ -297,12 +372,18 @@ export class CrmPanel extends Component {
         onWillDestroy(() => this.model.destroy());
     }
 
-    revenueLabel(item) {
-        if (item.revenue === false) {
+    get page() {
+        return this.model.page;
+    }
+
+    amountLabel(item) {
+        if (item.amount === false) {
             return "";
         }
-        const value = formatFloat(item.revenue, {digits: [16, 2]});
         const currency = item.currency;
+        const value = formatFloat(item.amount, {
+            digits: [16, currency ? currency.decimalPlaces : 2],
+        });
         if (!currency || !currency.symbol) {
             return value;
         }
@@ -311,11 +392,30 @@ export class CrmPanel extends Component {
             : `${currency.symbol} ${value}`;
     }
 
-    search() {
-        if (!this.state.busyId) {
-            return this.model.load();
+    dateLabel(item) {
+        if (!item.date) {
+            return "";
         }
-        return false;
+        const date = deserializeDate(item.date);
+        return date.isValid ? formatDate(date) : "";
+    }
+
+    onTabKeydown(event) {
+        const index = CUSTOMER_TABS.findIndex((tab) => tab.id === this.state.activeTab);
+        const keys = {
+            ArrowLeft: (index + 3) % 4,
+            ArrowRight: (index + 1) % 4,
+            Home: 0,
+            End: 3,
+        };
+        if (Object.prototype.hasOwnProperty.call(keys, event.key)) {
+            event.preventDefault();
+            const tab = CUSTOMER_TABS[keys[event.key]];
+            this.model.selectTab(tab.id);
+            event.currentTarget.parentElement
+                .querySelector(`#cc-crm-tab-${tab.id}`)
+                .focus();
+        }
     }
 
     onKeydown(event) {

@@ -1,6 +1,6 @@
 {
     "name": "Contact Center CRM",
-    "summary": "CRM opportunities directly linked to customer conversations",
+    "summary": "Customer opportunities, quotations, orders and invoices in the inbox",
     "version": "16.0.1.0.0",
     "category": "Sales/CRM",
     "author": "Soloz Technologies",

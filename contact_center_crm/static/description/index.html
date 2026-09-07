@@ -370,19 +370,21 @@ ul.auto-toc {
 !! source digest: sha256:68e49b6e6b1a720f68c4f91b1fdc0b125fc09fbbfae65e25d8f84cf920969c6b
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! -->
 <p><a class="reference external image-reference" href="https://odoo-community.org/page/development-status"><img alt="Beta" src="https://img.shields.io/badge/maturity-Beta-yellow.png" /></a> <a class="reference external image-reference" href="http://www.gnu.org/licenses/agpl-3.0-standalone.html"><img alt="License: AGPL-3" src="https://img.shields.io/badge/license-AGPL--3-blue.png" /></a> <a class="reference external image-reference" href="https://github.com/soloztech/contact-center/tree/16.0/contact_center_crm"><img alt="soloztech/contact-center" src="https://img.shields.io/badge/github-soloztech%2Fcontact--center-lightgray.png?logo=github" /></a></p>
-<p>CRM integration belongs to the conversation. Agents can open a customer CRM
-panel from the handshake button in the Contact Center inbox, inspect the
-customer’s opportunities, open their native CRM forms and explicitly link or
-unlink them.</p>
-<p>A conversation may reference multiple leads or opportunities. Related customer
-records are suggestions, not automatic associations. The panel includes records
-for the linked person and their commercial company, subject to native CRM access
-rules and the conversation’s company. Existing explicit links remain visible
-when the contact changes, if the agent still has access to those CRM records.</p>
+<p>Agents can open the customer panel from the handshake button in the Contact
+Center inbox. Four tabs show opportunities, quotations, orders and customer
+invoices, with links to their native Odoo forms.</p>
+<p>Records belong to the contact and their commercial company. Conversations
+associated with the same customer show the same records within the agent’s
+native access rights and the inbox’s company. Reading the panel does not create
+conversation associations or change marketing attribution. Existing historical
+conversation-to-lead associations remain separate from this customer view.</p>
 <p>This addon requires the chat UI and native CRM. It does not install Kanban,
 create service cases, choose sales teams or change opportunity stages. Optional
 pipeline and stage synchronization lives in <tt class="docutils literal">contact_center_kanban</tt>, which
 depends on this addon.</p>
+<p>Sales and Accounting are optional: their tabs become available when the native
+models are installed and the agent has read access. No financial access is
+granted by this addon. Supplier bills and cancelled documents are excluded.</p>
 <p><strong>Table of contents</strong></p>
 <div class="contents local topic" id="contents">
 <ul class="simple">
@@ -399,16 +401,19 @@ depends on this addon.</p>
 <div class="section" id="usage">
 <h1><a class="toc-backref" href="#toc-entry-1">Usage</a></h1>
 <p>Open a conversation in the Contact Center inbox and click the handshake icon
-next to the contact details button. The CRM panel lists related opportunities
-and distinguishes those already linked to the current conversation.</p>
-<p>Use <tt class="docutils literal">Vincular</tt> or <tt class="docutils literal">Desvincular</tt> to manage the association. Opening a CRM
-record uses the native Odoo form. The panel refreshes when that form closes.
-Linking an opportunity does not change its customer, sales team or pipeline
-stage. An agent needs access both to the conversation and to the CRM record.</p>
-<p>The optional Kanban addon presents its records as <tt class="docutils literal">Atendimentos</tt>. Unlinking
-one Kanban record does not remove the conversation’s CRM association. Removing
-the conversation association also disconnects the corresponding Kanban stage
-projections, while preserving their history and unrelated associations.</p>
+next to the contact details button. Select <tt class="docutils literal">Oportunidades</tt>, <tt class="docutils literal">Cotações</tt>,
+<tt class="docutils literal">Pedidos</tt> or <tt class="docutils literal">Faturas</tt> to browse the linked contact’s commercial records.</p>
+<p>Search and pagination apply to the selected tab. Opening a record uses the
+native Odoo form; the panel refreshes when that form closes. An agent needs
+access both to the conversation and to the document. If there is no linked
+contact, the panel asks for one instead of searching all customers.</p>
+<p>Quotations are draft or sent sale orders; confirmed and locked sale orders
+appear under orders. Customer invoices and credit notes appear under invoices,
+with credit notes distinguished by type and negative amounts. A tab explains
+when its module or read permission is unavailable.</p>
+<p>The optional Kanban addon presents its records as <tt class="docutils literal">Atendimentos</tt>. Its
+conversation-to-lead associations and stage projections have their own
+lifecycle. Browsing customer records does not change those associations.</p>
 <p>For existing pre-release installations, use the explicit CRM extraction and
 backfill scripts in <tt class="docutils literal">release_migrations</tt> through the atomic release runner.
 Do not upgrade only this addon over the former CRM/Kanban bridge installation.</p>

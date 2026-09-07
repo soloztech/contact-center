@@ -4,7 +4,7 @@ from odoo.exceptions import AccessError, ValidationError
 from odoo.tests.common import TransactionCase
 
 
-class TestConversationCrm(TransactionCase):
+class ConversationCrmCase(TransactionCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -83,6 +83,19 @@ class TestConversationCrm(TransactionCase):
         return channel
 
     @classmethod
+    def _customer_channel_for(cls, user):
+        account = cls.env["contact.center.account"].create(
+            {
+                "name": "Customer panel inbox",
+                "platform": "whatsapp",
+                "external_ref": str(uuid.uuid4()),
+                "company_id": cls.env.company.id,
+                "owner_user_id": user.id,
+            }
+        )
+        return cls._channel(account, cls.person)
+
+    @classmethod
     def _lead(cls, name, partner, **values):
         return cls.env["crm.lead"].create(
             {
@@ -95,6 +108,8 @@ class TestConversationCrm(TransactionCase):
             }
         )
 
+
+class TestConversationCrm(ConversationCrmCase):
     def _links(self):
         return (
             self.env["contact.center.crm.conversation.link"]
@@ -109,12 +124,12 @@ class TestConversationCrm(TransactionCase):
         unrelated = self._lead(
             "Unrelated", self.env["res.partner"].create({"name": "Unrelated"})
         )
-        result = self.api.get_crm_opportunities(self.channel.id)
+        result = self.api.get_customer_records(self.channel.id)
         self.assertEqual(
             {item["id"] for item in result["items"]},
             {self.lead.id, self.company_lead.id, self.sibling_lead.id},
         )
-        self.assertNotIn(unrelated.id, result["linked_opportunity_ids"])
+        self.assertNotIn(unrelated.id, [item["id"] for item in result["items"]])
         self.assertEqual(result["partner"]["id"], self.person.id)
         self.assertEqual(result["commercial_partner"]["id"], self.customer.id)
 
@@ -140,7 +155,7 @@ class TestConversationCrm(TransactionCase):
         self.assertEqual(self._links().mapped("lead_id"), self.company_lead)
         self.assertTrue(self.lead.active)
         self.assertEqual(
-            self.api.get_crm_opportunities(self.channel.id)["partner"]["id"],
+            self.api.get_customer_records(self.channel.id)["partner"]["id"],
             self.person.id,
         )
 
@@ -155,41 +170,41 @@ class TestConversationCrm(TransactionCase):
 
     def test_no_partner_returns_empty_panel_without_searching_all_crm(self):
         channel = self._channel(self.account)
-        result = self.api.get_crm_opportunities(channel.id)
+        result = self.api.get_customer_records(channel.id)
         self.assertFalse(result["partner"])
         self.assertFalse(result["items"])
-        self.assertFalse(result["capabilities"]["link"])
+        self.assertEqual(result["status"], "ready")
 
     def test_customer_changes_do_not_silently_remove_explicit_links(self):
         self.api.link_crm_opportunity(self.channel.id, self.lead.id)
         self.api.unlink_partner(self.channel.id, expected_partner_id=self.person.id)
-        result = self.api.get_crm_opportunities(self.channel.id)
+        result = self.api.get_customer_records(self.channel.id)
         self.assertFalse(result["partner"])
-        self.assertEqual(result["linked_opportunity_ids"], [self.lead.id])
-        self.assertEqual([item["id"] for item in result["items"]], [self.lead.id])
+        self.assertEqual(self._links().mapped("lead_id"), self.lead)
+        self.assertFalse(result["items"])
 
-    def test_pagination_keeps_linked_first_without_duplicates(self):
+    def test_customer_pagination_is_independent_of_links_without_duplicates(self):
         self.api.link_crm_opportunity(self.channel.id, self.lead.id)
         pages = [
-            self.api.get_crm_opportunities(self.channel.id, offset=offset, limit=1)
+            self.api.get_customer_records(self.channel.id, offset=offset, limit=1)
             for offset in range(3)
         ]
-        self.assertEqual(pages[0]["items"][0]["id"], self.lead.id)
+        self.assertEqual(pages[0]["items"][0]["id"], self.sibling_lead.id)
         self.assertEqual(len({page["items"][0]["id"] for page in pages}), 3)
         self.assertTrue(pages[0]["has_more"])
         self.assertFalse(pages[2]["has_more"])
-        result = self.api.get_crm_opportunities(self.channel.id, query="Company")
+        result = self.api.get_customer_records(self.channel.id, query="Company")
         self.assertEqual(
             [item["id"] for item in result["items"]], [self.company_lead.id]
         )
 
-    def test_archived_link_remains_visible_but_not_a_new_candidate(self):
+    def test_archived_customer_records_remain_visible_independently_of_links(self):
         self.api.link_crm_opportunity(self.channel.id, self.lead.id)
         self.lead.active = False
         self.company_lead.active = False
-        result = self.api.get_crm_opportunities(self.channel.id)
+        result = self.api.get_customer_records(self.channel.id)
         self.assertIn(self.lead.id, [item["id"] for item in result["items"]])
-        self.assertNotIn(self.company_lead.id, [item["id"] for item in result["items"]])
+        self.assertIn(self.company_lead.id, [item["id"] for item in result["items"]])
 
     def test_customer_scope_prevents_linking_an_arbitrary_crm_record(self):
         lead = self._lead(
@@ -205,15 +220,14 @@ class TestConversationCrm(TransactionCase):
         # Complete the admin reassignment before simulating the agent's next
         # request; native team/property recomputations belong to that writer.
         self.lead.flush_recordset()
-        result = self.api.get_crm_opportunities(self.channel.id)
-        self.assertNotIn(self.lead.id, result["linked_opportunity_ids"])
+        result = self.api.get_customer_records(self.channel.id)
         self.assertNotIn(self.lead.id, [item["id"] for item in result["items"]])
         with self.assertRaises(AccessError):
             self.api.unlink_crm_opportunity(self.channel.id, self.lead.id)
 
     def test_inaccessible_conversation_and_missing_sales_access_are_rejected(self):
         with self.assertRaises(AccessError):
-            self.api.with_user(self.other).get_crm_opportunities(self.channel.id)
+            self.api.with_user(self.other).get_customer_records(self.channel.id)
         self.assertFalse(
             self.api.with_user(self.non_sales).bootstrap()["capabilities"]["view_crm"]
         )
@@ -264,9 +278,12 @@ class TestConversationCrm(TransactionCase):
         survivor = (self.lead | self.company_lead)._merge_opportunity()
         self.assertEqual(self._links().mapped("lead_id"), survivor)
         self.assertEqual(len(self._links()), 1)
-        self.assertEqual(
-            self.api.get_crm_opportunities(self.channel.id)["linked_opportunity_ids"],
-            survivor.ids,
+        self.assertIn(
+            survivor.id,
+            [
+                item["id"]
+                for item in self.api.get_customer_records(self.channel.id)["items"]
+            ],
         )
 
     def test_computed_company_change_cannot_break_conversation_association(self):

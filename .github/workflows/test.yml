@@ -115,7 +115,19 @@ jobs:
               with connection.cursor() as cursor:
                   cursor.execute("SELECT (SELECT count(*) FROM ir_module_module WHERE name = 'contact_center_crm' AND state = 'installed') = 1 AND NOT EXISTS (SELECT 1 FROM ir_module_module WHERE name = 'contact_center_kanban' AND state = 'installed') AND NOT EXISTS (SELECT 1 FROM ir_model WHERE model = 'contact.center.case')")
                   assert cursor.fetchone()[0], "CRM must install without Kanban or case models"
+                  cursor.execute("SELECT NOT EXISTS (SELECT 1 FROM ir_module_module WHERE name IN ('sale', 'account') AND state = 'installed')")
+                  assert cursor.fetchone()[0], "Customer panel must not install Sales or Accounting"
           PYTHON
+      - name: Test customer panel with native Sales and Accounting
+        shell: bash
+        env:
+          INCLUDE: contact_center_crm
+          PGDATABASE: contact_center_customer_documents
+        run: |
+          set -euo pipefail
+          oca_init_test_database
+          odoo -d "$PGDATABASE" -i sale --stop-after-init --http-interface=127.0.0.1 | oca_checklog_odoo
+          oca_run_tests
       - name: Initialize test db
         run: oca_init_test_database
       - name: Run tests

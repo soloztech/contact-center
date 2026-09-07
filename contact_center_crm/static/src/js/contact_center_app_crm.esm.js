@@ -9,7 +9,7 @@ patch(ContactCenterApp, "contact_center_crm.components", {
     components: {...ContactCenterApp.components, CrmPanel},
 });
 
-patch(ContactCenterApp.prototype, "contact_center_crm.opportunities", {
+patch(ContactCenterApp.prototype, "contact_center_crm.customer_records", {
     setup() {
         this._super(...arguments);
         this.crmUi = useState({panelMode: "contact"});
