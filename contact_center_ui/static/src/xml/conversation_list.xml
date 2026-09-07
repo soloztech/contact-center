@@ -226,14 +226,14 @@
                 </div>
 
                 <label
-                    t-if="store.accounts.length > 1 &amp;&amp; (ui.view === 'flat' || state.filters.accountId)"
+                    t-if="accounts.length > 1 &amp;&amp; (ui.view === 'flat' || state.filters.accountId)"
                     class="cc-account-filter"
                 >
                     <span>Caixa</span>
                     <select t-on-change="onAccountChange">
                         <option value="">Todas</option>
                         <option
-                            t-foreach="store.accounts"
+                            t-foreach="accounts"
                             t-as="account"
                             t-key="account.id"
                             t-att-value="account.id"
@@ -379,87 +379,137 @@
     </t>
 
     <t t-name="contact_center_ui.ConversationListItem" owl="1">
-        <button
-            type="button"
+        <div
             t-att-class="itemClass(conversation)"
-            t-att-aria-current="conversation.channel_id === state.selectedChannelId ? 'true' : false"
-            t-on-click="() => this.select(conversation)"
+            t-att-data-channel-id="conversation.channel_id"
         >
+            <button
+                type="button"
+                class="cc-conversation-item__open"
+                t-att-aria-current="conversation.channel_id === state.selectedChannelId ? 'true' : false"
+                t-on-click="() => this.select(conversation)"
+            >
             <span class="cc-conversation-item__trace" aria-hidden="true" />
             <DeferredImage
-                t-if="avatarUrl(conversation)"
-                className="'cc-avatar cc-avatar--image'"
-                src="avatarUrl(conversation)"
-                alt="''"
-                ariaHidden="true"
-                priority="10"
-            />
+                    t-if="avatarUrl(conversation)"
+                    className="'cc-avatar cc-avatar--image'"
+                    src="avatarUrl(conversation)"
+                    alt="''"
+                    ariaHidden="true"
+                    priority="10"
+                />
             <span
-                t-else=""
-                class="cc-avatar"
-                t-esc="initials(displayName(conversation))"
-            />
+                    t-else=""
+                    class="cc-avatar"
+                    t-esc="initials(displayName(conversation))"
+                />
             <span class="cc-conversation-item__body">
                 <span class="cc-conversation-item__line">
                     <strong t-esc="displayName(conversation)" />
                     <span class="cc-conversation-item__signals">
                         <i
-                            t-if="preference(conversation).pinned"
-                            class="fa fa-thumb-tack"
-                            title="Conversa fixada"
-                            aria-label="Conversa fixada"
-                        />
+                                t-if="preference(conversation).pinned"
+                                class="fa fa-thumb-tack"
+                                title="Conversa fixada"
+                                aria-label="Conversa fixada"
+                            />
                         <i
-                            t-if="preference(conversation).muted"
-                            class="fa fa-bell-slash"
-                            title="Conversa silenciada"
-                            aria-label="Conversa silenciada"
-                        />
+                                t-if="preference(conversation).muted"
+                                class="fa fa-bell-slash"
+                                title="Conversa silenciada"
+                                aria-label="Conversa silenciada"
+                            />
                         <time t-esc="relativeDate(conversation.last_activity_at)" />
                     </span>
                 </span>
                 <span class="cc-conversation-item__line cc-conversation-item__preview">
                     <span>
                         <i
-                            t-if="deliveryIcon(conversation)"
-                            t-att-class="deliveryClass(conversation)"
-                            t-att-title="deliveryLabel(conversation)"
-                            t-esc="deliveryIcon(conversation)"
-                        />
+                                t-if="deliveryIcon(conversation)"
+                                t-att-class="deliveryClass(conversation)"
+                                t-att-title="deliveryLabel(conversation)"
+                                t-esc="deliveryIcon(conversation)"
+                            />
                         <t t-if="conversation.last_message">
                             <span t-esc="preview(conversation)" />
                         </t>
                         <span t-else="">Conversa iniciada</span>
                     </span>
                     <b
-                        t-if="conversation.unread_count"
-                        t-esc="conversation.unread_count"
-                    />
+                            t-if="conversation.unread_count"
+                            t-esc="conversation.unread_count"
+                        />
                 </span>
                 <span class="cc-conversation-item__meta">
                     <small
-                        class="cc-inbox-badge"
-                        t-att-title="inboxMetadata(conversation).name"
-                    >
+                            class="cc-inbox-badge"
+                            t-att-title="inboxMetadata(conversation).name"
+                        >
                         <i class="fa fa-inbox" aria-hidden="true" />
                         <span t-esc="inboxMetadata(conversation).name" />
                     </small>
                     <small
-                        t-if="isGroup(conversation)"
-                        class="cc-kind-badge"
-                        t-esc="groupBadgeLabel(conversation)"
-                    />
+                            t-if="isGroup(conversation)"
+                            class="cc-kind-badge"
+                            t-esc="groupBadgeLabel(conversation)"
+                        />
                     <small
-                        t-if="conversation.responsible"
-                        class="cc-responsible-badge"
-                        t-esc="conversation.responsible.name"
-                    />
+                            t-if="conversation.responsible"
+                            class="cc-responsible-badge"
+                            t-esc="conversation.responsible.name"
+                        />
                     <small
-                        t-else=""
-                        class="cc-responsible-badge"
-                    >Sem responsável</small>
+                            t-else=""
+                            class="cc-responsible-badge"
+                        >Sem responsável</small>
                 </span>
             </span>
-        </button>
+            </button>
+            <Dropdown
+                class="'cc-conversation-item__menu'"
+                togglerClass="'cc-conversation-item__menu-toggle'"
+                menuClass="'cc-conversation-menu'"
+                position="'bottom-end'"
+                title="'Opções da conversa ' + displayName(conversation)"
+                showCaret="false"
+            >
+                <t t-set-slot="toggler">
+                    <i class="fa fa-chevron-down" aria-hidden="true" />
+                    <span class="sr-only">Opções da conversa <t
+                            t-esc="displayName(conversation)"
+                        /></span>
+                </t>
+                <span
+                    t-if="ui.pendingConversationIds[conversation.channel_id]"
+                    class="dropdown-item text-muted"
+                    role="status"
+                >Atualizando conversa…</span>
+                <t t-else="">
+                    <DropdownItem
+                        onSelected="() => this.runConversationAction(conversation.channel_id, 'archived')"
+                    >
+                        <i class="fa fa-archive" aria-hidden="true" />
+                        <t
+                            t-if="conversation.state === 'archived'"
+                        >Desarquivar conversa</t>
+                        <t t-else="">Arquivar conversa</t>
+                    </DropdownItem>
+                    <DropdownItem
+                        onSelected="() => this.runConversationAction(conversation.channel_id, 'muted')"
+                    >
+                        <i class="fa fa-bell-slash" aria-hidden="true" />
+                        <t t-if="preference(conversation).muted">Ativar notificações</t>
+                        <t t-else="">Silenciar conversa</t>
+                    </DropdownItem>
+                    <DropdownItem
+                        onSelected="() => this.runConversationAction(conversation.channel_id, 'pinned')"
+                    >
+                        <i class="fa fa-thumb-tack" aria-hidden="true" />
+                        <t t-if="preference(conversation).pinned">Desafixar conversa</t>
+                        <t t-else="">Fixar conversa</t>
+                    </DropdownItem>
+                </t>
+            </Dropdown>
+        </div>
     </t>
 </templates>

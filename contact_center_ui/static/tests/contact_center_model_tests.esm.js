@@ -124,6 +124,7 @@ import {
     attributionProjectionVisible,
 } from "@contact_center_ui/js/attribution_touchpoints.esm";
 import {
+    ConversationList,
     conversationGroupBadgeLabel,
     conversationInboxMetadata,
     conversationListShortcut,
@@ -133,6 +134,7 @@ import {
 import {BrowserAttention} from "@contact_center_ui/js/browser_attention.esm";
 import {ConnectionHealth} from "@contact_center_ui/js/connection_health.esm";
 import {conversationComposerAvailable} from "@contact_center_ui/js/contact_center_app.esm";
+import {reactive} from "@odoo/owl";
 
 function canonicalGroup(overrides = {}) {
     return {
@@ -4462,7 +4464,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 };
             };
             const reloads = [];
-            store.loadConversations = async (options) => {
+            store.refreshLoadedConversations = async (options) => {
                 reloads.push(options);
                 return true;
             };
@@ -4473,13 +4475,354 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 args: [10, {pinned: true}],
             });
             assert.ok(store.selectedConversation.preference.pinned);
-            assert.deepEqual(reloads, [{reset: true, silent: true}]);
+            assert.deepEqual(reloads, [{silent: true}]);
             assert.notOk(await store.setConversationPreference({muted: "yes"}));
             assert.strictEqual(
                 calls.length,
                 1,
                 "invalid preference never reaches the RPC"
             );
+        }
+    );
+
+    QUnit.test(
+        "row actions mutate their loaded target without selecting or reading it",
+        async (assert) => {
+            const store = new ContactCenterStore({
+                orm: {},
+                busService: {removeEventListener: () => undefined},
+                notification: false,
+            });
+            store.state.filters.state = "open";
+            store.state.conversations = [
+                openConversation({
+                    channel_id: 10,
+                    preference: {pinned: false, muted: false},
+                }),
+                openConversation({
+                    channel_id: 20,
+                    preference: {pinned: true, muted: true},
+                }),
+            ];
+            store.state.selectedChannelId = 20;
+            store.state.timelineChannelId = 20;
+            store.state.messages = [{message_id: 200}];
+            store.state.replyTo = {message_id: 200};
+            store.state.detailsOpen = true;
+            const calls = [];
+            store.call = async (method, args) => {
+                calls.push({method, args});
+                const target = store.loadedConversation(args[0]);
+                return {
+                    schema_version: SUPPORTED_SCHEMA_VERSION,
+                    item: {
+                        ...target,
+                        ...(method === "update_conversation" ? args[1] : {}),
+                        preference: {...target.preference, ...args[1]},
+                    },
+                };
+            };
+            store.refreshLoadedConversations = async () => true;
+            store.loadConversations = async () => {
+                assert.ok(false, "a row action never opens a different conversation");
+            };
+
+            assert.ok(await store.toggleConversationPinned(10));
+            assert.ok(await store.toggleConversationMuted(10));
+            assert.ok(await store.setConversationState("archived", 10));
+            assert.deepEqual(
+                calls,
+                [
+                    {method: "set_conversation_preference", args: [10, {pinned: true}]},
+                    {method: "set_conversation_preference", args: [10, {muted: true}]},
+                    {method: "update_conversation", args: [10, {state: "archived"}]},
+                ],
+                "only mutation RPCs target the row; no timeline or mark_seen call"
+            );
+            assert.notOk(
+                store.loadedConversation(10),
+                "archive removes only the targeted open row"
+            );
+            assert.strictEqual(store.state.selectedChannelId, 20);
+            assert.strictEqual(store.state.timelineChannelId, 20);
+            assert.deepEqual(store.state.messages, [{message_id: 200}]);
+            assert.deepEqual(store.state.replyTo, {message_id: 200});
+            assert.ok(store.state.detailsOpen);
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "conversation rows subscribe through the list component's reactive state",
+        (assert) => {
+            const store = new ContactCenterStore({
+                orm: {},
+                busService: {},
+                notification: false,
+                stateFactory: (state) => reactive(state, () => undefined),
+            });
+            store.state.conversations = [
+                openConversation({channel_id: 10, preference: {pinned: false}}),
+                openConversation({channel_id: 20}),
+            ];
+            store.state.selectedChannelId = 20;
+            store.state.conversationTotal = 2;
+            let listUpdates = 0;
+            const list = Object.create(ConversationList.prototype);
+            list.props = {
+                store,
+                // OWL wraps a reactive prop with the child component's own callback.
+                state: reactive(store.state, () => {
+                    listUpdates += 1;
+                }),
+            };
+            assert.notOk(list.filteredConversations[0].preference.pinned);
+            store.replaceConversation(
+                openConversation({channel_id: 10, preference: {pinned: true}})
+            );
+            assert.ok(
+                listUpdates > 0,
+                "changing an unselected row notifies the list's observer"
+            );
+            assert.ok(list.filteredConversations[0].preference.pinned);
+            assert.strictEqual(store.state.selectedChannelId, 20);
+
+            listUpdates = 0;
+            assert.strictEqual(list.displayedCount, "2");
+            store.state.conversationTotal = 3;
+            assert.ok(
+                listUpdates > 0,
+                "the list counter also observes its own state prop"
+            );
+            assert.strictEqual(list.displayedCount, "3");
+        }
+    );
+
+    QUnit.test("row actions keep an empty selection empty", async (assert) => {
+        const store = new ContactCenterStore({
+            orm: {},
+            busService: {removeEventListener: () => undefined},
+            notification: false,
+        });
+        store.state.filters.state = false;
+        store.state.conversations = [openConversation({channel_id: 10})];
+        store.call = async (method, args) => ({
+            schema_version: SUPPORTED_SCHEMA_VERSION,
+            item: {
+                ...store.loadedConversation(10),
+                ...(method === "update_conversation" ? args[1] : {}),
+                preference: args[1],
+            },
+        });
+        store.refreshLoadedConversations = async () => true;
+        store.loadConversations = async () => {
+            assert.ok(false, "no automatic selection after a row mutation");
+        };
+        assert.ok(await store.setConversationState("archived", 10));
+        assert.ok(await store.setConversationState("open", 10));
+        assert.ok(await store.toggleConversationPinned(10));
+        assert.ok(await store.toggleConversationMuted(10));
+        assert.notOk(store.state.selectedChannelId);
+        assert.notOk(store.state.timelineChannelId);
+        assert.deepEqual(store.state.messages, []);
+        store.destroy();
+    });
+
+    QUnit.test(
+        "row menu locks only its target and releases the lock after failure",
+        async (assert) => {
+            let finishPin = null;
+            const calls = [];
+            const list = {
+                state: {
+                    conversations: [
+                        openConversation({channel_id: 10}),
+                        openConversation({channel_id: 20, state: "archived"}),
+                    ],
+                },
+                ui: {pendingConversationIds: {}},
+                store: {
+                    toggleConversationPinned(channelId) {
+                        calls.push(["pinned", channelId]);
+                        return new Promise((resolve) => {
+                            finishPin = resolve;
+                        });
+                    },
+                    async toggleConversationMuted(channelId) {
+                        calls.push(["muted", channelId]);
+                        throw new Error("Network unavailable");
+                    },
+                    async setConversationState(state, channelId) {
+                        calls.push([state, channelId]);
+                        return true;
+                    },
+                },
+            };
+            const run = (channelId, action) =>
+                ConversationList.prototype.runConversationAction.call(
+                    list,
+                    channelId,
+                    action
+                );
+            const pending = run(10, "pinned");
+            assert.notOk(
+                await run(10, "muted"),
+                "a repeated click on the same row is ignored"
+            );
+            assert.ok(
+                await run(20, "archived"),
+                "another row remains usable and its current state is used"
+            );
+            assert.notOk(await run(99, "pinned"), "a removed row cannot act");
+            finishPin(false);
+            assert.notOk(await pending);
+            assert.deepEqual(
+                list.ui.pendingConversationIds,
+                {},
+                "a false RPC result releases the lock"
+            );
+            await assert.rejects(run(10, "muted"), /Network unavailable/);
+            assert.deepEqual(
+                list.ui.pendingConversationIds,
+                {},
+                "a rejected RPC also releases the lock"
+            );
+            assert.deepEqual(calls, [
+                ["pinned", 10],
+                ["open", 20],
+                ["muted", 10],
+            ]);
+        }
+    );
+
+    QUnit.test(
+        "a late archive response preserves the newly selected chat",
+        async (assert) => {
+            const store = new ContactCenterStore({
+                orm: {},
+                busService: {removeEventListener: () => undefined},
+                notification: false,
+            });
+            store.state.filters.state = "open";
+            store.state.conversations = [
+                openConversation({channel_id: 10}),
+                openConversation({channel_id: 20}),
+            ];
+            store.state.selectedChannelId = 10;
+            let resolveUpdate = null;
+            store.call = () =>
+                new Promise((resolve) => {
+                    resolveUpdate = resolve;
+                });
+            store.loadConversations = async () => {
+                assert.ok(false, "the late archive does not reset another chat");
+            };
+            const pending = store.setConversationState("archived", 10);
+            store.state.selectedChannelId = 20;
+            store.state.timelineChannelId = 20;
+            store.state.messages = [{message_id: 200}];
+            store.state.replyTo = {message_id: 200};
+            resolveUpdate({
+                schema_version: SUPPORTED_SCHEMA_VERSION,
+                item: openConversation({channel_id: 10, state: "archived"}),
+            });
+            assert.ok(await pending);
+            assert.strictEqual(store.state.selectedChannelId, 20);
+            assert.strictEqual(store.state.timelineChannelId, 20);
+            assert.deepEqual(store.state.messages, [{message_id: 200}]);
+            assert.deepEqual(store.state.replyTo, {message_id: 200});
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "row mutations reject unloaded targets and mismatched responses",
+        async (assert) => {
+            const store = new ContactCenterStore({
+                orm: {},
+                busService: {removeEventListener: () => undefined},
+                notification: false,
+            });
+            store.state.conversations = [
+                openConversation({channel_id: 10}),
+                openConversation({channel_id: 20}),
+            ];
+            store.state.selectedChannelId = 20;
+            const before = JSON.stringify(store.state.conversations);
+            let calls = 0;
+            store.call = async () => {
+                calls += 1;
+                return {
+                    schema_version: SUPPORTED_SCHEMA_VERSION,
+                    item: openConversation({
+                        channel_id: 20,
+                        state: "archived",
+                        preference: {pinned: true},
+                    }),
+                };
+            };
+            for (const channelId of [false, "10", -1, 99]) {
+                assert.notOk(await store.setConversationState("archived", channelId));
+                assert.notOk(await store.toggleConversationPinned(channelId));
+                assert.notOk(await store.toggleConversationMuted(channelId));
+            }
+            assert.strictEqual(calls, 0);
+            assert.notOk(await store.setConversationState("archived", 10));
+            assert.notOk(await store.toggleConversationPinned(10));
+            assert.strictEqual(calls, 2);
+            assert.strictEqual(JSON.stringify(store.state.conversations), before);
+            store.call = async () => {
+                throw new Error("Access denied");
+            };
+            assert.notOk(await store.toggleConversationMuted(10));
+            assert.strictEqual(JSON.stringify(store.state.conversations), before);
+            assert.strictEqual(store.state.selectedChannelId, 20);
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "late list refreshes preserve the selection at response time",
+        async (assert) => {
+            for (const method of ["loadConversations", "refreshLoadedConversations"]) {
+                const store = new ContactCenterStore({
+                    orm: {},
+                    busService: {removeEventListener: () => undefined},
+                    notification: false,
+                });
+                store.state.filters.responsibility = "all";
+                store.state.conversations = [
+                    openConversation({channel_id: 10}),
+                    openConversation({channel_id: 20}),
+                ];
+                store.state.selectedChannelId = 10;
+                let resolveList = null;
+                store.call = () =>
+                    new Promise((resolve) => {
+                        resolveList = resolve;
+                    });
+                const pending = store[method]({reset: true, silent: true});
+                store.state.selectedChannelId = 20;
+                store.state.timelineChannelId = 20;
+                store.state.messages = [{message_id: 200}];
+                store.state.replyTo = {message_id: 200};
+                resolveList({
+                    schema_version: SUPPORTED_SCHEMA_VERSION,
+                    items: [openConversation({channel_id: 30})],
+                    has_more: false,
+                    total: 1,
+                });
+                assert.ok(await pending, method);
+                assert.strictEqual(store.selectedConversation.channel_id, 20, method);
+                assert.notOk(
+                    store.loadedConversation(10),
+                    "the old selection is not preserved"
+                );
+                assert.strictEqual(store.state.timelineChannelId, 20);
+                assert.deepEqual(store.state.messages, [{message_id: 200}]);
+                assert.deepEqual(store.state.replyTo, {message_id: 200});
+                store.destroy();
+            }
         }
     );
 

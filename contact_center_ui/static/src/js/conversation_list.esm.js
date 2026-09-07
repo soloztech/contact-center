@@ -16,6 +16,8 @@ import {
 } from "./contact_center_model.esm";
 import {ConnectionHealth} from "./connection_health.esm";
 import {DeferredImage} from "./deferred_image.esm";
+import {Dropdown} from "@web/core/dropdown/dropdown";
+import {DropdownItem} from "@web/core/dropdown/dropdown_item";
 import {deserializeDateTime} from "@web/core/l10n/dates";
 
 const {DateTime} = luxon;
@@ -188,6 +190,7 @@ export class ConversationList extends Component {
     setup() {
         this.searchRef = useRef("search");
         this.ui = useState({
+            pendingConversationIds: {},
             view: "grouped",
             collapsedInboxes: {},
             compactToolsOpen: false,
@@ -239,19 +242,33 @@ export class ConversationList extends Component {
     }
 
     get filteredConversations() {
-        return this.store.responsibilityVisibleConversations;
+        const user = this.state.bootstrap && this.state.bootstrap.user;
+        return filterConversationsByResponsibility(
+            this.state.conversations,
+            this.state.filters.responsibility,
+            positiveInteger(user && user.id)
+        );
+    }
+
+    get accounts() {
+        return (this.state.bootstrap && this.state.bootstrap.accounts) || [];
     }
 
     get conversationGroups() {
         const selectedAccountId = positiveInteger(this.state.filters.accountId);
         const accounts = selectedAccountId
-            ? this.store.accounts.filter((account) => account.id === selectedAccountId)
-            : this.store.accounts;
+            ? this.accounts.filter((account) => account.id === selectedAccountId)
+            : this.accounts;
         return groupConversationsByInbox(this.filteredConversations, accounts);
     }
 
     get displayedCount() {
-        return String(this.store.displayedConversationTotal);
+        const total =
+            Number.isSafeInteger(this.state.conversationTotal) &&
+            this.state.conversationTotal >= 0
+                ? this.state.conversationTotal
+                : 0;
+        return String(Math.max(total, this.state.conversations.length));
     }
 
     get realtimeMeta() {
@@ -476,8 +493,36 @@ export class ConversationList extends Component {
     select(conversation) {
         this.store.selectConversation(conversation.channel_id);
     }
+
+    async runConversationAction(channelId, action) {
+        const conversation = this.state.conversations.find(
+            (item) => item.channel_id === channelId
+        );
+        if (
+            !conversation ||
+            this.ui.pendingConversationIds[channelId] ||
+            !["pinned", "muted", "archived"].includes(action)
+        ) {
+            return false;
+        }
+        this.ui.pendingConversationIds[channelId] = true;
+        try {
+            if (action === "pinned") {
+                return await this.store.toggleConversationPinned(channelId);
+            }
+            if (action === "muted") {
+                return await this.store.toggleConversationMuted(channelId);
+            }
+            return await this.store.setConversationState(
+                conversation.state === "archived" ? "open" : "archived",
+                channelId
+            );
+        } finally {
+            delete this.ui.pendingConversationIds[channelId];
+        }
+    }
 }
 
 ConversationList.props = {state: Object, store: Object};
-ConversationList.components = {ConnectionHealth, DeferredImage};
+ConversationList.components = {ConnectionHealth, DeferredImage, Dropdown, DropdownItem};
 ConversationList.template = "contact_center_ui.ConversationList";

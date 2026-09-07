@@ -3,16 +3,18 @@
 import {Component, onWillDestroy, onWillStart, useState} from "@odoo/owl";
 import {
     connectionFleetMeta,
+    conversationAvatarUrl,
     conversationDisplayName,
-    conversationPreference,
     conversationResolutionAction,
     conversationUiPolicy,
+    initials,
 } from "./contact_center_model.esm";
 import {BrowserAttention} from "./browser_attention.esm";
 import {ContactCenterStore} from "./contact_center_store.esm";
 import {ContactPanel} from "./contact_panel.esm";
 import {ConversationList} from "./conversation_list.esm";
 import {ConversationTimeline} from "./conversation_timeline.esm";
+import {DeferredImage} from "./deferred_image.esm";
 import {MessageComposer} from "./message_composer.esm";
 import {browser} from "@web/core/browser/browser";
 import {registry} from "@web/core/registry";
@@ -27,7 +29,7 @@ export function conversationComposerAvailable(policy, capabilities) {
 
 export class ContactCenterApp extends Component {
     setup() {
-        this.ui = useState({stateChanging: false, preferenceChanging: false});
+        this.ui = useState({stateChanging: false, failedHeaderAvatarUrl: false});
         this.attention = new BrowserAttention();
         this.store = new ContactCenterStore({
             orm: useService("orm"),
@@ -87,6 +89,14 @@ export class ContactCenterApp extends Component {
         return conversationDisplayName(this.selectedConversation);
     }
 
+    get selectedConversationAvatarUrl() {
+        return conversationAvatarUrl(this.selectedConversation);
+    }
+
+    get selectedConversationInitials() {
+        return initials(this.selectedConversationName);
+    }
+
     get selectedInboxName() {
         const account = this.selectedConversation && this.selectedConversation.account;
         return account && typeof account.name === "string" && account.name.trim()
@@ -96,16 +106,6 @@ export class ContactCenterApp extends Component {
 
     get resolutionAction() {
         return conversationResolutionAction(this.selectedConversation);
-    }
-
-    get conversationPreference() {
-        return conversationPreference(this.selectedConversation);
-    }
-
-    get canArchiveConversation() {
-        return Boolean(
-            this.selectedConversation && this.selectedConversation.state !== "archived"
-        );
     }
 
     get fleetMeta() {
@@ -147,48 +147,13 @@ export class ContactCenterApp extends Component {
             this.ui.stateChanging = false;
         }
     }
-
-    async archiveConversation() {
-        if (!this.canArchiveConversation || this.ui.stateChanging) {
-            return false;
-        }
-        this.ui.stateChanging = true;
-        try {
-            return await this.store.setConversationState("archived");
-        } finally {
-            this.ui.stateChanging = false;
-        }
-    }
-
-    async togglePinned() {
-        if (this.ui.preferenceChanging) {
-            return false;
-        }
-        this.ui.preferenceChanging = true;
-        try {
-            return await this.store.toggleConversationPinned();
-        } finally {
-            this.ui.preferenceChanging = false;
-        }
-    }
-
-    async toggleMuted() {
-        if (this.ui.preferenceChanging) {
-            return false;
-        }
-        this.ui.preferenceChanging = true;
-        try {
-            return await this.store.toggleConversationMuted();
-        } finally {
-            this.ui.preferenceChanging = false;
-        }
-    }
 }
 
 ContactCenterApp.components = {
     ContactPanel,
     ConversationList,
     ConversationTimeline,
+    DeferredImage,
     MessageComposer,
 };
 ContactCenterApp.template = "contact_center_ui.ContactCenterApp";

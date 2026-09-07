@@ -1006,11 +1006,14 @@ export class ContactCenterStore {
     }
 
     get selectedConversation() {
+        return this.loadedConversation(this.state.selectedChannelId);
+    }
+
+    loadedConversation(channelId) {
         return (
             this.state.conversations.find(
                 (item) =>
-                    isRenderableConversation(item) &&
-                    item.channel_id === this.state.selectedChannelId
+                    isRenderableConversation(item) && item.channel_id === channelId
             ) || false
         );
     }
@@ -1687,7 +1690,6 @@ export class ContactCenterStore {
             return false;
         }
         const request = ++this.listRequest;
-        const previousConversation = this.selectedConversation;
         if (!silent) {
             this.state.listPhase = reset ? "loading" : "loading_more";
         }
@@ -1703,6 +1705,7 @@ export class ContactCenterStore {
                 return false;
             }
             const previousSelected = this.state.selectedChannelId;
+            const previousConversation = this.selectedConversation;
             this.applyConversationPage(payload, {
                 reset,
                 silent,
@@ -1725,8 +1728,6 @@ export class ContactCenterStore {
             return false;
         }
         const request = ++this.listRequest;
-        const previousConversation = this.selectedConversation;
-        const previousSelected = this.state.selectedChannelId;
         const cachedWindow = this.state.conversations.filter(
             (item) =>
                 isRenderableConversation(item) &&
@@ -1782,6 +1783,8 @@ export class ContactCenterStore {
                 cachedNextCursor,
                 targetCount,
             });
+            const previousSelected = this.state.selectedChannelId;
+            const previousConversation = this.selectedConversation;
             this.applyConversationPage(
                 {
                     schema_version: 1,
@@ -3337,18 +3340,31 @@ export class ContactCenterStore {
         return true;
     }
 
-    async updateConversation(patch) {
-        const channelId = this.state.selectedChannelId;
-        if (!channelId) {
+    async updateConversation(patch, channelId = this.state.selectedChannelId) {
+        if (!this.loadedConversation(channelId)) {
             return false;
         }
         try {
             const payload = await this.call("update_conversation", [channelId, patch]);
             validateEnvelope(payload);
-            if (payload.item) {
-                this.replaceConversation(payload.item);
+            if (
+                (payload.item && payload.item.channel_id !== channelId) ||
+                (!payload.item && payload.removed_from_conversation !== true)
+            ) {
+                throw new TypeError("A conversa retornada pelo servidor é inválida.");
             }
-            if (payload.removed_from_conversation || !this.state.selectedChannelId) {
+            const targetIsSelected = this.state.selectedChannelId === channelId;
+            if (payload.removed_from_conversation === true) {
+                this.state.conversations = this.state.conversations.filter(
+                    (item) => item.channel_id !== channelId
+                );
+                if (targetIsSelected) {
+                    this.clearConversationSelection({closePanes: true});
+                }
+            } else if (!this.replaceConversation(payload.item)) {
+                throw new TypeError("A conversa retornada pelo servidor é inválida.");
+            }
+            if (targetIsSelected && !this.state.selectedChannelId) {
                 await this.loadConversations({reset: true, selectFirst: true});
             }
             return true;
@@ -3361,14 +3377,13 @@ export class ContactCenterStore {
         }
     }
 
-    async setConversationState(state) {
-        return this.updateConversation({state});
+    async setConversationState(state, channelId = this.state.selectedChannelId) {
+        return this.updateConversation({state}, channelId);
     }
 
-    async setConversationPreference(patch) {
-        const channelId = this.state.selectedChannelId;
+    async setConversationPreference(patch, channelId = this.state.selectedChannelId) {
         if (
-            !channelId ||
+            !this.loadedConversation(channelId) ||
             !isPlainRecord(patch) ||
             !Object.keys(patch).length ||
             Object.keys(patch).some(
@@ -3385,12 +3400,16 @@ export class ContactCenterStore {
                 patch,
             ]);
             validateEnvelope(payload);
-            if (!payload.item || !this.replaceConversation(payload.item)) {
+            if (
+                !payload.item ||
+                payload.item.channel_id !== channelId ||
+                !this.replaceConversation(payload.item)
+            ) {
                 throw new TypeError(
                     "A preferência retornada pelo servidor é inválida."
                 );
             }
-            await this.loadConversations({reset: true, silent: true});
+            await this.refreshLoadedConversations({silent: true});
             return true;
         } catch (error) {
             this.notify(errorMessage(error), {
@@ -3401,14 +3420,14 @@ export class ContactCenterStore {
         }
     }
 
-    toggleConversationPinned() {
-        const preference = conversationPreference(this.selectedConversation);
-        return this.setConversationPreference({pinned: !preference.pinned});
+    toggleConversationPinned(channelId = this.state.selectedChannelId) {
+        const preference = conversationPreference(this.loadedConversation(channelId));
+        return this.setConversationPreference({pinned: !preference.pinned}, channelId);
     }
 
-    toggleConversationMuted() {
-        const preference = conversationPreference(this.selectedConversation);
-        return this.setConversationPreference({muted: !preference.muted});
+    toggleConversationMuted(channelId = this.state.selectedChannelId) {
+        const preference = conversationPreference(this.loadedConversation(channelId));
+        return this.setConversationPreference({muted: !preference.muted}, channelId);
     }
 
     setResponsible(responsibleId) {
