@@ -210,6 +210,14 @@
                         >
                             <option value="">Follow-up: sem filtro</option>
                             <option
+                                value="all"
+                                t-att-selected="state.filters.activityTiming === 'all'"
+                            >Todos os meus follow-ups</option>
+                            <option
+                                value="due"
+                                t-att-selected="state.filters.activityTiming === 'due'"
+                            >Meus de hoje e atrasados</option>
+                            <option
                                 value="overdue"
                                 t-att-selected="state.filters.activityTiming === 'overdue'"
                             >Meus atrasados</option>
@@ -465,51 +473,50 @@
                 </span>
             </span>
             </button>
+            <ConversationMenu
+                conversation="conversation"
+                busy="!!ui.pendingConversationIds[conversation.channel_id]"
+                onAction.bind="runConversationAction"
+            />
+        </div>
+    </t>
+    <t t-name="contact_center_ui.ConversationMenu" owl="1">
             <Dropdown
-                class="'cc-conversation-item__menu'"
-                togglerClass="'cc-conversation-item__menu-toggle'"
-                menuClass="'cc-conversation-menu'"
-                position="'bottom-end'"
-                title="'Opções da conversa ' + displayName(conversation)"
-                showCaret="false"
-            >
+            class="'cc-conversation-item__menu'"
+            togglerClass="'cc-conversation-item__menu-toggle'"
+            menuClass="'cc-conversation-menu'"
+            position="'bottom-end'"
+            title="label"
+            showCaret="false"
+        >
                 <t t-set-slot="toggler">
                     <i class="fa fa-chevron-down" aria-hidden="true" />
-                    <span class="sr-only">Opções da conversa <t
-                            t-esc="displayName(conversation)"
-                        /></span>
+                    <span class="sr-only" t-esc="label" />
                 </t>
                 <span
-                    t-if="ui.pendingConversationIds[conversation.channel_id]"
-                    class="dropdown-item text-muted"
-                    role="status"
-                >Atualizando conversa…</span>
+                t-if="props.busy"
+                class="dropdown-item text-muted"
+                role="status"
+            >Atualizando conversa…</span>
                 <t t-else="">
-                    <DropdownItem
-                        onSelected="() => this.runConversationAction(conversation.channel_id, 'archived')"
-                    >
+                    <DropdownItem onSelected="() => this.selectAction('archived')">
                         <i class="fa fa-archive" aria-hidden="true" />
                         <t
-                            t-if="conversation.state === 'archived'"
-                        >Desarquivar conversa</t>
+                        t-if="props.conversation.state === 'archived'"
+                    >Desarquivar conversa</t>
                         <t t-else="">Arquivar conversa</t>
                     </DropdownItem>
-                    <DropdownItem
-                        onSelected="() => this.runConversationAction(conversation.channel_id, 'muted')"
-                    >
+                    <DropdownItem onSelected="() => this.selectAction('muted')">
                         <i class="fa fa-bell-slash" aria-hidden="true" />
-                        <t t-if="preference(conversation).muted">Ativar notificações</t>
+                        <t t-if="preference.muted">Ativar notificações</t>
                         <t t-else="">Silenciar conversa</t>
                     </DropdownItem>
-                    <DropdownItem
-                        onSelected="() => this.runConversationAction(conversation.channel_id, 'pinned')"
-                    >
+                    <DropdownItem onSelected="() => this.selectAction('pinned')">
                         <i class="fa fa-thumb-tack" aria-hidden="true" />
-                        <t t-if="preference(conversation).pinned">Desafixar conversa</t>
+                        <t t-if="preference.pinned">Desafixar conversa</t>
                         <t t-else="">Fixar conversa</t>
                     </DropdownItem>
                 </t>
             </Dropdown>
-        </div>
     </t>
 </templates>

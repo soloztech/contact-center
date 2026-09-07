@@ -1201,7 +1201,7 @@ class MailChannelCase(models.Model):
 
 class ContactCenterCase(models.Model):
     _name = "contact.center.case"
-    _inherit = ["mail.thread", "mail.activity.mixin"]
+    _inherit = ["mail.thread"]
     _description = "Contact Center Case"
     _order = "priority desc, stage_changed_at desc, id desc"
     _check_company_auto = True
@@ -1735,12 +1735,6 @@ class ContactCenterCase(models.Model):
         blockers = []
         if self.is_default:
             blockers.append(_("the canonical conversation case cannot be archived"))
-        activity_model = self.env["mail.activity"].sudo()
-        case_model = self.env["ir.model"]._get(self._name)
-        if activity_model.search_count(
-            [("res_model_id", "=", case_model.id), ("res_id", "=", self.id)]
-        ):
-            blockers.append(_("the case still has open follow-up activities"))
         return blockers
 
     def action_archive(self):

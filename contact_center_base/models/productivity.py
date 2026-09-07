@@ -1008,7 +1008,6 @@ class ContactCenterUiApiProductivity(models.AbstractModel):
         return {
             "schema_version": SCHEMA_VERSION,
             "channel_id": channel.id,
-            "cases": [],
             "activities": [],
             "scheduled_messages": [
                 self._serialize_scheduled_productivity(scheduled)

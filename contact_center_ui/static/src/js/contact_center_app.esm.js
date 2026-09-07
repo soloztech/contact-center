@@ -37,6 +37,7 @@ export class ContactCenterApp extends Component {
             notification: useService("notification"),
             stateFactory: useState,
             attention: this.attention,
+            initialActionParams: this.props.action && this.props.action.params,
         });
         this.mobileHealthFocusTimer = null;
         // Do not return the promise: the initial loading state is a real skeleton,

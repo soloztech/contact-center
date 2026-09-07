@@ -186,6 +186,24 @@ export function conversationGroupBadgeLabel(conversation) {
     return `Grupo · ${group.participant_count}`;
 }
 
+export class ConversationMenu extends Component {
+    get label() {
+        return `Opções da conversa ${conversationDisplayName(this.props.conversation)}`;
+    }
+
+    get preference() {
+        return conversationPreference(this.props.conversation);
+    }
+
+    selectAction(action) {
+        return this.props.onAction(this.props.conversation.channel_id, action);
+    }
+}
+
+ConversationMenu.props = {conversation: Object, busy: Boolean, onAction: Function};
+ConversationMenu.components = {Dropdown, DropdownItem};
+ConversationMenu.template = "contact_center_ui.ConversationMenu";
+
 export class ConversationList extends Component {
     setup() {
         this.searchRef = useRef("search");
@@ -524,5 +542,5 @@ export class ConversationList extends Component {
 }
 
 ConversationList.props = {state: Object, store: Object};
-ConversationList.components = {ConnectionHealth, DeferredImage, Dropdown, DropdownItem};
+ConversationList.components = {ConnectionHealth, DeferredImage, ConversationMenu};
 ConversationList.template = "contact_center_ui.ConversationList";

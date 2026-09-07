@@ -7,7 +7,6 @@
             <tree create="0" edit="0" delete="0">
                 <field name="create_date" />
                 <field name="channel_id" />
-                <field name="case_id" />
                 <field name="activity_record_id" />
                 <field name="requested_by_id" />
                 <field name="state" />
@@ -28,7 +27,6 @@
                     <group>
                         <group>
                             <field name="channel_id" />
-                            <field name="case_id" />
                             <field
                                 name="company_id"
                                 groups="base.group_multi_company"

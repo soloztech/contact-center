@@ -124,5 +124,5 @@ class TestContactCenterBaseProductivity(SavepointCase):
         self.assertIn(
             scheduled.id, [item["id"] for item in payload["scheduled_messages"]]
         )
-        self.assertEqual(payload["cases"], [])
+        self.assertNotIn("cases", payload)
         self.assertEqual(payload["activities"], [])

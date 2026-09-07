@@ -289,7 +289,6 @@ function productivityProjection(channelId = false) {
     return {
         channelId,
         phase: "idle",
-        cases: [],
         activities: [],
         scheduledMessages: [],
         activityTypes: [],
@@ -325,7 +324,6 @@ export function normalizeProductivity(payload, channelId) {
     return {
         channelId: responseChannelId,
         phase: "ready",
-        cases: productivityItems(payload, "cases"),
         activities: productivityItems(payload, "activities"),
         scheduledMessages: productivityItems(payload, "scheduled_messages"),
         activityTypes: productivityItems(payload, "activity_types"),
@@ -841,6 +839,21 @@ function identityMutationIdentity(
     return identity;
 }
 
+export function normalizeInboxActionParams(value) {
+    const params = isPlainRecord(value) ? value : {};
+    return {
+        channelId:
+            Number.isSafeInteger(params.channel_id) && params.channel_id > 0
+                ? params.channel_id
+                : false,
+        activityTiming: ["all", "due", "overdue", "today", "planned"].includes(
+            params.activity_timing
+        )
+            ? params.activity_timing
+            : false,
+    };
+}
+
 export class ContactCenterStore {
     constructor({
         orm,
@@ -858,7 +871,9 @@ export class ContactCenterStore {
         operationNow = () => Date.now(),
         operationCrypto = window.crypto,
         attention = false,
+        initialActionParams = false,
     }) {
+        this.initialNavigation = normalizeInboxActionParams(initialActionParams);
         this.orm = orm;
         this.busService = busService;
         this.notification = notification;
@@ -1401,7 +1416,23 @@ export class ContactCenterStore {
             this.state.bootstrap = payload;
             this.applyConnectionHealth(payload.connection_health);
             this.state.phase = "ready";
-            await this.loadConversations({reset: true, selectFirst: true});
+            const navigation = this.initialNavigation;
+            this.initialNavigation = false;
+            const directed =
+                navigation && (navigation.channelId || navigation.activityTiming);
+            if (directed) {
+                this.state.filters.state = false;
+                this.state.filters.activityTiming = navigation.activityTiming;
+            }
+            const loading = this.loadConversations({
+                reset: true,
+                selectFirst: !directed,
+            });
+            const listRequest = this.listRequest;
+            await loading;
+            if (directed && navigation.channelId && this.listRequest === listRequest) {
+                await this.openInitialConversation(navigation.channelId);
+            }
         } catch (error) {
             if (error instanceof RangeError) {
                 this.state.phase = "unsupported";
@@ -1409,6 +1440,42 @@ export class ContactCenterStore {
             }
             this.state.phase = "error";
             this.notify(errorMessage(error), {type: "danger", title: "Contact Center"});
+        }
+    }
+
+    async openInitialConversation(channelId) {
+        if (this.destroyed || this.state.selectedChannelId) {
+            return false;
+        }
+        const timelineRequest = this.timelineRequest;
+        const listRequest = this.listRequest;
+        const current = () =>
+            !this.destroyed &&
+            this.timelineRequest === timelineRequest &&
+            this.listRequest === listRequest &&
+            !this.state.selectedChannelId;
+        try {
+            const payload = await this.call("get_conversation", [channelId]);
+            if (!current()) {
+                return false;
+            }
+            validateEnvelope(payload);
+            if (
+                !payload.item ||
+                payload.item.channel_id !== channelId ||
+                !this.replaceConversation(payload.item)
+            ) {
+                throw new TypeError("A conversa retornada pelo servidor é inválida.");
+            }
+            return this.selectConversation(channelId);
+        } catch (error) {
+            if (current()) {
+                this.notify(errorMessage(error), {
+                    type: "danger",
+                    title: "Conversa indisponível",
+                });
+            }
+            return false;
         }
     }
 
@@ -1574,7 +1641,9 @@ export class ContactCenterStore {
             filters.tag_id = this.state.filters.tagId;
         }
         if (
-            ["overdue", "today", "planned"].includes(this.state.filters.activityTiming)
+            ["all", "due", "overdue", "today", "planned"].includes(
+                this.state.filters.activityTiming
+            )
         ) {
             filters.activity_timing = this.state.filters.activityTiming;
         }
@@ -1856,7 +1925,9 @@ export class ContactCenterStore {
             const tagId = Number(value);
             normalizedValue = Number.isSafeInteger(tagId) && tagId > 0 ? tagId : false;
         } else if (name === "activityTiming") {
-            normalizedValue = ["overdue", "today", "planned"].includes(value)
+            normalizedValue = ["all", "due", "overdue", "today", "planned"].includes(
+                value
+            )
                 ? value
                 : false;
         }
@@ -2134,7 +2205,6 @@ export class ContactCenterStore {
         delete requestValues.client_request_id;
         const signature = `schedule-followup:${channelId}:${JSON.stringify([
             requestValues.activity_type_id || false,
-            requestValues.case_id || false,
             requestValues.date_deadline || "",
             requestValues.note || "",
             requestValues.summary || "",

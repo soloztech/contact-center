@@ -24,6 +24,7 @@
         "views/media_views.xml",
         "views/attribution_views.xml",
         "views/menus.xml",
+        "views/followup_views.xml",
     ],
     "assets": {
         "web.assets_backend": [

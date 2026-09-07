@@ -12,7 +12,6 @@
         "security/ir.model.access.csv",
         "security/contact_center_crm_security.xml",
         "views/pipeline_views.xml",
-        "views/productivity_views.xml",
         "views/contact_center_crm_views.xml",
         "views/crm_lead_views.xml",
         "views/menus.xml",

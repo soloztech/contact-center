@@ -375,7 +375,9 @@ class TestContactCenterPipeline(SavepointCase):
         self.assertTrue(replacement.is_initial)
         self.assertEqual(pipeline._contact_center_initial_stage(), replacement)
 
-    def test_case_archive_is_explicit_and_blocked_by_default_or_followup(self):
+    def test_followups_only_target_conversations_and_do_not_block_secondary_archive(
+        self,
+    ):
         default_case = self.channel.contact_center_case_ids.filtered("is_default")
         pipeline = default_case.pipeline_id
         secondary = (
@@ -390,40 +392,58 @@ class TestContactCenterPipeline(SavepointCase):
                 }
             )
         )
-        activity = (
-            self.env["mail.activity"]
-            .with_user(self.agent)
-            .create(
+        activity_model = self.env["mail.activity"].with_user(self.agent)
+        case_model_id = self.env["ir.model"]._get_id("contact.center.case")
+        case_values = {
+            "activity_type_id": self.env.ref("mail.mail_activity_data_todo").id,
+            "res_model_id": case_model_id,
+            "res_id": secondary.id,
+            "summary": "Use the conversation",
+            "user_id": self.agent.id,
+        }
+        with self.assertRaisesRegex(ValidationError, "Contact Center conversation"):
+            activity_model.create(case_values)
+        with self.assertRaisesRegex(ValidationError, "Contact Center conversation"):
+            activity_model.with_context(default_res_model_id=case_model_id).create(
                 {
-                    "activity_type_id": self.env.ref("mail.mail_activity_data_todo").id,
-                    "res_model_id": self.env["ir.model"]._get_id("contact.center.case"),
-                    "res_id": secondary.id,
-                    "summary": "Open follow-up",
-                    "user_id": self.agent.id,
+                    key: value
+                    for key, value in case_values.items()
+                    if key != "res_model_id"
                 }
             )
+        with self.assertRaisesRegex(ValidationError, "Contact Center conversation"):
+            activity_model.with_context(default_res_model_id=case_model_id).create(
+                dict(
+                    {
+                        key: value
+                        for key, value in case_values.items()
+                        if key != "res_model_id"
+                    },
+                    res_model="mail.channel",
+                )
+            )
+        activity = activity_model.with_context(
+            default_res_model_id=case_model_id, default_res_model="contact.center.case"
+        ).create(
+            dict(
+                case_values,
+                res_model_id=self.env["ir.model"]._get_id("mail.channel"),
+                res_id=self.channel.id,
+            )
         )
-
+        with self.assertRaisesRegex(ValidationError, "Contact Center conversation"):
+            activity.write({"res_model_id": case_model_id, "res_id": secondary.id})
         with self.assertRaises(AccessError):
             secondary.with_user(self.agent).write({"active": False})
         with self.assertRaisesRegex(ValidationError, "canonical conversation case"):
             default_case.with_user(self.agent).action_archive()
-        with self.assertRaisesRegex(ValidationError, "open follow-up"):
-            secondary.with_user(self.agent).action_archive()
-
-        activity.with_user(self.agent).unlink()
         secondary.with_user(self.agent).action_archive()
         self.assertFalse(secondary.active)
-        with self.assertRaisesRegex(ValidationError, "archived case"):
-            self.env["mail.activity"].with_user(self.agent).create(
-                {
-                    "activity_type_id": self.env.ref("mail.mail_activity_data_todo").id,
-                    "res_model_id": self.env["ir.model"]._get_id("contact.center.case"),
-                    "res_id": secondary.id,
-                    "summary": "Forbidden follow-up",
-                    "user_id": self.agent.id,
-                }
-            )
+        self.assertTrue(activity.exists())
+        self.assertEqual(activity.res_model, "mail.channel")
+        self.assertEqual(activity.res_id, self.channel.id)
+        with self.assertRaisesRegex(ValidationError, "Contact Center conversation"):
+            activity_model.create(case_values)
         secondary.with_user(self.agent).action_unarchive()
         self.assertTrue(secondary.active)
 

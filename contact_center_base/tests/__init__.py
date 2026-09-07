@@ -29,3 +29,4 @@ from . import (
     test_structured_content,
     test_technical_menus,
 )
+from . import test_followup

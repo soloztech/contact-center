@@ -58,6 +58,7 @@ import {
     formatOdooUtcDateTime,
     loadInboxDensityPreference,
     localDateTimeToOdooUtc,
+    normalizeInboxActionParams,
     normalizeProductivity,
     normalizeQuickReplies,
     operationIntentFingerprint,
@@ -131,10 +132,20 @@ import {
     conversationPreviewText,
     groupConversationsByInbox,
 } from "@contact_center_ui/js/conversation_list.esm";
+import {
+    contactCenterActivityAction,
+    openContactCenterActivityGroup,
+} from "@contact_center_ui/js/activity_group_view.esm";
 import {BrowserAttention} from "@contact_center_ui/js/browser_attention.esm";
 import {ConnectionHealth} from "@contact_center_ui/js/connection_health.esm";
 import {conversationComposerAvailable} from "@contact_center_ui/js/contact_center_app.esm";
 import {reactive} from "@odoo/owl";
+import {hotkeyService} from "@web/core/hotkeys/hotkey_service";
+import {makeTestEnv} from "@web/../tests/helpers/mock_env";
+import {makeFakeLocalizationService} from "@web/../tests/helpers/mock_services";
+import {click, getFixture, mount, nextTick} from "@web/../tests/helpers/utils";
+import {registry} from "@web/core/registry";
+import {uiService} from "@web/core/ui/ui_service";
 
 function canonicalGroup(overrides = {}) {
     return {
@@ -201,6 +212,250 @@ function activityConversationCursor(channelId, lastActivityAt) {
 }
 
 QUnit.module("contact_center_ui > model", (hooks) => {
+    QUnit.test(
+        "activity menu targets the inbox without changing native model groups",
+        (assert) => {
+            for (const [filter, timing] of [
+                ["my", "due"],
+                ["overdue", "overdue"],
+                ["today", "today"],
+                ["upcoming_all", "planned"],
+                ["summary", "all"],
+            ]) {
+                assert.deepEqual(contactCenterActivityAction(filter), {
+                    type: "ir.actions.client",
+                    tag: "contact_center_ui.inbox",
+                    name: "Contact Center",
+                    params: {activity_timing: timing},
+                });
+            }
+            const actions = [];
+            const view = {
+                activityGroup: {contactCenter: false},
+                activityMenuViewOwner: {update: (values) => actions.push(values)},
+                env: {services: {action: {doAction: (action) => actions.push(action)}}},
+            };
+            const target = document.createElement("button");
+            target.dataset.filter = "today";
+            const event = {target, stopPropagation: () => actions.push("stopped")};
+            assert.notOk(openContactCenterActivityGroup(view, event));
+            assert.deepEqual(actions, [], "Discuss and CRM keep their native handler");
+            view.activityGroup.contactCenter = true;
+            assert.ok(openContactCenterActivityGroup(view, event));
+            assert.strictEqual(actions[2].params.activity_timing, "today");
+            assert.deepEqual(actions[1], {isOpen: false});
+        }
+    );
+
+    QUnit.test(
+        "inbox action parameters reject unrecognized filters and channel IDs",
+        (assert) => {
+            assert.deepEqual(
+                normalizeInboxActionParams({channel_id: 42, activity_timing: "due"}),
+                {channelId: 42, activityTiming: "due"}
+            );
+            for (const channelId of [-1, 0, "42", true, {}, 1.5]) {
+                assert.notOk(
+                    normalizeInboxActionParams({channel_id: channelId}).channelId
+                );
+            }
+            assert.deepEqual(normalizeInboxActionParams({activity_timing: "all"}), {
+                channelId: false,
+                activityTiming: "all",
+            });
+            assert.notOk(
+                normalizeInboxActionParams({activity_timing: "unexpected"})
+                    .activityTiming
+            );
+        }
+    );
+
+    QUnit.test(
+        "activity entry filters all conversation states and does not open an arbitrary chat",
+        async (assert) => {
+            const store = new ContactCenterStore({
+                orm: {},
+                busService: {},
+                notification: false,
+                initialActionParams: {activity_timing: "due"},
+            });
+            const loads = [];
+            store.call = async () => ({
+                schema_version: 1,
+                capabilities: {followups: true},
+            });
+            store.loadConversations = async (options) => loads.push(options);
+            await store.loadBootstrap();
+            assert.deepEqual(loads, [{reset: true, selectFirst: false}]);
+            assert.notOk(store.state.selectedChannelId);
+            assert.notOk(store.state.filters.state);
+            assert.strictEqual(store.conversationFilters().activity_timing, "due");
+            assert.notOk(
+                store.initialNavigation,
+                "navigation intent is consumed only once"
+            );
+        }
+    );
+
+    QUnit.test(
+        "direct activity links hydrate a channel outside the loaded page",
+        async (assert) => {
+            const store = new ContactCenterStore({
+                orm: {},
+                busService: {},
+                notification: false,
+                initialActionParams: {channel_id: 42},
+            });
+            const calls = [];
+            store.call = async (method, args) => {
+                calls.push({method, args});
+                return method === "bootstrap"
+                    ? {schema_version: 1}
+                    : {
+                          schema_version: 1,
+                          item: openConversation({
+                              channel_id: 42,
+                              name: "Exact channel",
+                          }),
+                      };
+            };
+            store.loadConversations = async () => {
+                store.state.conversations = [openConversation({channel_id: 10})];
+            };
+            store.loadTimeline = async () => true;
+            await store.loadBootstrap();
+            assert.deepEqual(calls[1], {method: "get_conversation", args: [42]});
+            assert.strictEqual(store.state.selectedChannelId, 42);
+            assert.strictEqual(store.selectedConversation.name, "Exact channel");
+            assert.strictEqual(store.state.mobilePane, "conversation");
+        }
+    );
+
+    QUnit.test(
+        "an inbox filter change during bootstrap cancels the initial channel intent",
+        async (assert) => {
+            const calls = [];
+            let resolveList = () => false;
+            const store = new ContactCenterStore({
+                orm: {},
+                busService: {},
+                notification: false,
+                initialActionParams: {channel_id: 42},
+            });
+            store.call = async (method) => {
+                calls.push(method);
+                return {schema_version: 1};
+            };
+            store.loadConversations = () => {
+                store.listRequest += 1;
+                return new Promise((resolve) => {
+                    resolveList = resolve;
+                });
+            };
+            const loading = store.loadBootstrap();
+            await Promise.resolve();
+            store.listRequest += 1;
+            resolveList(true);
+            await loading;
+            assert.deepEqual(calls, ["bootstrap"]);
+            assert.notOk(store.state.selectedChannelId);
+        }
+    );
+
+    QUnit.test(
+        "a slow initial channel cannot replace a later selection or filter",
+        async (assert) => {
+            for (const change of ["selection", "filter", "destroy"]) {
+                const store = new ContactCenterStore({
+                    orm: {},
+                    busService: {},
+                    notification: false,
+                });
+                let resolve = () => false;
+                store.call = () =>
+                    new Promise((done) => {
+                        resolve = done;
+                    });
+                const pending = store.openInitialConversation(42);
+                if (change === "selection") {
+                    store.state.selectedChannelId = 10;
+                    store.timelineRequest += 1;
+                }
+                if (change === "filter") {
+                    store.listRequest += 1;
+                }
+                if (change === "destroy") {
+                    store.destroyed = true;
+                }
+                resolve({schema_version: 1, item: openConversation({channel_id: 42})});
+                assert.notOk(await pending, change);
+                assert.notOk(
+                    store.state.conversations.some((item) => item.channel_id === 42),
+                    change
+                );
+            }
+        }
+    );
+
+    QUnit.test(
+        "an inaccessible or mismatched initial channel does not select a fallback",
+        async (assert) => {
+            const notices = [];
+            const store = new ContactCenterStore({
+                orm: {},
+                busService: {},
+                notification: false,
+            });
+            store.notify = (message) => notices.push(message);
+            store.call = async () => ({
+                schema_version: 1,
+                item: openConversation({channel_id: 99}),
+            });
+            assert.notOk(await store.openInitialConversation(42));
+            assert.notOk(store.state.selectedChannelId);
+            assert.deepEqual(store.state.conversations, []);
+            store.call = async () => {
+                throw new Error("Denied");
+            };
+            assert.notOk(await store.openInitialConversation(42));
+            assert.strictEqual(notices.length, 2);
+        }
+    );
+
+    QUnit.test(
+        "follow-up creation uses the conversation without a Kanban case",
+        async (assert) => {
+            const composer = Object.create(MessageComposer.prototype);
+            const values = [];
+            composer.local = {
+                actionBusy: false,
+                followupSummary: "Retornar",
+                followupNote: "Contexto",
+                followupDate: "2030-01-02",
+                followupUserId: 7,
+                followupActivityTypeId: 4,
+            };
+            composer.props = {
+                store: {
+                    scheduleFollowup: async (value) => {
+                        values.push(value);
+                        return true;
+                    },
+                },
+            };
+            assert.ok(await composer.createFollowup());
+            assert.deepEqual(values, [
+                {
+                    summary: "Retornar",
+                    note: "Contexto",
+                    date_deadline: "2030-01-02",
+                    user_id: 7,
+                    activity_type_id: 4,
+                },
+            ]);
+            assert.notOk(composer.local.actionBusy);
+        }
+    );
     hooks.beforeEach(() => {
         // The neutralized lab injects a banner outside QUnit's fixture. It is
         // unrelated to this addon and otherwise trips Odoo's DOM-leak guard.
@@ -4553,6 +4808,106 @@ QUnit.module("contact_center_ui > model", (hooks) => {
     );
 
     QUnit.test(
+        "each rendered conversation menu keeps its own row in grouped and flat lists",
+        async (assert) => {
+            registry.category("services").add("hotkey", hotkeyService);
+            registry.category("services").add("ui", uiService);
+            makeFakeLocalizationService();
+            const env = await makeTestEnv();
+            const target = getFixture();
+            const store = new ContactCenterStore({
+                orm: {},
+                busService: new EventTarget(),
+            });
+            store.state.conversations = [
+                openConversation({
+                    channel_id: 10,
+                    name: "Ana",
+                    account: {id: 1, name: "Caixa", platform: "whatsapp"},
+                    preference: {pinned: false, muted: false},
+                }),
+                openConversation({
+                    channel_id: 20,
+                    name: "Bruno",
+                    account: {id: 1, name: "Caixa", platform: "whatsapp"},
+                    state: "archived",
+                    preference: {pinned: true, muted: true},
+                }),
+            ];
+            store.state.listPhase = "ready";
+            const calls = [];
+            store.selectConversation = (id) => calls.push(["select", id]);
+            store.toggleConversationPinned = async (id) => calls.push(["pinned", id]);
+            store.toggleConversationMuted = async (id) => calls.push(["muted", id]);
+            store.setConversationState = async (state, id) => calls.push([state, id]);
+            try {
+                const list = await mount(ConversationList, target, {
+                    env,
+                    props: {state: store.state, store},
+                });
+                for (const view of ["grouped", "flat"]) {
+                    list.setView(view);
+                    await nextTick();
+                    for (const [id, name, labels] of [
+                        [
+                            10,
+                            "Ana",
+                            [
+                                "Arquivar conversa",
+                                "Silenciar conversa",
+                                "Fixar conversa",
+                            ],
+                        ],
+                        [
+                            20,
+                            "Bruno",
+                            [
+                                "Desarquivar conversa",
+                                "Ativar notificações",
+                                "Desafixar conversa",
+                            ],
+                        ],
+                    ]) {
+                        const row = `.cc-conversation-item[data-channel-id="${id}"]`;
+                        const toggler = `${row} .cc-conversation-item__menu-toggle`;
+                        assert.strictEqual(
+                            target
+                                .querySelector(`${toggler} .sr-only`)
+                                .textContent.trim(),
+                            `Opções da conversa ${name}`,
+                            `${view}: the accessible label belongs to its row`
+                        );
+                        for (const [index, label] of labels.entries()) {
+                            await click(target, toggler);
+                            const items = target.querySelectorAll(
+                                `${row} [role="menuitem"]`
+                            );
+                            assert.strictEqual(items[index].textContent.trim(), label);
+                            await click(items[index]);
+                            await nextTick();
+                        }
+                    }
+                }
+                const expected = [
+                    ["archived", 10],
+                    ["muted", 10],
+                    ["pinned", 10],
+                    ["open", 20],
+                    ["muted", 20],
+                    ["pinned", 20],
+                ];
+                assert.deepEqual(calls, [...expected, ...expected]);
+                assert.notOk(
+                    store.state.selectedChannelId,
+                    "menus never select or read a conversation"
+                );
+            } finally {
+                store.destroy();
+            }
+        }
+    );
+
+    QUnit.test(
         "conversation rows subscribe through the list component's reactive state",
         (assert) => {
             const store = new ContactCenterStore({
@@ -5744,7 +6099,6 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 followupDate: "2030-01-03",
                 followupActivityTypeId: 4,
                 followupUserId: 7,
-                followupCaseId: 12,
             };
             composer.resize = () => true;
 
@@ -5762,7 +6116,6 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             assert.strictEqual(composer.props.state.replyTo.message_id, 7);
             assert.strictEqual(composer.local.scheduledAt, "2030-01-02T10:00");
             assert.strictEqual(composer.local.followupSummary, "Retornar proposta");
-            assert.strictEqual(composer.local.followupCaseId, 12);
             assert.notOk(composer.drafts.has(10), "the active draft has one owner");
         }
     );
@@ -8743,7 +9096,6 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             {
                 schema_version: SUPPORTED_SCHEMA_VERSION,
                 channel_id: 42,
-                cases: [{id: 7, name: "Orçamento"}],
                 activities: [{id: 8, summary: "Retornar"}],
                 scheduled_messages: [{id: 9, body: "Olá"}],
                 activity_types: [{id: 10, name: "Ligação"}],
@@ -8754,7 +9106,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
 
         assert.strictEqual(productivity.channelId, 42);
         assert.strictEqual(productivity.phase, "ready");
-        assert.deepEqual(productivity.cases, [{id: 7, name: "Orçamento"}]);
+        assert.notOk("cases" in productivity);
         assert.deepEqual(productivity.activities, [{id: 8, summary: "Retornar"}]);
         assert.deepEqual(productivity.scheduledMessages, [{id: 9, body: "Olá"}]);
         assert.deepEqual(productivity.activityTypes, [{id: 10, name: "Ligação"}]);
@@ -9398,7 +9750,6 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             const response = {
                 schema_version: SUPPORTED_SCHEMA_VERSION,
                 channel_id: 42,
-                cases: [],
                 activities: [],
                 scheduled_messages: [],
                 activity_types: [],

@@ -179,7 +179,8 @@ Administrators opt each reusable text into an audience explicitly, which keeps a
 or upgraded installation fail-closed.
 
 Install ``contact_center_kanban`` when service cases, configurable pipelines, Kanban
-stages, transition history or case-scoped follow-ups are required. The base addon has
+stages or transition history are required. Conversation follow-ups belong to the
+base addon and remain available without Kanban. The base addon has
 no models, fields, hooks or database assumptions from that optional workflow.
 
 Bug Tracker

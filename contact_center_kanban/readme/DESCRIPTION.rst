@@ -2,7 +2,8 @@ This optional addon adds Atendimentos, pipelines, Kanban stages and immutable
 transition history to Contact Center CRM. CRM conversations and their opportunities
 remain available when this addon is not installed.
 
-Atendimentos also provide case-scoped follow-ups through native mail activities.
+Follow-ups belong to the conversation in Contact Center Base. Atendimentos do not
+create a separate activity scope; the activity menu opens the conversation inbox.
 CRM stage, pipeline and roster synchronization belong to this optional addon.
 
 The CRM addon owns the direct conversation-to-opportunity association. An

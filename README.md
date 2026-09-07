@@ -25,7 +25,7 @@ deployment.
 | `contact_center_ui`     | Standalone Owl inbox using the versioned local UiDTO API                                                   |
 | `contact_center_wuzapi` | WhatsApp transport, guided setup, health, group metadata and media                                         |
 | `contact_center_meta`   | Messenger and Page-linked Instagram messaging through shared Meta foundations                              |
-| `contact_center_kanban` | Optional service cases, pipelines, CRM stage synchronization and case follow-ups                          |
+| `contact_center_kanban` | Optional service cases, pipelines and CRM stage synchronization                          |
 | `contact_center_crm`    | Customer opportunities, quotations, orders and invoices in the chat; usable without Kanban               |
 
 Base has no CRM or Kanban dependency. CRM depends on the UI and native CRM; Kanban extends CRM. Meta's technical
@@ -65,10 +65,11 @@ configuration and technical-ledger access.
   realtime updates, compact desktop density and responsive mobile layout.
 - Text and media composition, provider-supported replies and mutations, dispatch and
   delivery status, tags, assignments, identity naming and explicit contact linking.
-- Scoped quick replies, immutable internal notes and scheduled provider messages.
+- Scoped quick replies, immutable internal notes, conversation follow-ups and scheduled provider messages.
   The customer panel shows opportunities, quotations, orders and invoices by contact.
-  Historical CRM associations remain independent. Optional Kanban adds service cases,
-  case follow-ups and CRM stage synchronization.
+  Historical CRM associations remain independent. Follow-ups belong to conversations,
+  work without Kanban, and open the inbox from the activity menu. Optional Kanban adds
+  service cases and CRM stage synchronization.
 - Conversation states `open`, `resolved` and `archived`. New inbound messages reopen
   resolved conversations; archived conversations stay archived until explicitly
   restored.

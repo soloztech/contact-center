@@ -88,7 +88,6 @@ function restoredProductivityDraft(draft) {
         followupDate: draft.followupDate || "",
         followupActivityTypeId: draft.followupActivityTypeId || false,
         followupUserId: draft.followupUserId || false,
-        followupCaseId: draft.followupCaseId || false,
     };
 }
 
@@ -386,7 +385,6 @@ export class MessageComposer extends Component {
             followupDate: "",
             followupActivityTypeId: false,
             followupUserId: false,
-            followupCaseId: false,
             completionFeedback: {},
             attachments: [],
             structuredDraft: false,
@@ -535,7 +533,6 @@ export class MessageComposer extends Component {
         return (
             this.state.productivity || {
                 phase: "idle",
-                cases: [],
                 activities: [],
                 scheduledMessages: [],
                 activityTypes: [],
@@ -905,7 +902,6 @@ export class MessageComposer extends Component {
             followupDate: this.local.followupDate,
             followupActivityTypeId: this.local.followupActivityTypeId,
             followupUserId: this.local.followupUserId,
-            followupCaseId: this.local.followupCaseId,
         };
         if (this.draftHasContent(draft)) {
             this.drafts.set(channelId, draft);
@@ -952,7 +948,6 @@ export class MessageComposer extends Component {
         this.local.followupDate = "";
         this.local.followupActivityTypeId = false;
         this.local.followupUserId = false;
-        this.local.followupCaseId = false;
         this.local.completionFeedback = {};
         this.local.recordingError = "";
         this.local.dragActive = false;
@@ -1407,11 +1402,7 @@ export class MessageComposer extends Component {
 
     onFollowupField(name, event) {
         const rawValue = event.target.value;
-        this.local[name] = [
-            "followupActivityTypeId",
-            "followupUserId",
-            "followupCaseId",
-        ].includes(name)
+        this.local[name] = ["followupActivityTypeId", "followupUserId"].includes(name)
             ? Number(rawValue) || false
             : rawValue;
     }
@@ -1462,9 +1453,6 @@ export class MessageComposer extends Component {
         }
         if (this.local.followupUserId) {
             values.user_id = this.local.followupUserId;
-        }
-        if (this.local.followupCaseId) {
-            values.case_id = this.local.followupCaseId;
         }
         this.local.actionBusy = true;
         let created = false;

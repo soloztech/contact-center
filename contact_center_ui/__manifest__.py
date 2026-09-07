@@ -24,6 +24,7 @@
             "contact_center_ui/static/src/js/message_composer.esm.js",
             "contact_center_ui/static/src/js/contact_panel.esm.js",
             "contact_center_ui/static/src/js/contact_center_app.esm.js",
+            "contact_center_ui/static/src/js/activity_group_view.esm.js",
             "contact_center_ui/static/src/xml/*.xml",
             "contact_center_ui/static/src/scss/contact_center_app.scss",
         ],
