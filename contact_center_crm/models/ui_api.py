@@ -88,7 +88,7 @@ class ContactCenterUiApi(models.AbstractModel):
         labels = dict(record._fields[field_name]._description_selection(record.env))
         return {"key": key, "label": labels.get(key, key) or ""}
 
-    def _serialize_customer_record(self, record, tab):
+    def _serialize_customer_record(self, record, tab, channel_id=None):
         if tab == "opportunities":
             currency = record.company_currency or record.env.company.currency_id
             amount = record.expected_revenue
@@ -161,6 +161,12 @@ class ContactCenterUiApi(models.AbstractModel):
                     ),
                 }
             )
+        elif tab in ("quotations", "orders"):
+            result["document_tools"] = {
+                "pdf_url": "/contact_center/customer/%s/sale/%s/pdf"
+                % (channel_id, record.id),
+                "attachments": True,
+            }
         return result
 
     @api.model
@@ -194,6 +200,9 @@ class ContactCenterUiApi(models.AbstractModel):
             "tabs": tabs,
             "items": [],
             "has_more": False,
+            "can_create_quotation": self._customer_can_create_quotation(
+                channel, partner
+            ),
         }
         if not available or not partner:
             return result
@@ -229,13 +238,125 @@ class ContactCenterUiApi(models.AbstractModel):
         result.update(
             {
                 "items": [
-                    self._serialize_customer_record(record, tab)
+                    self._serialize_customer_record(record, tab, channel.id)
                     for record in records[:limit]
                 ],
                 "has_more": len(records) > limit,
             }
         )
         return result
+
+    def _customer_can_create_quotation(self, channel, partner):
+        return bool(
+            partner
+            and "sale.order" in self.env.registry
+            and self.env["sale.order"]
+            .with_company(channel.contact_center_company_id)
+            .check_access_rights("create", raise_exception=False)
+        )
+
+    def _customer_sale_document(self, channel_id, order_id):
+        channel, _member = self._authorized_channel(channel_id)
+        order_id = self._positive_id(order_id, _("Sales document ID"))
+        partner, commercial_partner = self._crm_customer(channel)
+        if not partner or "sale.order" not in self.env.registry:
+            raise AccessError(_("The sales document is not available."))
+        orders = (
+            self.env["sale.order"]
+            .with_company(channel.contact_center_company_id)
+            .with_context(allowed_company_ids=channel.contact_center_company_id.ids)
+        )
+        orders.check_access_rights("read")
+        order = orders.search(
+            [
+                ("id", "=", order_id),
+                ("partner_id.commercial_partner_id", "=", commercial_partner.id),
+                ("company_id", "=", channel.contact_center_company_id.id),
+                ("state", "in", ["draft", "sent", "sale", "done"]),
+            ],
+            limit=1,
+        )
+        if not order:
+            raise AccessError(_("The sales document is not available."))
+        return channel, order
+
+    def _customer_sale_attachment_domain(self, order):
+        return [
+            ("res_model", "=", "sale.order"),
+            ("res_id", "=", order.id),
+            ("res_field", "=", False),
+            ("type", "=", "binary"),
+            ("company_id", "in", [False, order.company_id.id]),
+        ]
+
+    def _customer_sale_attachment(self, order, attachment_id):
+        attachment_id = self._positive_id(attachment_id, _("Attachment ID"))
+        attachments = order.env["ir.attachment"]
+        attachments.check_access_rights("read")
+        attachment = attachments.search(
+            self._customer_sale_attachment_domain(order) + [("id", "=", attachment_id)],
+            limit=1,
+        )
+        if not attachment:
+            raise AccessError(_("The sales attachment is not available."))
+        attachment.check("read")
+        return attachment
+
+    @api.model
+    def get_customer_sale_attachments(self, channel_id, order_id, offset=0, limit=20):
+        channel, order = self._customer_sale_document(channel_id, order_id)
+        limit = self._bounded_int(
+            limit, default=20, minimum=1, maximum=50, label=_("limit")
+        )
+        offset = self._bounded_int(
+            offset, default=0, minimum=0, maximum=10000, label=_("offset")
+        )
+        attachments = order.env["ir.attachment"].search(
+            self._customer_sale_attachment_domain(order),
+            order="id desc",
+            offset=offset,
+            limit=limit + 1,
+        )
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "channel_id": channel.id,
+            "order_id": order.id,
+            "items": [
+                {
+                    "id": attachment.id,
+                    "name": attachment.name,
+                    "mimetype": attachment.mimetype or "application/octet-stream",
+                    "size_bytes": attachment.file_size,
+                    "url": "/contact_center/customer/%s/sale/%s/attachment/%s"
+                    % (channel.id, order.id, attachment.id),
+                }
+                for attachment in attachments[:limit]
+            ],
+            "has_more": len(attachments) > limit,
+        }
+
+    @api.model
+    def get_customer_quotation_action(self, channel_id):
+        channel, _member = self._authorized_channel(channel_id)
+        partner, _commercial_partner = self._crm_customer(channel)
+        if not self._customer_can_create_quotation(channel, partner):
+            raise AccessError(_("You cannot create a quotation for this customer."))
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "channel_id": channel.id,
+            "action": {
+                "type": "ir.actions.act_window",
+                "name": _("New Quotation"),
+                "res_model": "sale.order",
+                "views": [(False, "form")],
+                "target": "new",
+                "context": {
+                    "default_partner_id": partner.id,
+                    "default_company_id": channel.contact_center_company_id.id,
+                    "allowed_company_ids": channel.contact_center_company_id.ids,
+                },
+            },
+        }
 
     def _crm_opportunity(self, channel, opportunity_id):
         lead_id = self._positive_id(opportunity_id, _("CRM record ID"))

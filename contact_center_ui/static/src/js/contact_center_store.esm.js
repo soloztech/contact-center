@@ -1132,6 +1132,25 @@ export class ContactCenterStore {
         };
     }
 
+    registerDraftAttachmentHandler(handler) {
+        this.draftAttachmentHandler = handler;
+        return () => {
+            if (this.draftAttachmentHandler === handler) {
+                this.draftAttachmentHandler = null;
+            }
+        };
+    }
+
+    async addDraftAttachment(source) {
+        if (!this.draftAttachmentHandler) {
+            this.notify("Abra a conversa para anexar o arquivo à mensagem.", {
+                type: "warning",
+            });
+            return false;
+        }
+        return this.draftAttachmentHandler(source);
+    }
+
     get responsibilityVisibleConversations() {
         return filterConversationsByResponsibility(
             this.state.conversations,

@@ -51,7 +51,37 @@ function normalizeCurrency(value) {
     };
 }
 
-function normalizeItem(item, tab) {
+function salePath(channelId, orderId) {
+    return `/contact_center/customer/${channelId}/sale/${orderId}`;
+}
+
+function emptyAttachments() {
+    return {
+        expanded: false,
+        phase: "idle",
+        items: [],
+        hasMore: false,
+        nextOffset: 0,
+        loadingMore: false,
+        error: "",
+    };
+}
+
+function normalizeDocumentTools(item, channelId) {
+    const tools = item.document_tools;
+    if (item.model !== "sale.order" || !record(tools)) {
+        return false;
+    }
+    return {
+        pdfUrl:
+            tools.pdf_url === `${salePath(channelId, item.id)}/pdf`
+                ? tools.pdf_url
+                : false,
+        attachments: tools.attachments === true,
+    };
+}
+
+function normalizeItem(item, tab, channelId) {
     const entry = reference(item);
     if (!entry || item.model !== tab.model) {
         throw new TypeError("Unexpected customer record model");
@@ -77,6 +107,8 @@ function normalizeItem(item, tab) {
         typeLabel: typeof item.type_label === "string" ? item.type_label : "",
         active: item.active !== false,
         paymentState: label(item.payment_state),
+        documentTools: normalizeDocumentTools(item, channelId),
+        attachments: emptyAttachments(),
     };
 }
 
@@ -115,7 +147,9 @@ export function normalizeCustomerPage(payload, channelId, tabId) {
     }
     const partner = reference(payload.partner);
     const canRead = Boolean(available && partner);
-    const items = canRead ? payload.items.map((item) => normalizeItem(item, tab)) : [];
+    const items = canRead
+        ? payload.items.map((item) => normalizeItem(item, tab, channelId))
+        : [];
     const hasMore = Boolean(canRead && payload.has_more);
     if (hasMore && !items.length) {
         throw new TypeError("Customer pagination did not advance");
@@ -127,7 +161,41 @@ export function normalizeCustomerPage(payload, channelId, tabId) {
         items,
         hasMore,
         phase: available ? "ready" : "unavailable",
+        canCreateQuotation: Boolean(partner && payload.can_create_quotation === true),
     };
+}
+
+export function normalizeSaleAttachments(payload, channelId, orderId) {
+    validateEnvelope(payload);
+    if (
+        payload.channel_id !== channelId ||
+        payload.order_id !== orderId ||
+        !Array.isArray(payload.items) ||
+        typeof payload.has_more !== "boolean" ||
+        (payload.has_more && !payload.items.length)
+    ) {
+        throw new TypeError("Unexpected sale attachments projection");
+    }
+    const items = payload.items.map((item) => {
+        const entry = reference(item);
+        if (
+            !entry ||
+            !entry.name ||
+            item.url !== `${salePath(channelId, orderId)}/attachment/${entry.id}` ||
+            typeof item.mimetype !== "string" ||
+            !Number.isSafeInteger(item.size_bytes) ||
+            item.size_bytes < 0
+        ) {
+            throw new TypeError("Invalid sale attachment");
+        }
+        return {
+            ...entry,
+            url: item.url,
+            mimetype: item.mimetype,
+            sizeBytes: item.size_bytes,
+        };
+    });
+    return {items, hasMore: payload.has_more};
 }
 
 function emptyPage(query = "") {
@@ -176,6 +244,10 @@ export class CrmPanelModel {
             partner: false,
             company: false,
             operationError: "",
+            operationStatus: "",
+            canCreateQuotation: false,
+            quotationBusy: false,
+            draftBusy: false,
         });
     }
 
@@ -212,6 +284,7 @@ export class CrmPanelModel {
         this.request += 1;
         this.state.activeTab = tabId;
         this.state.operationError = "";
+        this.state.operationStatus = "";
         this.state.pages[tabId] = emptyPage(this.page.query);
         if (this.state.tabs.find((tab) => tab.id === tabId).available === false) {
             this.page.phase = "unavailable";
@@ -224,6 +297,7 @@ export class CrmPanelModel {
         this.state.tabs = projection.tabs;
         this.state.partner = projection.partner;
         this.state.company = projection.company;
+        this.state.canCreateQuotation = projection.canCreateQuotation;
         const items =
             append && projection.phase === "ready" && projection.partner
                 ? this.page.items
@@ -243,6 +317,7 @@ export class CrmPanelModel {
         if (error && error.data && error.data.name === "odoo.exceptions.AccessError") {
             this.state.partner = false;
             this.state.company = false;
+            this.state.canCreateQuotation = false;
             for (const tab of CUSTOMER_TABS) {
                 this.state.pages[tab.id] = emptyPage();
             }
@@ -257,6 +332,8 @@ export class CrmPanelModel {
         this.state.partner = false;
         this.state.company = false;
         this.state.operationError = "";
+        this.state.operationStatus = "";
+        this.state.canCreateQuotation = false;
         for (const tab of CUSTOMER_TABS) {
             this.state.pages[tab.id] = emptyPage(this.state.pages[tab.id].query);
         }
@@ -317,6 +394,192 @@ export class CrmPanelModel {
             if (this.isCurrentRequest(request)) {
                 this.page.loadingMore = false;
             }
+        }
+    }
+
+    saleItem(orderId) {
+        const item = this.page.items.find((entry) => entry.id === orderId);
+        return this.current() &&
+            this.page.phase === "ready" &&
+            item &&
+            item.model === "sale.order" &&
+            item.documentTools
+            ? item
+            : false;
+    }
+
+    documentCurrent(request, item) {
+        return this.isCurrentRequest(request) && this.saleItem(item.id) === item;
+    }
+
+    toggleAttachments(orderId) {
+        const item = this.saleItem(orderId);
+        if (!item || !item.documentTools.attachments) {
+            return false;
+        }
+        item.attachments.expanded = !item.attachments.expanded;
+        if (item.attachments.expanded && item.attachments.phase === "idle") {
+            return this.loadAttachments(orderId);
+        }
+        return true;
+    }
+
+    async loadAttachments(orderId, {append = false} = {}) {
+        const item = this.saleItem(orderId);
+        if (!item || !item.documentTools.attachments) {
+            return false;
+        }
+        const attachments = item.attachments;
+        if (
+            attachments.phase === "loading" ||
+            attachments.loadingMore ||
+            (append && !attachments.hasMore)
+        ) {
+            return false;
+        }
+        const request = this.request;
+        const offset = append ? attachments.nextOffset : 0;
+        attachments.error = "";
+        attachments.loadingMore = append;
+        if (!append) {
+            attachments.phase = "loading";
+            attachments.items = [];
+        }
+        try {
+            const payload = await this.store.call("get_customer_sale_attachments", [
+                this.channelId,
+                orderId,
+                offset,
+                PAGE_SIZE,
+            ]);
+            if (!this.documentCurrent(request, item)) {
+                return false;
+            }
+            const projection = normalizeSaleAttachments(
+                payload,
+                this.channelId,
+                orderId
+            );
+            attachments.items = Array.from(
+                new Map(
+                    [...attachments.items, ...projection.items].map((entry) => [
+                        entry.id,
+                        entry,
+                    ])
+                ).values()
+            );
+            attachments.nextOffset = offset + projection.items.length;
+            attachments.hasMore = projection.hasMore;
+            attachments.phase = "ready";
+            return true;
+        } catch (_error) {
+            if (this.documentCurrent(request, item)) {
+                attachments.items = [];
+                attachments.hasMore = false;
+                attachments.phase = "error";
+                attachments.error =
+                    "Não foi possível carregar os anexos deste registro.";
+            }
+            return false;
+        } finally {
+            if (this.documentCurrent(request, item)) {
+                attachments.loadingMore = false;
+            }
+        }
+    }
+
+    async attachDocument(orderId, attachmentId = false) {
+        const item = this.saleItem(orderId);
+        if (!item || this.state.draftBusy) {
+            return false;
+        }
+        const source = attachmentId
+            ? item.attachments.items.find((entry) => entry.id === attachmentId)
+            : item.documentTools.pdfUrl && {
+                  url: item.documentTools.pdfUrl,
+                  name: `${item.name}.pdf`,
+                  mimetype: "application/pdf",
+              };
+        if (!source) {
+            return false;
+        }
+        const request = this.request;
+        this.state.draftBusy = true;
+        this.state.operationError = "";
+        this.state.operationStatus = "";
+        try {
+            const added = await this.store.addDraftAttachment({
+                channelId: this.channelId,
+                customerKey: this.customerKey,
+                url: source.url,
+                name: source.name,
+                mimetype: source.mimetype,
+                ...(Number.isSafeInteger(source.sizeBytes)
+                    ? {sizeBytes: source.sizeBytes}
+                    : {}),
+            });
+            if (added && this.documentCurrent(request, item)) {
+                this.state.operationStatus =
+                    "Arquivo adicionado à mensagem. Revise o rascunho antes de enviar.";
+            }
+            return added === true;
+        } catch (_error) {
+            if (this.documentCurrent(request, item)) {
+                this.state.operationError =
+                    "Não foi possível anexar o arquivo à mensagem.";
+            }
+            return false;
+        } finally {
+            this.state.draftBusy = false;
+        }
+    }
+
+    async createQuotation() {
+        if (
+            !this.current() ||
+            this.state.activeTab !== "quotations" ||
+            this.page.phase !== "ready" ||
+            !this.state.canCreateQuotation ||
+            this.state.quotationBusy
+        ) {
+            return false;
+        }
+        const request = this.request;
+        this.state.quotationBusy = true;
+        this.state.operationError = "";
+        try {
+            const payload = await this.store.call("get_customer_quotation_action", [
+                this.channelId,
+            ]);
+            if (!this.isCurrentRequest(request)) {
+                return false;
+            }
+            validateEnvelope(payload);
+            const action = payload.action;
+            if (
+                payload.channel_id !== this.channelId ||
+                !record(action) ||
+                action.type !== "ir.actions.act_window" ||
+                action.res_model !== "sale.order" ||
+                action.target !== "new" ||
+                action.res_id
+            ) {
+                throw new TypeError("Unexpected quotation action");
+            }
+            await this.action.doAction(action, {
+                onClose: () =>
+                    this.current() && this.state.activeTab === "quotations"
+                        ? this.load()
+                        : false,
+            });
+            return true;
+        } catch (_error) {
+            if (this.isCurrentRequest(request)) {
+                this.state.operationError = "Não foi possível abrir uma nova cotação.";
+            }
+            return false;
+        } finally {
+            this.state.quotationBusy = false;
         }
     }
 

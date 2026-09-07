@@ -71,6 +71,12 @@
                         t-esc="state.operationError"
                     />
                     <p
+                        t-if="state.operationStatus"
+                        class="cc-detail-copy"
+                        role="status"
+                        t-esc="state.operationStatus"
+                    />
+                    <p
                         t-if="page.phase === 'loading' || page.phase === 'idle'"
                         class="cc-detail-copy"
                         role="status"
@@ -89,6 +95,16 @@
                         role="status"
                     >Você não tem acesso aos registros deste cliente.</p>
                     <t t-else="">
+                        <button
+                            t-if="state.activeTab === 'quotations' &amp;&amp; page.phase === 'ready' &amp;&amp; state.canCreateQuotation"
+                            type="button"
+                            class="cc-secondary-button cc-crm-panel__create"
+                            t-att-disabled="state.quotationBusy"
+                            t-on-click="() => model.createQuotation()"
+                        ><i
+                                class="fa fa-plus"
+                                aria-hidden="true"
+                            /> Nova cotação</button>
                         <form
                             class="cc-crm-panel__search"
                             t-on-submit.prevent="() => model.load()"
@@ -192,6 +208,118 @@
                                             t-esc="item.paymentState"
                                         /></div>
                                 </dl>
+                                <t t-if="item.documentTools">
+                                    <div class="cc-customer-record__tools">
+                                        <a
+                                            t-if="item.documentTools.pdfUrl"
+                                            class="cc-record-link"
+                                            t-att-href="item.documentTools.pdfUrl"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            t-att-aria-label="'Ver PDF de ' + item.name + ' em nova aba'"
+                                        ><i
+                                                class="fa fa-file-pdf-o"
+                                                aria-hidden="true"
+                                            /> Ver PDF</a>
+                                        <button
+                                            t-if="item.documentTools.attachments"
+                                            type="button"
+                                            class="cc-record-link"
+                                            t-att-aria-expanded="item.attachments.expanded ? 'true' : 'false'"
+                                            t-att-aria-controls="'cc-sale-attachments-' + item.id"
+                                            t-on-click="() => model.toggleAttachments(item.id)"
+                                        ><i
+                                                class="fa fa-paperclip"
+                                                aria-hidden="true"
+                                            /> Anexos</button>
+                                        <button
+                                            t-if="item.documentTools.pdfUrl"
+                                            type="button"
+                                            class="cc-secondary-button cc-customer-record__attach-pdf"
+                                            t-att-disabled="state.draftBusy"
+                                            t-on-click="() => model.attachDocument(item.id)"
+                                        ><i
+                                                class="fa fa-plus"
+                                                aria-hidden="true"
+                                            /> Anexar PDF à mensagem</button>
+                                    </div>
+                                    <div
+                                        t-if="item.attachments.expanded"
+                                        t-att-id="'cc-sale-attachments-' + item.id"
+                                        class="cc-sale-attachments"
+                                        t-att-aria-busy="item.attachments.phase === 'loading' || item.attachments.loadingMore ? 'true' : 'false'"
+                                    >
+                                        <p
+                                            t-if="item.attachments.phase === 'loading'"
+                                            role="status"
+                                            class="cc-detail-copy"
+                                        >Carregando anexos…</p>
+                                        <p
+                                            t-if="item.attachments.error"
+                                            role="alert"
+                                            class="cc-crm-panel__error"
+                                            t-esc="item.attachments.error"
+                                        />
+                                        <button
+                                            t-if="item.attachments.error"
+                                            type="button"
+                                            class="cc-record-link"
+                                            t-on-click="() => model.loadAttachments(item.id)"
+                                        >Tentar novamente</button>
+                                        <p
+                                            t-if="item.attachments.phase === 'ready' &amp;&amp; !item.attachments.items.length"
+                                            role="status"
+                                            class="cc-detail-copy"
+                                        >Este registro não tem anexos disponíveis.</p>
+                                        <ul
+                                            t-if="item.attachments.items.length"
+                                            class="cc-sale-attachments__list"
+                                        >
+                                            <li
+                                                t-foreach="item.attachments.items"
+                                                t-as="attachment"
+                                                t-key="attachment.id"
+                                            >
+                                                <span
+                                                    class="cc-sale-attachments__name"
+                                                    t-esc="attachment.name"
+                                                />
+                                                <div
+                                                    class="cc-sale-attachments__actions"
+                                                >
+                                                    <a
+                                                        class="cc-record-link"
+                                                        t-att-href="attachment.url"
+                                                        t-att-download="attachment.name"
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        t-att-aria-label="'Baixar ' + attachment.name"
+                                                    ><i
+                                                            class="fa fa-download"
+                                                            aria-hidden="true"
+                                                        /> Baixar</a>
+                                                    <button
+                                                        type="button"
+                                                        class="cc-record-link"
+                                                        t-att-disabled="state.draftBusy"
+                                                        t-att-aria-label="'Anexar ' + attachment.name + ' à mensagem'"
+                                                        t-on-click="() => model.attachDocument(item.id, attachment.id)"
+                                                    ><i
+                                                            class="fa fa-plus"
+                                                            aria-hidden="true"
+                                                        /> Anexar à mensagem</button>
+                                                </div>
+                                            </li>
+                                        </ul>
+                                        <button
+                                            t-if="item.attachments.hasMore"
+                                            type="button"
+                                            class="cc-record-link cc-sale-attachments__more"
+                                            t-att-disabled="item.attachments.loadingMore"
+                                            t-on-click="() => model.loadAttachments(item.id, {append: true})"
+                                        >Carregar mais anexos</button>
+                                    </div>
+                                </t>
                             </li>
                         </ul>
                         <button

@@ -7,6 +7,7 @@ import {
     CrmPanel,
     CrmPanelModel,
     normalizeCustomerPage,
+    normalizeSaleAttachments,
 } from "@contact_center_crm/js/crm_panel.esm";
 import {
     click,
@@ -75,6 +76,33 @@ function responseFor(tab, ids = [11], overrides = {}) {
     );
 }
 
+function saleRecord(id = 11, tab = "quotations", overrides = {}) {
+    return customerRecord(id, tab, {
+        document_tools: {
+            pdf_url: `/contact_center/customer/404/sale/${id}/pdf`,
+            attachments: true,
+        },
+        ...overrides,
+    });
+}
+
+function saleAttachments(ids = [41], overrides = {}) {
+    return {
+        schema_version: 1,
+        channel_id: 404,
+        order_id: 11,
+        items: ids.map((id) => ({
+            id,
+            name: `Documento ${id}.pdf`,
+            mimetype: "application/pdf",
+            size_bytes: 120,
+            url: `/contact_center/customer/404/sale/11/attachment/${id}`,
+        })),
+        has_more: false,
+        ...overrides,
+    };
+}
+
 QUnit.module("contact_center_crm > customer records", (hooks) => {
     hooks.beforeEach(() => {
         makeFakeLocalizationService();
@@ -83,6 +111,333 @@ QUnit.module("contact_center_crm > customer records", (hooks) => {
             (banner.parentElement || banner).remove();
         }
     });
+
+    QUnit.test(
+        "document links are scoped to the projected sale and channel",
+        (assert) => {
+            const result = normalizeCustomerPage(
+                page([saleRecord()], {tab: "quotations", can_create_quotation: true}),
+                404,
+                "quotations"
+            );
+            assert.ok(result.canCreateQuotation);
+            assert.strictEqual(
+                result.items[0].documentTools.pdfUrl,
+                "/contact_center/customer/404/sale/11/pdf"
+            );
+            for (const url of [
+                "https://example.com/file.pdf",
+                "/contact_center/customer/405/sale/11/pdf",
+                "/contact_center/customer/404/sale/12/pdf",
+                "/contact_center/customer/404/sale/11/pdf?redirect=1",
+            ]) {
+                const projection = normalizeCustomerPage(
+                    page(
+                        [
+                            saleRecord(11, "orders", {
+                                document_tools: {pdf_url: url, attachments: true},
+                            }),
+                        ],
+                        {tab: "orders"}
+                    ),
+                    404,
+                    "orders"
+                );
+                assert.notOk(projection.items[0].documentTools.pdfUrl);
+            }
+            assert.notOk(
+                normalizeCustomerPage(page(), 404, "opportunities").canCreateQuotation
+            );
+            assert.notOk(
+                normalizeCustomerPage(
+                    page([], {partner: false, can_create_quotation: true}),
+                    404,
+                    "opportunities"
+                ).canCreateQuotation
+            );
+        }
+    );
+
+    QUnit.test(
+        "attachment metadata rejects another customer path and invalid pagination",
+        (assert) => {
+            const result = normalizeSaleAttachments(saleAttachments(), 404, 11);
+            assert.strictEqual(result.items[0].sizeBytes, 120);
+            for (const overrides of [
+                {channel_id: 405},
+                {order_id: 12},
+                {items: [], has_more: true},
+                {items: [{...saleAttachments().items[0], url: "/web/content/41"}]},
+                {items: [{...saleAttachments().items[0], size_bytes: -1}]},
+            ]) {
+                assert.throws(() =>
+                    normalizeSaleAttachments(saleAttachments([41], overrides), 404, 11)
+                );
+            }
+        }
+    );
+
+    QUnit.test(
+        "sale attachments load on demand and paginate independently of records",
+        async (assert) => {
+            const calls = [];
+            const model = modelFor(async (method, args) => {
+                calls.push({method, args});
+                if (method === "get_customer_records") {
+                    return page([saleRecord(), saleRecord(12)], {tab: args[1]});
+                }
+                return args[2]
+                    ? saleAttachments([41, 42])
+                    : saleAttachments([41], {has_more: true});
+            });
+            await model.selectTab("quotations");
+            assert.strictEqual(
+                calls.length,
+                1,
+                "opening tab does not fetch attachments or PDF"
+            );
+            await model.toggleAttachments(11);
+            assert.deepEqual(calls[1], {
+                method: "get_customer_sale_attachments",
+                args: [404, 11, 0, 20],
+            });
+            assert.strictEqual(model.page.items[1].attachments.phase, "idle");
+            await model.loadAttachments(11, {append: true});
+            assert.deepEqual(calls[2].args, [404, 11, 1, 20]);
+            assert.deepEqual(
+                model.page.items[0].attachments.items.map((item) => item.id),
+                [41, 42]
+            );
+            await model.toggleAttachments(11);
+            await model.toggleAttachments(11);
+            assert.strictEqual(calls.length, 3, "reopening uses the loaded list");
+        }
+    );
+
+    QUnit.test(
+        "late attachment responses cannot enter another tab, customer or panel",
+        async (assert) => {
+            for (const change of ["tab", "customer", "channel", "destroy", "reload"]) {
+                const pending = makeDeferred();
+                const model = modelFor(async (method, args) =>
+                    method === "get_customer_records"
+                        ? page([saleRecord(11, args[1])], {tab: args[1]})
+                        : pending
+                );
+                await model.selectTab("quotations");
+                const oldItem = model.page.items[0];
+                const loading = model.toggleAttachments(11);
+                assert.notOk(await model.loadAttachments(11), "duplicate read blocked");
+                if (change === "tab") {
+                    await model.selectTab("orders");
+                }
+                if (change === "customer") {
+                    model.store.selectedConversation.identity.partner.id = 31;
+                }
+                if (change === "channel") {
+                    model.store.state.selectedChannelId = 405;
+                }
+                if (change === "destroy") {
+                    model.destroy();
+                }
+                if (change === "reload") {
+                    await model.load();
+                }
+                pending.resolve(saleAttachments());
+                assert.notOk(await loading, change);
+                assert.deepEqual(oldItem.attachments.items, [], change);
+            }
+        }
+    );
+
+    QUnit.test(
+        "failed attachment pagination clears stale files and can retry",
+        async (assert) => {
+            let fail = false;
+            const model = modelFor(async (method, args) => {
+                if (method === "get_customer_records") {
+                    return page([saleRecord()], {tab: args[1]});
+                }
+                if (fail) {
+                    throw new Error("Denied");
+                }
+                return saleAttachments([41], {has_more: true});
+            });
+            await model.selectTab("quotations");
+            await model.toggleAttachments(11);
+            fail = true;
+            assert.notOk(await model.loadAttachments(11, {append: true}));
+            const attachments = model.page.items[0].attachments;
+            assert.deepEqual(attachments.items, []);
+            assert.ok(attachments.error);
+            assert.notOk(attachments.loadingMore);
+            fail = false;
+            assert.ok(await model.loadAttachments(11));
+            assert.strictEqual(attachments.items.length, 1);
+        }
+    );
+
+    QUnit.test(
+        "PDF and listed files go only to the draft bridge with captured customer",
+        async (assert) => {
+            const calls = [];
+            const pending = makeDeferred();
+            const model = modelFor(async (method, args) =>
+                method === "get_customer_records"
+                    ? page([saleRecord()], {tab: args[1]})
+                    : saleAttachments()
+            );
+            model.store.addDraftAttachment = async (source) => {
+                calls.push(source);
+                return calls.length === 1 ? pending : true;
+            };
+            await model.selectTab("quotations");
+            const adding = model.attachDocument(11);
+            assert.notOk(
+                await model.attachDocument(11),
+                "duplicate draft action blocked"
+            );
+            assert.deepEqual(calls[0], {
+                channelId: 404,
+                customerKey: "21:22",
+                url: "/contact_center/customer/404/sale/11/pdf",
+                name: "Registro 11.pdf",
+                mimetype: "application/pdf",
+            });
+            pending.resolve(true);
+            assert.ok(await adding);
+            assert.ok(model.state.operationStatus.includes("rascunho"));
+            assert.notOk(
+                await model.attachDocument(11, 999),
+                "unknown file is never submitted"
+            );
+            await model.toggleAttachments(11);
+            assert.ok(await model.attachDocument(11, 41));
+            assert.strictEqual(calls[1].sizeBytes, 120);
+            assert.strictEqual(calls[1].name, "Documento 41.pdf");
+            assert.strictEqual(
+                calls[1].url,
+                "/contact_center/customer/404/sale/11/attachment/41"
+            );
+        }
+    );
+
+    QUnit.test(
+        "draft refusal, failure and stale completion release the busy state",
+        async (assert) => {
+            const model = modelFor(async (_method, args) =>
+                page([saleRecord()], {tab: args[1]})
+            );
+            await model.selectTab("quotations");
+            model.store.addDraftAttachment = async () => false;
+            assert.notOk(await model.attachDocument(11));
+            assert.notOk(
+                model.state.operationError,
+                "bridge explains refusal without a duplicate alert"
+            );
+            assert.notOk(model.state.draftBusy);
+            model.store.addDraftAttachment = async () => {
+                throw new Error("Upload failed");
+            };
+            assert.notOk(await model.attachDocument(11));
+            assert.ok(model.state.operationError);
+            assert.notOk(model.state.draftBusy);
+            const pending = makeDeferred();
+            model.store.addDraftAttachment = () => pending;
+            const adding = model.attachDocument(11);
+            await model.selectTab("orders");
+            pending.resolve(true);
+            await adding;
+            assert.notOk(
+                model.state.operationStatus,
+                "completion does not overwrite another tab"
+            );
+            assert.notOk(model.state.draftBusy);
+        }
+    );
+
+    QUnit.test(
+        "new quotation opens the customer action and refreshes after the native form closes",
+        async (assert) => {
+            const calls = [];
+            const actions = [];
+            const nativeAction = {
+                type: "ir.actions.act_window",
+                res_model: "sale.order",
+                target: "new",
+                views: [[false, "form"]],
+                context: {default_partner_id: 21},
+            };
+            const model = modelFor(
+                async (method, args) => {
+                    calls.push({method, args});
+                    return method === "get_customer_records"
+                        ? page([saleRecord()], {
+                              tab: args[1],
+                              can_create_quotation: true,
+                          })
+                        : {schema_version: 1, channel_id: 404, action: nativeAction};
+                },
+                {doAction: async (action, options) => actions.push({action, options})}
+            );
+            await model.selectTab("quotations");
+            assert.ok(await model.createQuotation());
+            assert.deepEqual(calls[1], {
+                method: "get_customer_quotation_action",
+                args: [404],
+            });
+            assert.deepEqual(actions[0].action, nativeAction);
+            await actions[0].options.onClose();
+            assert.strictEqual(calls.length, 3);
+            model.destroy();
+            assert.notOk(await actions[0].options.onClose());
+        }
+    );
+
+    QUnit.test(
+        "quotation creation rejects unavailable access, stale responses and unexpected actions",
+        async (assert) => {
+            const pending = makeDeferred();
+            let response = pending;
+            let opened = 0;
+            const model = modelFor(
+                async (method, args) =>
+                    method === "get_customer_records"
+                        ? page([saleRecord()], {
+                              tab: args[1],
+                              can_create_quotation: true,
+                          })
+                        : response,
+                {
+                    doAction: async () => {
+                        opened += 1;
+                    },
+                }
+            );
+            assert.notOk(await model.createQuotation());
+            await model.selectTab("quotations");
+            const creating = model.createQuotation();
+            assert.notOk(await model.createQuotation(), "duplicate action blocked");
+            await model.selectTab("orders");
+            pending.resolve({schema_version: 1, channel_id: 404, action: {}});
+            assert.notOk(await creating);
+            assert.strictEqual(opened, 0);
+            assert.notOk(model.state.quotationBusy);
+            await model.selectTab("quotations");
+            response = {
+                schema_version: 1,
+                channel_id: 404,
+                action: {
+                    type: "ir.actions.act_window",
+                    res_model: "account.move",
+                    target: "new",
+                },
+            };
+            assert.notOk(await model.createQuotation());
+            assert.ok(model.state.operationError);
+            assert.strictEqual(opened, 0);
+        }
+    );
 
     QUnit.test(
         "normalizes customer records without conversation link state",
@@ -648,6 +1003,60 @@ QUnit.module("contact_center_crm > customer records", (hooks) => {
             assert.ok(model.state.operationError);
             assert.strictEqual(model.page.phase, "ready");
             assert.strictEqual(model.page.items.length, 2);
+        }
+    );
+
+    QUnit.test(
+        "sale document controls stay lazy and prepare a draft from a listed attachment",
+        async (assert) => {
+            const calls = [];
+            const drafts = [];
+            const store = modelFor(async (method, args) => {
+                calls.push(method);
+                if (method === "get_customer_sale_attachments") {
+                    return saleAttachments();
+                }
+                return args[1] === "opportunities"
+                    ? page()
+                    : page([saleRecord()], {
+                          tab: args[1],
+                          can_create_quotation: true,
+                      });
+            }).store;
+            store.addDraftAttachment = async (source) => {
+                drafts.push(source);
+                return true;
+            };
+            const target = document.createElement("div");
+            target.className = "o_contact_center_ui cc-details-open";
+            getFixture().appendChild(target);
+            await mount(CrmPanel, target, {
+                env: {services: {action: {doAction: () => Promise.resolve()}}},
+                props: {store, channelId: 404, onClose: () => false},
+            });
+            await nextTick();
+            assert.notOk(target.querySelector(".cc-customer-record__tools"));
+            await click(target, "#cc-crm-tab-quotations");
+            await nextTick();
+            assert.ok(target.querySelector(".cc-crm-panel__create"));
+            assert.deepEqual(calls, ["get_customer_records", "get_customer_records"]);
+            const pdf = target.querySelector(".cc-customer-record__tools a");
+            assert.strictEqual(
+                pdf.getAttribute("href"),
+                "/contact_center/customer/404/sale/11/pdf"
+            );
+            assert.strictEqual(pdf.target, "_blank");
+            assert.ok(pdf.rel.includes("noopener"));
+            await click(target, ".cc-customer-record__tools button[aria-expanded]");
+            await nextTick();
+            assert.strictEqual(calls[2], "get_customer_sale_attachments");
+            const attachment = target.querySelector(".cc-sale-attachments__actions a");
+            assert.strictEqual(attachment.getAttribute("download"), "Documento 41.pdf");
+            await click(target, ".cc-sale-attachments__actions button");
+            await nextTick();
+            assert.strictEqual(drafts.length, 1);
+            assert.strictEqual(drafts[0].channelId, 404);
+            assert.ok(target.textContent.includes("Revise o rascunho"));
         }
     );
 

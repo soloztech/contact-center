@@ -9734,6 +9734,254 @@ QUnit.module("contact_center_ui > multi-file and structured messages", () => {
         return composer;
     }
 
+    function documentComposer() {
+        const composer = makeComposer([attachment("existing")], "Confira a proposta");
+        composer.conversation.identity = {id: 7, partner: {id: 30, company: {id: 31}}};
+        composer.conversation.capabilities = {
+            ...capabilities,
+            media: {...capabilities.media, document: {enabled: true}},
+        };
+        composer.store.registerDraftAttachmentHandler((source) =>
+            composer.addDraftAttachment(source)
+        );
+        composer.store.uploadMedia = async () => ({
+            media_ref: "private-copy",
+            media: {
+                kind: "document",
+                state: "ready",
+                name: "S001.pdf",
+                mimetype: "application/pdf",
+                size_bytes: 10,
+            },
+        });
+        return composer;
+    }
+
+    const documentSource = {
+        channelId: 10,
+        customerKey: "30:31",
+        url: "/contact_center/customer/10/sale/1/pdf",
+        name: "S001.pdf",
+        mimetype: "application/pdf",
+    };
+    function documentResponse() {
+        return {
+            ok: true,
+            blob: async () => new Blob(["%PDF-1.4"], {type: "application/pdf"}),
+        };
+    }
+
+    QUnit.test(
+        "customer document prepares a private copy in the existing draft without sending",
+        async (assert) => {
+            const composer = documentComposer();
+            const originalFetch = window.fetch;
+            const upload = composer.store.uploadMedia;
+            composer.store.uploadMedia = async (file, _id, channelId) => {
+                assert.ok(file instanceof File);
+                assert.strictEqual(file.name, "S001.pdf");
+                assert.strictEqual(channelId, 10);
+                return upload();
+            };
+            window.fetch = async (url, options) => {
+                assert.strictEqual(url, documentSource.url);
+                assert.strictEqual(options.redirect, "error");
+                assert.strictEqual(options.credentials, "same-origin");
+                assert.ok(composer.local.actionBusy);
+                return documentResponse();
+            };
+            try {
+                assert.ok(await composer.store.addDraftAttachment(documentSource));
+                assert.strictEqual(composer.local.body, "Confira a proposta");
+                assert.strictEqual(composer.attachments[0].id, "existing");
+                assert.strictEqual(composer.attachments[1].mediaRef, "private-copy");
+                assert.strictEqual(composer.attachments[1].file, null);
+                assert.notOk(composer.local.actionBusy);
+                assert.deepEqual(composer.state.messages, []);
+            } finally {
+                window.fetch = originalFetch;
+            }
+        }
+    );
+
+    QUnit.test(
+        "document bridge rejects notes, stale customers, external URLs and busy drafts before fetching",
+        async (assert) => {
+            const originalFetch = window.fetch;
+            let fetches = 0;
+            window.fetch = async () => {
+                fetches += 1;
+                return documentResponse();
+            };
+            try {
+                for (const mutate of [
+                    (composer) => {
+                        composer.local.mode = "note";
+                    },
+                    (composer) => {
+                        composer.local.actionBusy = true;
+                    },
+                    (composer) => {
+                        composer.conversation.identity.partner.id = 99;
+                    },
+                    (composer) => {
+                        composer.local.recordingPhase = "recording";
+                    },
+                ]) {
+                    const composer = documentComposer();
+                    mutate(composer);
+                    assert.notOk(
+                        await composer.store.addDraftAttachment(documentSource)
+                    );
+                    assert.strictEqual(composer.attachments.length, 1);
+                    assert.strictEqual(composer.local.body, "Confira a proposta");
+                }
+                const composer = documentComposer();
+                assert.notOk(
+                    await composer.store.addDraftAttachment({
+                        ...documentSource,
+                        url: "https://example.com/file.pdf",
+                    })
+                );
+                assert.notOk(
+                    await composer.store.addDraftAttachment({
+                        ...documentSource,
+                        url: "/contact_center/../../web/login",
+                    })
+                );
+                assert.strictEqual(fetches, 0);
+                const unregisterOld = composer.store.registerDraftAttachmentHandler(
+                    async () => false
+                );
+                composer.store.registerDraftAttachmentHandler(async () => true);
+                unregisterOld();
+                assert.ok(
+                    await composer.store.addDraftAttachment(documentSource),
+                    "old component cannot unregister its replacement"
+                );
+            } finally {
+                window.fetch = originalFetch;
+            }
+        }
+    );
+
+    QUnit.test(
+        "customer change while downloading discards the document and releases the composer",
+        async (assert) => {
+            const composer = documentComposer();
+            const originalFetch = window.fetch;
+            let resolve = null;
+            window.fetch = () =>
+                new Promise((done) => {
+                    resolve = done;
+                });
+            try {
+                const pending = composer.store.addDraftAttachment(documentSource);
+                composer.conversation.identity.partner.id = 99;
+                resolve(documentResponse());
+                assert.notOk(await pending);
+                assert.strictEqual(composer.attachments.length, 1);
+                assert.notOk(composer.local.actionBusy);
+                assert.strictEqual(composer.uploadControllers.size, 0);
+            } finally {
+                window.fetch = originalFetch;
+            }
+        }
+    );
+
+    QUnit.test(
+        "mode change aborts document download without leaving the composer locked",
+        async (assert) => {
+            const composer = documentComposer();
+            const originalFetch = window.fetch;
+            window.fetch = (_url, options) =>
+                new Promise((_resolve, reject) => {
+                    options.signal.addEventListener("abort", () =>
+                        reject(new DOMException("Aborted", "AbortError"))
+                    );
+                });
+            try {
+                const pending = composer.store.addDraftAttachment(documentSource);
+                composer.local.mode = "note";
+                composer.clearLocalAttachments();
+                assert.notOk(await pending);
+                assert.notOk(composer.local.actionBusy);
+                assert.strictEqual(composer.local.mode, "note");
+                assert.strictEqual(composer.local.body, "Confira a proposta");
+            } finally {
+                window.fetch = originalFetch;
+            }
+        }
+    );
+
+    QUnit.test(
+        "failed document upload stays retryable and never reports success",
+        async (assert) => {
+            const composer = documentComposer();
+            const originalFetch = window.fetch;
+            window.fetch = async () => documentResponse();
+            composer.store.uploadMedia = async () => {
+                throw new Error("Upload denied");
+            };
+            try {
+                assert.notOk(await composer.store.addDraftAttachment(documentSource));
+                assert.strictEqual(composer.attachments[1].phase, "error");
+                assert.strictEqual(composer.attachments[1].error, "Upload denied");
+                assert.ok(composer.attachments[1].file instanceof File);
+                assert.strictEqual(composer.attachments[0].id, "existing");
+                assert.notOk(composer.local.actionBusy);
+            } finally {
+                window.fetch = originalFetch;
+            }
+        }
+    );
+
+    QUnit.test(
+        "forced switch during document upload cleans only its original draft",
+        async (assert) => {
+            const composer = documentComposer();
+            const originalFetch = window.fetch;
+            window.fetch = async () => documentResponse();
+            let resolveUpload = null;
+            let uploadStarted = null;
+            const started = new Promise((done) => {
+                uploadStarted = done;
+            });
+            composer.store.uploadMedia = () =>
+                new Promise((done) => {
+                    resolveUpload = done;
+                    uploadStarted();
+                });
+            try {
+                const pending = composer.store.addDraftAttachment(documentSource);
+                await started;
+                composer.saveCurrentDraft();
+                composer.state.selectedChannelId = 20;
+                composer.activeChannelId = 20;
+                composer.local.attachments = [attachment("other-draft")];
+                composer.local.body = "Rascunho B";
+                composer.local.actionBusy = true;
+                resolveUpload({
+                    media_ref: "late",
+                    media: {kind: "document", state: "ready"},
+                });
+                assert.notOk(await pending);
+                assert.deepEqual(
+                    composer.attachments.map((item) => item.id),
+                    ["other-draft"]
+                );
+                assert.strictEqual(composer.local.body, "Rascunho B");
+                assert.ok(composer.local.actionBusy);
+                assert.deepEqual(
+                    composer.drafts.get(10).attachments.map((item) => item.id),
+                    ["existing"]
+                );
+            } finally {
+                window.fetch = originalFetch;
+            }
+        }
+    );
+
     function accepted(args, id = 1) {
         return {
             schema_version: SUPPORTED_SCHEMA_VERSION,

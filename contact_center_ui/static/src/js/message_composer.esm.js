@@ -429,6 +429,10 @@ export class MessageComposer extends Component {
             this.store.registerConversationSelectionGuard((channelId) =>
                 this.prepareConversationSwitch(channelId)
             );
+        this.unregisterDraftAttachmentHandler =
+            this.store.registerDraftAttachmentHandler((source) =>
+                this.addDraftAttachment(source)
+            );
         this.voiceRecorder = new VoiceRecorderSession({
             scope: window,
             onPhase: (phase) => {
@@ -487,6 +491,7 @@ export class MessageComposer extends Component {
             if (this.unregisterConversationGuard) {
                 this.unregisterConversationGuard();
             }
+            this.unregisterDraftAttachmentHandler();
             this.voiceRecorder.destroy();
             this.disposeDrafts();
         });
@@ -914,6 +919,9 @@ export class MessageComposer extends Component {
 
     clearLocalAttachments({revoke = true} = {}) {
         this.uploadGeneration += 1;
+        if (this.uploadControllers.has("draft-document")) {
+            this.local.actionBusy = false;
+        }
         for (const controller of this.uploadControllers.values()) {
             controller.abort();
         }
@@ -1887,6 +1895,161 @@ export class MessageComposer extends Component {
 
     async prepareFileUpload(file, metadata = {}) {
         return this.prepareFilesUpload([file], metadata);
+    }
+
+    draftSourceContext() {
+        const conversation = this.store.selectedConversation;
+        const identity = conversation && conversation.identity;
+        const partner = identity && identity.partner;
+        const company = partner && partner.company;
+        return {
+            channelId: conversation && conversation.channel_id,
+            identityId: identity && identity.id,
+            customerKey: `${partner ? partner.id : 0}:${company ? company.id : 0}`,
+        };
+    }
+
+    draftAttachmentReason() {
+        if (this.noteMode) {
+            return "Selecione Mensagem para anexar um arquivo. A nota interna aceita somente texto.";
+        }
+        if (!this.canAttach) {
+            return "O envio de arquivos não está disponível no modo ou canal atual.";
+        }
+        if (!this.canChooseAttachments) {
+            return "Conclua a ação em andamento ou remova um anexo antes de adicionar outro arquivo.";
+        }
+        return "";
+    }
+
+    draftSourceCurrent(context, generation) {
+        const live = this.draftSourceContext();
+        return (
+            !this.destroyed &&
+            generation === this.uploadGeneration &&
+            context.channelId === this.state.selectedChannelId &&
+            context.channelId === live.channelId &&
+            context.identityId === live.identityId &&
+            context.customerKey === live.customerKey
+        );
+    }
+
+    validDraftSource(source, context) {
+        return Boolean(
+            source &&
+                source.channelId === context.channelId &&
+                source.customerKey === context.customerKey &&
+                this.conversation &&
+                this.conversation.channel_id === source.channelId &&
+                typeof source.name === "string" &&
+                source.name.trim() &&
+                typeof source.url === "string" &&
+                /^\/contact_center\/[a-zA-Z0-9/_-]+$/.test(source.url)
+        );
+    }
+
+    async fetchDraftFile(source) {
+        const controller = this.startUploadController({id: "draft-document"});
+        const timeout = window.setTimeout(
+            () => controller && controller.abort(),
+            60000
+        );
+        this.local.actionBusy = true;
+        try {
+            const response = await window.fetch(source.url, {
+                credentials: "same-origin",
+                redirect: "error",
+                cache: "no-store",
+                signal: controller ? controller.signal : undefined,
+            });
+            if (!response.ok) {
+                throw new Error("O arquivo não está disponível ou seu acesso mudou.");
+            }
+            const blob = await response.blob();
+            return new window.File([blob], source.name, {
+                type: blob.type || source.mimetype || "application/octet-stream",
+            });
+        } finally {
+            window.clearTimeout(timeout);
+            if (this.uploadControllers.get("draft-document") === controller) {
+                this.uploadControllers.delete("draft-document");
+                this.local.actionBusy = false;
+            }
+        }
+    }
+
+    async addDraftAttachment(source) {
+        const context = this.draftSourceContext();
+        const generation = this.uploadGeneration;
+        const current = () => this.draftSourceCurrent(context, generation);
+        if (!current() || !this.validDraftSource(source, context)) {
+            this.store.notify("Reabra o painel do cliente para selecionar o arquivo.", {
+                type: "warning",
+            });
+            return false;
+        }
+        const reason = this.draftAttachmentReason();
+        if (reason) {
+            this.store.notify(reason, {type: "warning"});
+            return false;
+        }
+        let file = null;
+        try {
+            file = await this.fetchDraftFile(source);
+        } catch (_error) {
+            if (current()) {
+                this.store.notify(
+                    "Não foi possível carregar o arquivo. Verifique seu acesso e tente novamente.",
+                    {
+                        type: "danger",
+                    }
+                );
+            }
+            return false;
+        }
+        if (!current()) {
+            return false;
+        }
+        const changedReason = this.draftAttachmentReason();
+        if (changedReason) {
+            this.store.notify(changedReason, {type: "warning"});
+            return false;
+        }
+        const previousIds = new Set(this.attachments.map((item) => item.id));
+        const uploading = this.prepareFileUpload(file);
+        const added = this.attachments.filter((item) => !previousIds.has(item.id));
+        const accepted = await uploading;
+        if (!current()) {
+            this.discardDraftAttachments(added, context.channelId);
+            return false;
+        }
+        const ready =
+            accepted &&
+            added.length > 0 &&
+            added.every((item) => item.phase === "ready" && item.mediaRef);
+        if (!ready) {
+            this.store.notify(
+                this.local.uploadError ||
+                    "O upload não foi concluído. Confira o arquivo no rascunho e tente novamente.",
+                {
+                    type: "warning",
+                }
+            );
+        }
+        return Boolean(ready);
+    }
+
+    discardDraftAttachments(items, channelId) {
+        const ids = new Set(items.map((item) => item.id));
+        for (const item of items) {
+            this.revokePreview(item);
+            item.file = null;
+        }
+        this.local.attachments = this.attachments.filter((item) => !ids.has(item.id));
+        const draft = this.drafts.get(channelId);
+        if (draft) {
+            draft.attachments = draft.attachments.filter((item) => !ids.has(item.id));
+        }
     }
 
     async prepareFilesUpload(files, metadata = {}) {

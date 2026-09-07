@@ -189,4 +189,81 @@
         width: 100%;
         margin-top: 0.85rem;
     }
+
+    .cc-crm-panel__create {
+        width: 100%;
+        margin-bottom: 1rem;
+        justify-content: center;
+        gap: 0.4rem;
+    }
+
+    .cc-customer-record__tools {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.4rem 1rem;
+        padding-top: 0.5rem;
+        border-top: 1px solid var(--cc-line-soft);
+    }
+
+    .cc-customer-record__attach-pdf {
+        width: 100%;
+        justify-content: center;
+        gap: 0.4rem;
+        font-size: 0.8rem;
+    }
+
+    .cc-sale-attachments {
+        margin-top: 0.7rem;
+        padding-top: 0.7rem;
+        border-top: 1px solid var(--cc-line-soft);
+    }
+
+    .cc-sale-attachments__list {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+
+        li + li {
+            margin-top: 0.65rem;
+            padding-top: 0.65rem;
+            border-top: 1px solid var(--cc-line-soft);
+        }
+    }
+
+    .cc-sale-attachments__name {
+        display: block;
+        font-size: 0.8rem;
+        overflow-wrap: anywhere;
+    }
+
+    .cc-sale-attachments__actions {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.3rem 0.8rem;
+    }
+
+    .cc-sale-attachments__more {
+        margin-top: 0.5rem;
+    }
+
+    .cc-customer-record__tools .cc-record-link,
+    .cc-sale-attachments__actions .cc-record-link {
+        font-size: 0.8rem;
+    }
+
+    button:disabled {
+        cursor: wait;
+        opacity: 0.6;
+    }
+}
+
+@media (max-width: 820px), (any-pointer: coarse) {
+    .cc-crm-panel .cc-customer-record__tools > *,
+    .cc-crm-panel .cc-sale-attachments button,
+    .cc-crm-panel .cc-sale-attachments a,
+    .cc-crm-panel .cc-crm-panel__create {
+        min-height: 44px;
+    }
 }
