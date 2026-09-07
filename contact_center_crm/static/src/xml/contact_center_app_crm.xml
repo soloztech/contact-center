@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<templates xml:space="preserve">
+    <t
+        t-name="contact_center_crm.ContactCenterApp"
+        t-inherit="contact_center_ui.ContactCenterApp"
+        t-inherit-mode="extension"
+        owl="1"
+    >
+        <xpath expr="//button[hasclass('cc-details-toggle')]" position="before">
+            <button
+                t-if="canViewCrm"
+                type="button"
+                class="cc-icon-button cc-crm-toggle"
+                title="Oportunidades do cliente"
+                aria-label="Oportunidades do cliente"
+                aria-controls="cc-crm-panel"
+                t-att-aria-expanded="crmPanelSelected &amp;&amp; store.state.detailsOpen ? 'true' : 'false'"
+                t-att-aria-pressed="crmPanelSelected &amp;&amp; store.state.detailsOpen ? 'true' : 'false'"
+                t-on-click="toggleCrmPanel"
+            >
+                <i class="fa fa-handshake-o" aria-hidden="true" />
+            </button>
+        </xpath>
+        <xpath expr="//button[hasclass('cc-details-toggle')]" position="attributes">
+            <attribute name="t-on-click">toggleContactPanel</attribute>
+            <attribute
+                name="t-att-aria-pressed"
+            >!crmPanelSelected &amp;&amp; store.state.detailsOpen ? 'true' : 'false'</attribute>
+            <attribute
+                name="t-att-aria-label"
+            >!crmPanelSelected &amp;&amp; store.state.detailsOpen ? 'Ocultar detalhes' : 'Mostrar detalhes'</attribute>
+        </xpath>
+        <xpath expr="//ContactPanel" position="attributes">
+            <attribute
+                name="t-if"
+            >selectedConversation &amp;&amp; !crmPanelSelected</attribute>
+        </xpath>
+        <xpath expr="//ContactPanel" position="after">
+            <CrmPanel
+                t-if="selectedConversation &amp;&amp; crmPanelSelected &amp;&amp; store.state.detailsOpen"
+                t-key="crmPanelKey"
+                store="store"
+                channelId="selectedConversation.channel_id"
+                onClose.bind="closeCrmPanel"
+            />
+        </xpath>
+    </t>
+</templates>

@@ -100,6 +100,22 @@ jobs:
         run: manifestoo -d . check-licenses
       - name: Check development status
         run: manifestoo -d . check-dev-status --default-dev-status=Beta
+      - name: Test CRM without Kanban in a separate database
+        env:
+          INCLUDE: contact_center_crm
+          PGDATABASE: contact_center_crm_independent
+        run: |
+          set -e
+          oca_init_test_database
+          oca_run_tests
+          python - <<'PYTHON'
+          import os
+          import psycopg2
+          with psycopg2.connect(dbname=os.environ["PGDATABASE"]) as connection:
+              with connection.cursor() as cursor:
+                  cursor.execute("SELECT (SELECT count(*) FROM ir_module_module WHERE name = 'contact_center_crm' AND state = 'installed') = 1 AND NOT EXISTS (SELECT 1 FROM ir_module_module WHERE name = 'contact_center_kanban' AND state = 'installed') AND NOT EXISTS (SELECT 1 FROM ir_model WHERE model = 'contact.center.case')")
+                  assert cursor.fetchone()[0], "CRM must install without Kanban or case models"
+          PYTHON
       - name: Initialize test db
         run: oca_init_test_database
       - name: Run tests

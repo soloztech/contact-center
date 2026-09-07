@@ -10,7 +10,7 @@ The production release is one immutable unit. The following addons must use the 
 - `contact_center_meta`
 - `contact_center_ui`
 - optional service pipeline plugin `contact_center_kanban`
-- `contact_center_crm`, only together with `contact_center_kanban`
+- `contact_center_crm` for conversation-to-opportunity links, usable without Kanban
 
 `queue_job` and the technical Meta foundations distributed by the Marketing Center
 repository are pinned external prerequisites. No source directory is edited on the
@@ -19,7 +19,10 @@ production host during the window.
 The first production baseline is greenfield. Production must not contain an older
 Contact Center schema. The existing SERVIDOR05 laboratory is different: its former
 Base-owned pipeline XML IDs must be removed by the laboratory release procedure while
-Base, Kanban and CRM are upgraded in the same stopped Odoo invocation.
+Base, Kanban and CRM are upgraded in the same stopped Odoo invocation. The subsequent
+CRM extraction moves the old CRM case models into Kanban and backfills direct
+conversation links before workers restart; follow
+[the extraction procedure](crm-independent-upgrade.md).
 
 ## Window status after the 2026-09-05 audit
 
@@ -95,7 +98,8 @@ The DB and filestore form one restore unit. Restoring only one is forbidden.
    disabled.
 2. Mount the immutable Contact Center and Marketing Center release trees.
 3. Start a no-HTTP Odoo process and install/update the complete graph in one invocation.
-   If CRM is installed, the invocation includes Base, Kanban and CRM together.
+   If CRM is installed, include its UI and Base dependencies. Include Kanban only when
+   that optional addon is already installed or explicitly selected.
 4. Validate the installed schema, module versions, ACL/rules, menu graph, queue channels
    and absence of Base-owned pipeline/case/follow-up models or XML IDs.
 5. Start Odoo with ingress and outbound still disabled. Require healthy internal HTTP,

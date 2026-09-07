@@ -1,7 +1,77 @@
-This optional addon adds service cases, configurable pipelines, Kanban stages and
-an immutable transition ledger to ``contact_center_base``. Installing the base
-addon alone does not create pipeline or case models.
+This optional addon adds Atendimentos, pipelines, Kanban stages and immutable
+transition history to Contact Center CRM. CRM conversations and their opportunities
+remain available when this addon is not installed.
 
-The addon also provides case-scoped follow-ups through native ``mail.activity``
-records. CRM stage synchronization is supplied separately by
-``contact_center_crm``.
+Atendimentos also provide case-scoped follow-ups through native mail activities.
+CRM stage, pipeline and roster synchronization belong to this optional addon.
+
+The CRM addon owns the direct conversation-to-opportunity association. An
+Atendimento optionally projects that association into a pipeline through explicit,
+company-safe bindings. Removing an Atendimento link preserves the conversation
+association; removing the conversation association stops all its matching active
+pipeline projections. CRM is authoritative for stages of linked
+cases and, while a team binding is active, for the linked Contact Center roster. The
+CRM team leader is projected as supervisor and active members are projected as agents.
+The bridge records one immutable provenance row per binding, user and required Contact
+Center role. A grant is marked ``managed`` only when the bridge introduced that group;
+pre-existing and explicitly retained memberships remain unmanaged. Removing a CRM
+member revokes inbox scope immediately and removes a role only when the bridge owns it
+and no active binding still requires it. Overlapping bindings and implied Supervisor →
+Agent membership are reconciled before removal. One CRM team maps to one Contact Center
+team, while any number of inboxes may share that team. Unbound teams remain native
+Contact Center rosters for exceptions.
+
+For a CRM-bound shared inbox, the optional inbox owner is the only per-inbox user added
+to the mirrored roster. A second native Contact Center team is not unioned into the
+same inbox; use an unbound team when the complete roster must remain manual.
+
+Because the CRM team leader receives the Contact Center Supervisor role, that user also
+receives the supervisor capabilities available inside their accessible Contact Center
+scope. Deleting or demoting the leader removes roster scope immediately. A manually
+owned role is retained; a bridge-owned role is removed only after the last active
+requirement disappears. Deactivating the binding deliberately releases its grant
+evidence without deleting reusable group memberships.
+
+Roster synchronization is synchronous and company-safe. It never grants company
+access, never writes members back to CRM, and rejects invalid external, archived, or
+cross-company users atomically. Deactivating a binding freezes the last projected
+roster and returns it to manual Contact Center management. Team binding is only an
+access-roster authority: existing case/lead links and their stage projection continue
+through the separate pipeline binding after the roster binding is deactivated. If a
+team does have an active roster binding, it must target the same CRM team as the case
+pipeline.
+
+Binding, role-grant and case-link evidence has no user-facing delete permission.
+Operational lifecycle changes archive the binding or tombstone the case link instead
+of removing evidence. Physical cleanup is accepted only from a superuser module-uninstall
+context or a private in-process maintenance capability; an administrator-supplied RPC
+context, including a forged ``module_uninstall`` value, is insufficient.
+
+No contact or lead merge and no provider operation is performed implicitly.
+Native CRM deletion leaves the service case intact and retires its bridge as an
+auditable tombstone. The tombstone preserves ``lead_record_id_snapshot`` even after
+the native ``crm.lead`` foreign key is cleared. Native CRM merges transfer every
+compatible live bridge to the
+surviving lead under the same stage-sync locks; an incompatible company, team, or
+stage rejects the whole merge transaction.
+
+Administrators can generate an ephemeral CRM mapping inventory before creating real
+bindings. It lists explainable name, roster, leader, pipeline, and stage signals,
+including zero-candidate, ambiguous, archived, and blocked situations. These signals
+are advisory only. The inventory never accepts a match automatically; an explicit
+administrator action revalidates the snapshot under a source lock and then delegates
+creation or reactivation to the authoritative binding models.
+
+All binding, CRM stage, team, pipeline, lead and case mutations participate in one
+canonical lock graph. Roster mutations fence the complete affected aggregate in CRM
+binding graph → core account → core team → core user → role-grant order before changing
+a grant or group. Manual user-form group edits, binding archive/repoint and roster
+synchronization all enter through this same graph. First-binding creation fences the
+corresponding core authority; existing bindings are locked before affected core
+topology, and the case row is locked last. Revisions are revalidated after every lock
+boundary so a concurrent roster or stage change fails or retries instead of committing
+a mixed CRM/Contact Center view.
+The internal ``contact.center.crm.catalog.authority`` row is the durable first-binding
+fence. Its ``authority_key``, optional ``crm_team_id`` and monotonic
+``authority_revision`` are part of the installed-schema contract. It intentionally has
+no user menu or user-facing ACL: bridge services are its only writers and readers.

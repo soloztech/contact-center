@@ -3,10 +3,7 @@ from psycopg2.errors import UniqueViolation
 from odoo import _, api, fields, models
 from odoo.exceptions import AccessError, ValidationError
 
-from odoo.addons.contact_center_kanban.services.tokens import (
-    CONTACT_CENTER_CASE_TRANSITION_TOKEN,
-)
-
+from ..services.tokens import CONTACT_CENTER_CASE_TRANSITION_TOKEN
 from .binding import (
     CRM_BINDING_GRAPH_LOCK_TOKEN,
     CRM_CASE_STAGE_SYNC_TOKEN,
@@ -156,6 +153,7 @@ class ContactCenterCrmCaseLink(models.Model):
         index=True,
     )
     lead_company_id = fields.Many2one(
+        string="CRM Company",
         related="lead_id.company_id",
         store=True,
         readonly=True,
@@ -863,6 +861,9 @@ class ContactCenterCase(models.Model):
                 "partner_id": partner.id or False,
             }
         )
+        case.env["contact.center.crm.conversation.link"]._link(
+            case.channel_id, lead, origin="created"
+        )
         link = (
             case.env["contact.center.crm.case.link"]
             .with_context(contact_center_crm_link_service=CRM_CASE_LINK_SERVICE_TOKEN)
@@ -910,6 +911,7 @@ class ContactCenterCase(models.Model):
             raise ValidationError(
                 _("The selected lead stage is not mapped to this pipeline.")
             )
+        case.env["contact.center.crm.conversation.link"]._link(case.channel_id, lead)
         link = (
             case.env["contact.center.crm.case.link"]
             .with_context(contact_center_crm_link_service=CRM_CASE_LINK_SERVICE_TOKEN)

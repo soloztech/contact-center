@@ -30,7 +30,7 @@
     />
     <menuitem
         id="menu_cc_crm_case_links"
-        name="CRM Case Links"
+        name="Vínculos CRM de Atendimentos"
         parent="menu_cc_crm_integration"
         action="action_cc_crm_case_links"
         sequence="30"

@@ -347,7 +347,7 @@
     </record>
 
     <record id="action_cc_crm_case_links" model="ir.actions.act_window">
-        <field name="name">CRM Case Links</field>
+        <field name="name">Vínculos CRM de Atendimentos</field>
         <field name="res_model">contact.center.crm.case.link</field>
         <field name="view_mode">tree,form</field>
         <field name="view_id" ref="view_cc_crm_case_link_tree" />

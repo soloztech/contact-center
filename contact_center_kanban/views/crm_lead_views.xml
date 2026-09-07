@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="view_crm_lead_form_contact_center" model="ir.ui.view">
+        <field name="name">crm.lead.form.contact.center</field>
+        <field name="model">crm.lead</field>
+        <field name="inherit_id" ref="crm.crm_lead_view_form" />
+        <field name="arch" type="xml">
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button
+                    name="action_view_contact_center_cases"
+                    type="object"
+                    class="oe_stat_button"
+                    icon="fa-comments"
+                    groups="contact_center_base.group_contact_center_agent"
+                    attrs="{'invisible': [('contact_center_case_count', '=', 0)]}"
+                >
+                    <field
+                        name="contact_center_case_count"
+                        widget="statinfo"
+                        string="Atendimentos"
+                    />
+                </button>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_crm_team_form_contact_center" model="ir.ui.view">
+        <field name="name">crm.team.form.contact.center</field>
+        <field name="model">crm.team</field>
+        <field name="inherit_id" ref="sales_team.crm_team_view_form" />
+        <field name="arch" type="xml">
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button
+                    name="action_view_contact_center_bindings"
+                    type="object"
+                    class="oe_stat_button"
+                    icon="fa-random"
+                    groups="contact_center_base.group_contact_center_admin"
+                    attrs="{'invisible': [('contact_center_pipeline_binding_count', '=', 0)]}"
+                >
+                    <field
+                        name="contact_center_pipeline_binding_count"
+                        widget="statinfo"
+                        string="CC Pipelines"
+                    />
+                </button>
+                <button
+                    name="action_view_contact_center_team_bindings"
+                    type="object"
+                    class="oe_stat_button"
+                    icon="fa-users"
+                    groups="contact_center_base.group_contact_center_admin"
+                    attrs="{'invisible': [('contact_center_team_binding_count', '=', 0)]}"
+                >
+                    <field
+                        name="contact_center_team_binding_count"
+                        widget="statinfo"
+                        string="CC Teams"
+                    />
+                </button>
+            </xpath>
+        </field>
+    </record>
+</odoo>

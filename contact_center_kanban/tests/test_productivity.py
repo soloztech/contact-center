@@ -20,6 +20,11 @@ from odoo.addons.contact_center_base.services.tokens import (
     CONTACT_CENTER_MEMBERSHIP_TOKEN,
     CONTACT_CENTER_POST_TOKEN,
 )
+
+# Register the fixture adapter even when only Kanban is upgraded/tested.
+from odoo.addons.contact_center_base.tests.test_contact_center import (  # noqa: F401
+    FakeAdapter,
+)
 from odoo.addons.queue_job.tests.common import trap_jobs
 
 

@@ -25,10 +25,10 @@ deployment.
 | `contact_center_ui`     | Standalone Owl inbox using the versioned local UiDTO API                                                   |
 | `contact_center_wuzapi` | WhatsApp transport, guided setup, health, group metadata and media                                         |
 | `contact_center_meta`   | Messenger and Page-linked Instagram messaging through shared Meta foundations                              |
-| `contact_center_kanban` | Optional service cases, pipelines, stages, transition history and case follow-ups                          |
-| `contact_center_crm`    | Optional explicit synchronization of service cases, pipelines and teams with native CRM                    |
+| `contact_center_kanban` | Optional service cases, pipelines, CRM stage synchronization and case follow-ups                          |
+| `contact_center_crm`    | CRM opportunities linked directly to conversations; usable without Kanban                    |
 
-Base has no CRM or Kanban dependency. The CRM bridge requires Kanban. Meta's technical
+Base has no CRM or Kanban dependency. CRM depends on the UI and native CRM; Kanban extends CRM. Meta's technical
 foundations, `meta_api_base` and `meta_webhook_base`, are distributed in
 [Marketing Center](https://github.com/soloztech/marketing-center), independently of its
 functional marketing addons.
@@ -66,7 +66,8 @@ configuration and technical-ledger access.
 - Text and media composition, provider-supported replies and mutations, dispatch and
   delivery status, tags, assignments, identity naming and explicit contact linking.
 - Scoped quick replies, immutable internal notes and scheduled provider messages.
-  Optional Kanban adds service cases and case follow-ups; CRM binds those explicitly.
+  CRM links conversations to opportunities. Optional Kanban adds service cases,
+  case follow-ups and CRM stage synchronization.
 - Conversation states `open`, `resolved` and `archived`. New inbound messages reopen
   resolved conversations; archived conversations stay archived until explicitly
   restored.
@@ -152,7 +153,7 @@ Media is served through authenticated local routes with access checks, private c
 and content protections. Operational projections omit credentials, private provider
 locators and raw payloads. Provider errors are sanitized before entering logs or
 ledgers. Attribution is append-only evidence; its optional UI projection exposes safe
-labels. CRM mappings require explicit administration, and bridge-managed role grants
+labels. Optional Kanban CRM mappings require explicit administration, and managed role grants
 retain provenance so removal does not revoke pre-existing manual permissions.
 
 ## Installation and operation
@@ -164,7 +165,8 @@ retain provenance so removal does not revoke pre-existing manual permissions.
    prerequisites. For this repository, use `python -m pip install -r requirements.txt`
    in the Odoo environment.
 3. Install `queue_job`, `contact_center_base`, a provider addon and `contact_center_ui`.
-   Add `contact_center_kanban` for service pipelines and `contact_center_crm` for CRM.
+   Add `contact_center_crm` for direct opportunity links. Add `contact_center_kanban`
+   when service pipelines and mapped CRM stages are needed.
    Meta also requires the matching `meta_api_base` and `meta_webhook_base` sources.
 4. Load `queue_job` server-wide and configure an active JobRunner. Keep cron and bus
    routing available. Never enable `QUEUE_JOB__NO_DELAY` outside focused tests.

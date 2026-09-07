@@ -574,7 +574,9 @@ class TestCrmMappingInventory(SavepointCase):
         self.assertEqual(binding.crm_team_id, self.crm_team)
 
     def test_crm_stage_search_exposes_archived_filter(self):
-        view = self.env.ref("contact_center_crm.view_crm_stage_search_contact_center")
+        view = self.env.ref(
+            "contact_center_kanban.view_crm_stage_search_contact_center"
+        )
 
         self.assertEqual(
             view.inherit_id,

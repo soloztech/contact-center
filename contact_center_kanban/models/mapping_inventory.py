@@ -1387,9 +1387,11 @@ class ContactCenterCrmMappingInventoryLine(models.TransientModel):
     def _binding_action(self, binding):
         self.ensure_one()
         if self.mapping_kind == "team":
-            view = self.env.ref("contact_center_crm.view_cc_crm_team_binding_form")
+            view = self.env.ref("contact_center_kanban.view_cc_crm_team_binding_form")
         else:
-            view = self.env.ref("contact_center_crm.view_cc_crm_pipeline_binding_form")
+            view = self.env.ref(
+                "contact_center_kanban.view_cc_crm_pipeline_binding_form"
+            )
         return {
             "type": "ir.actions.act_window",
             "name": binding.display_name,

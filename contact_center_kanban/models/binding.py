@@ -3,9 +3,7 @@ import re
 from odoo import _, api, fields, models
 from odoo.exceptions import AccessError, ValidationError
 
-from odoo.addons.contact_center_kanban.services.tokens import (
-    CONTACT_CENTER_CASE_TRANSITION_TOKEN,
-)
+from ..services.tokens import CONTACT_CENTER_CASE_TRANSITION_TOKEN
 
 CRM_CATALOG_SYNC_TOKEN = object()
 CRM_CASE_STAGE_SYNC_TOKEN = object()

@@ -186,6 +186,13 @@ class TestContactCenterCrm(SavepointCase):
         second.invalidate_recordset(["crm_link_ids", "crm_lead_id"])
 
         self.assertNotEqual(first.crm_lead_id, second.crm_lead_id)
+        conversation_links = self.env["contact.center.crm.conversation.link"].search(
+            [("channel_id", "=", channel.id), ("state", "=", "active")]
+        )
+        self.assertEqual(len(conversation_links), 2)
+        self.assertEqual(
+            conversation_links.mapped("lead_id"), first.crm_lead_id | second.crm_lead_id
+        )
         self.assertEqual(first.crm_lead_id.stage_id, self.crm_stage_a)
         self.assertEqual(second.crm_lead_id.stage_id, self.crm_stage_b)
 
@@ -326,8 +333,101 @@ class TestContactCenterCrm(SavepointCase):
         self.assertEqual(link.unlinked_by_id, self.user_a)
         self.assertTrue(link.unlinked_at)
         self.assertTrue(lead.exists())
+        self.assertEqual(
+            self.env["contact.center.crm.conversation.link"].search_count(
+                [
+                    ("channel_id", "=", case.channel_id.id),
+                    ("lead_id", "=", lead.id),
+                    ("state", "=", "active"),
+                ]
+            ),
+            1,
+        )
         with self.assertRaises(AccessError):
             link.sudo().unlink()
+
+    def test_conversation_unlink_retires_only_its_matching_case_projections(self):
+        channel = self._create_channel(self.team_account, "Shared CRM association")
+        first = self._default_case(channel)
+        first.with_user(self.user_a).action_create_crm_opportunity()
+        lead = first.crm_lead_id
+        second = (
+            self.env["contact.center.case"]
+            .with_user(self.user_a)
+            .create(
+                {
+                    "name": "Second pipeline projection",
+                    "channel_id": channel.id,
+                    "pipeline_id": self.pipeline.id,
+                    "stage_id": first.stage_id.id,
+                }
+            )
+        )
+        second.with_user(self.user_a).action_link_crm_lead(lead.id)
+        other_lead_case = (
+            self.env["contact.center.case"]
+            .with_user(self.user_a)
+            .create(
+                {
+                    "name": "Independent opportunity",
+                    "channel_id": channel.id,
+                    "pipeline_id": self.pipeline.id,
+                    "stage_id": first.stage_id.id,
+                }
+            )
+        )
+        other_lead_case.with_user(self.user_a).action_create_crm_opportunity()
+        other_channel_case = self._default_case(
+            self._create_channel(self.team_account, "Other conversation same lead")
+        )
+        other_channel_case.with_user(self.user_a).action_link_crm_lead(lead.id)
+        canonical = self.env["contact.center.crm.conversation.link"].search(
+            [
+                ("channel_id", "=", channel.id),
+                ("lead_id", "=", lead.id),
+                ("state", "=", "active"),
+            ]
+        )
+        self.assertEqual(len(canonical), 1)
+        self.env["contact.center.ui.api"].with_user(self.user_a).unlink_crm_opportunity(
+            channel.id, lead.id
+        )
+        self.assertEqual(
+            (first | second).mapped("crm_link_ids.state"), ["unlinked", "unlinked"]
+        )
+        self.assertEqual(
+            (first | second).mapped("crm_link_ids.unlinked_by_id"), self.user_a
+        )
+        self.assertEqual(other_lead_case.crm_link_ids.state, "active")
+        self.assertEqual(other_channel_case.crm_link_ids.state, "active")
+        self.assertTrue(lead.exists())
+
+    def test_merge_duplicate_conversation_associations_preserves_case_projections(self):
+        channel = self._create_channel(self.team_account, "Merge same conversation")
+        first = self._default_case(channel)
+        second = (
+            self.env["contact.center.case"]
+            .with_user(self.user_a)
+            .create(
+                {
+                    "name": "Duplicate CRM record",
+                    "channel_id": channel.id,
+                    "pipeline_id": self.pipeline.id,
+                    "stage_id": first.stage_id.id,
+                }
+            )
+        )
+        for case in first | second:
+            case.with_user(self.user_a).action_create_crm_opportunity()
+        survivor = (first | second).mapped("crm_lead_id")._merge_opportunity()
+        links = (first | second).mapped("crm_link_ids")
+        self.assertEqual(links.mapped("state"), ["active", "active"])
+        self.assertEqual(links.mapped("lead_id"), survivor)
+        canonical = self.env["contact.center.crm.conversation.link"].search(
+            [("channel_id", "=", channel.id), ("state", "=", "active")]
+        )
+        self.assertEqual(len(canonical), 1)
+        self.assertEqual(canonical.lead_id, survivor)
 
     def test_case_link_forged_uninstall_context_cannot_delete_evidence(self):
         case = self._default_case(

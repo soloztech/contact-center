@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<templates xml:space="preserve">
+    <t t-name="contact_center_crm.CrmPanel" owl="1">
+        <aside
+            id="cc-crm-panel"
+            class="cc-contact-panel cc-crm-panel"
+            aria-label="Oportunidades do cliente"
+            t-on-keydown="onKeydown"
+        >
+            <header class="cc-contact-panel__header cc-crm-panel__header">
+                <span class="cc-crm-panel__icon" aria-hidden="true"><i
+                        class="fa fa-handshake-o"
+                    /></span>
+                <div><p class="cc-kicker">CRM</p><h2>Oportunidades</h2></div>
+                <button
+                    t-ref="closeButton"
+                    type="button"
+                    class="cc-icon-button"
+                    aria-label="Fechar oportunidades"
+                    t-on-click="props.onClose"
+                ><i class="fa fa-times" aria-hidden="true" /></button>
+            </header>
+            <div class="cc-contact-panel__scroll">
+                <section
+                    class="cc-detail-section cc-crm-panel__customer"
+                    t-if="state.partner"
+                >
+                    <strong t-esc="state.partner.name" />
+                    <span
+                        t-if="state.company &amp;&amp; state.company.id !== state.partner.id"
+                        t-esc="state.company.name"
+                    />
+                </section>
+                <section
+                    class="cc-detail-section cc-crm-panel__content"
+                    t-att-aria-busy="state.phase === 'loading' ? 'true' : 'false'"
+                >
+                    <p
+                        t-if="state.operationError"
+                        class="cc-crm-panel__error"
+                        role="alert"
+                        t-esc="state.operationError"
+                    />
+                    <p
+                        t-if="state.phase === 'loading' || state.phase === 'idle'"
+                        class="cc-detail-copy"
+                        role="status"
+                    ><i
+                            class="fa fa-circle-o-notch fa-spin"
+                            aria-hidden="true"
+                        /> Carregando oportunidades…</p>
+                    <p
+                        t-elif="state.phase === 'denied'"
+                        class="cc-detail-copy"
+                        role="status"
+                    >Você não tem acesso às oportunidades desta conversa.</p>
+                    <t t-else="">
+                        <form
+                            class="cc-crm-panel__search"
+                            t-on-submit.prevent="search"
+                            t-if="state.phase === 'ready' &amp;&amp; (state.partner || state.items.length || state.query)"
+                        >
+                            <label
+                                class="cc-crm-panel__search-label"
+                                for="cc-crm-search"
+                            >Buscar oportunidade</label>
+                            <div><input
+                                    id="cc-crm-search"
+                                    type="search"
+                                    maxlength="128"
+                                    placeholder="Nome da oportunidade"
+                                    t-model="state.query"
+                                    t-att-disabled="state.busyId !== false"
+                                />
+                                <button
+                                    type="submit"
+                                    class="cc-icon-button"
+                                    aria-label="Buscar oportunidades"
+                                    t-att-disabled="state.busyId !== false"
+                                ><i
+                                        class="fa fa-search"
+                                        aria-hidden="true"
+                                    /></button></div>
+                        </form>
+                        <p
+                            t-if="state.error"
+                            class="cc-crm-panel__error"
+                            role="alert"
+                            t-esc="state.error"
+                        />
+                        <button
+                            t-if="state.error"
+                            type="button"
+                            class="cc-secondary-button"
+                            t-att-disabled="state.busyId !== false"
+                            t-on-click="() => model.load()"
+                        >Tentar novamente</button>
+                        <p
+                            t-if="state.phase === 'ready' &amp;&amp; !state.partner"
+                            class="cc-detail-copy"
+                        >Vincule um contato nos detalhes da conversa para encontrar as oportunidades do cliente.</p>
+                        <p
+                            t-if="state.phase === 'ready' &amp;&amp; state.partner &amp;&amp; !state.items.length &amp;&amp; !state.error"
+                            class="cc-detail-copy"
+                            role="status"
+                            t-esc="state.query.trim() ? 'Nenhuma oportunidade encontrada para esta busca.' : 'Este cliente ainda não tem oportunidades disponíveis.'"
+                        />
+                        <ul class="cc-crm-panel__list" t-if="state.items.length">
+                            <li
+                                t-foreach="state.items"
+                                t-as="item"
+                                t-key="item.id"
+                                t-att-class="item.linked ? 'cc-crm-opportunity is-linked' : 'cc-crm-opportunity'"
+                            >
+                                <div
+                                    t-if="item.type === 'lead' || !item.active"
+                                    class="cc-crm-opportunity__markers"
+                                >
+                                    <span t-if="item.type === 'lead'">Lead</span>
+                                    <span t-if="!item.active">Arquivada</span>
+                                </div>
+                                <span
+                                    t-if="item.linked"
+                                    class="cc-crm-opportunity__linked"
+                                ><i
+                                        class="fa fa-link"
+                                        aria-hidden="true"
+                                    /> Vinculada à conversa</span>
+                                <button
+                                    type="button"
+                                    class="cc-record-link cc-crm-opportunity__name"
+                                    t-on-click="() => model.openOpportunity(item.id)"
+                                    t-att-aria-label="'Abrir oportunidade ' + item.name"
+                                ><span t-esc="item.name" /><i
+                                        class="fa fa-external-link"
+                                        aria-hidden="true"
+                                    /></button>
+                                <div class="cc-crm-opportunity__summary"><span
+                                        t-if="item.stage"
+                                        t-att-class="item.won ? 'cc-crm-opportunity__stage is-won' : 'cc-crm-opportunity__stage'"
+                                        t-esc="item.stage.name"
+                                    /><strong
+                                        t-if="item.revenue !== false"
+                                        t-esc="revenueLabel(item)"
+                                    /></div>
+                                <dl class="cc-crm-opportunity__details"><div
+                                        t-if="item.team"
+                                    ><dt>Equipe</dt><dd
+                                            t-esc="item.team.name"
+                                        /></div><div><dt>Vendedor</dt><dd
+                                            t-esc="item.user ? item.user.name : 'Sem vendedor'"
+                                        /></div></dl>
+                                <button
+                                    t-if="item.linked &amp;&amp; state.capabilities.unlink"
+                                    type="button"
+                                    class="cc-text-button cc-crm-opportunity__unlink"
+                                    t-att-disabled="state.busyId !== false"
+                                    t-on-click="() => model.setLinked(item.id, false)"
+                                ><i
+                                        t-if="state.busyId === item.id"
+                                        class="fa fa-circle-o-notch fa-spin"
+                                        aria-hidden="true"
+                                    /> Desvincular conversa</button>
+                                <button
+                                    t-elif="!item.linked &amp;&amp; state.capabilities.link"
+                                    type="button"
+                                    class="cc-secondary-button"
+                                    t-att-disabled="state.busyId !== false"
+                                    t-on-click="() => model.setLinked(item.id, true)"
+                                ><i
+                                        t-if="state.busyId === item.id"
+                                        class="fa fa-circle-o-notch fa-spin"
+                                        aria-hidden="true"
+                                    /> Vincular à conversa</button>
+                            </li>
+                        </ul>
+                        <button
+                            t-if="state.hasMore"
+                            type="button"
+                            class="cc-secondary-button cc-crm-panel__more"
+                            t-att-disabled="state.loadingMore || state.busyId !== false"
+                            t-on-click="() => model.load({append: true})"
+                        ><i
+                                t-if="state.loadingMore"
+                                class="fa fa-circle-o-notch fa-spin"
+                                aria-hidden="true"
+                            /> Carregar mais</button>
+                    </t>
+                </section>
+            </div>
+        </aside>
+    </t>
+</templates>

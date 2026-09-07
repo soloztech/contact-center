@@ -107,7 +107,7 @@
     </record>
 
     <record id="action_contact_center_pipelines" model="ir.actions.act_window">
-        <field name="name">Service Pipelines</field>
+        <field name="name">Pipelines de atendimento</field>
         <field name="res_model">contact.center.pipeline</field>
         <field name="view_mode">tree,form</field>
     </record>
@@ -343,7 +343,7 @@
                         <page string="Description" name="description">
                             <field
                                 name="description"
-                                placeholder="Describe this service case..."
+                                placeholder="Descreva este atendimento..."
                             />
                         </page>
                         <page string="Stage History" name="stage_history">
@@ -372,7 +372,7 @@
     </record>
 
     <record id="action_contact_center_cases" model="ir.actions.act_window">
-        <field name="name">Service Cases</field>
+        <field name="name">Atendimentos</field>
         <field name="res_model">contact.center.case</field>
         <field name="view_mode">kanban,tree,form</field>
         <field name="search_view_id" ref="view_contact_center_case_search" />
@@ -430,7 +430,7 @@
                     <field
                         name="contact_center_case_count"
                         widget="statinfo"
-                        string="Cases"
+                        string="Atendimentos"
                     />
                 </button>
             </xpath>
@@ -450,7 +450,7 @@
 
     <menuitem
         id="menu_contact_center_cases"
-        name="Service Cases"
+        name="Atendimentos"
         parent="contact_center_base.menu_contact_center_root"
         action="action_contact_center_cases"
         sequence="15"
@@ -458,7 +458,7 @@
     />
     <menuitem
         id="menu_contact_center_pipelines"
-        name="Service Pipelines"
+        name="Pipelines de atendimento"
         parent="contact_center_base.menu_contact_center_configuration"
         action="action_contact_center_pipelines"
         sequence="35"

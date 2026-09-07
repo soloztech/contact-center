@@ -140,7 +140,7 @@ class ContactCenterPipeline(models.Model):
     case_ids = fields.One2many(
         "contact.center.case",
         "pipeline_id",
-        string="Cases",
+        string="Atendimentos",
         readonly=True,
     )
 
@@ -493,7 +493,7 @@ class ContactCenterPipelineStage(models.Model):
     fold = fields.Boolean(default=False)
     is_closed = fields.Boolean(default=False, index=True)
     case_ids = fields.One2many(
-        "contact.center.case", "stage_id", string="Cases", readonly=True
+        "contact.center.case", "stage_id", string="Atendimentos", readonly=True
     )
 
     _sql_constraints = [
@@ -671,7 +671,9 @@ class ContactCenterPipelineStage(models.Model):
         return result
 
 
+# Keep pipeline definitions separate from the CRM projection's orchestration.
 class ContactCenterTeamPipeline(models.Model):
+    # pylint: disable-next=consider-merging-classes-inherited
     _inherit = "contact.center.team"
 
     pipeline_ids = fields.Many2many(
@@ -811,6 +813,7 @@ class ContactCenterTeamPipeline(models.Model):
 
 
 class ContactCenterAccountPipeline(models.Model):
+    # pylint: disable-next=consider-merging-classes-inherited
     _inherit = "contact.center.account"
 
     @api.model
@@ -996,10 +999,11 @@ class MailChannelCase(models.Model):
     _inherit = "mail.channel"
 
     contact_center_case_ids = fields.One2many(
-        "contact.center.case", "channel_id", string="Contact Center Cases"
+        "contact.center.case", "channel_id", string="Atendimentos"
     )
     contact_center_case_count = fields.Integer(
-        compute="_compute_contact_center_case_count", string="Case Count"
+        compute="_compute_contact_center_case_count",
+        string="Quantidade de atendimentos",
     )
 
     @api.depends("contact_center_case_ids")
