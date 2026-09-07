@@ -202,6 +202,9 @@ class TestConversationCrm(TransactionCase):
     def test_crm_record_rules_filter_candidates_and_linked_ids(self):
         self.api.link_crm_opportunity(self.channel.id, self.lead.id)
         self.lead.user_id = self.other
+        # Complete the admin reassignment before simulating the agent's next
+        # request; native team/property recomputations belong to that writer.
+        self.lead.flush_recordset()
         result = self.api.get_crm_opportunities(self.channel.id)
         self.assertNotIn(self.lead.id, result["linked_opportunity_ids"])
         self.assertNotIn(self.lead.id, [item["id"] for item in result["items"]])
