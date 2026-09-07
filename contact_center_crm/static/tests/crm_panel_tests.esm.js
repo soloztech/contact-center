@@ -16,6 +16,7 @@ import {
     nextTick,
 } from "@web/../tests/helpers/utils";
 import {ContactCenterApp} from "@contact_center_ui/js/contact_center_app.esm";
+import {makeFakeLocalizationService} from "@web/../tests/helpers/mock_services";
 
 function customerRecord(id, tab = "opportunities", overrides = {}) {
     return {
@@ -76,6 +77,7 @@ function responseFor(tab, ids = [11], overrides = {}) {
 
 QUnit.module("contact_center_crm > customer records", (hooks) => {
     hooks.beforeEach(() => {
+        makeFakeLocalizationService();
         const banner = document.getElementById("oe_neutralize_banner");
         if (banner) {
             (banner.parentElement || banner).remove();
