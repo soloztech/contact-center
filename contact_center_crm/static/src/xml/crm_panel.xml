@@ -176,7 +176,7 @@
                                     />
                                 </div>
                                 <dl class="cc-customer-record__details">
-                                    <div t-if="item.date"><dt>Data</dt><dd><time
+                                    <div t-if="item.date"><dt>Data do registro</dt><dd><time
                                                 t-att-datetime="item.date"
                                                 t-esc="dateLabel(item)"
                                             /></dd></div>
