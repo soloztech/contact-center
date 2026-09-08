@@ -6067,6 +6067,80 @@ QUnit.module("contact_center_ui > model", (hooks) => {
     );
 
     QUnit.test(
+        "opening at the first unread reconciles a clamped viewport without a scroll event",
+        async (assert) => {
+            const fixture = getFixture();
+            for (const scenario of [
+                {name: "short timeline", before: 40, after: 40, atLatest: true},
+                {name: "already at the end", before: 300, after: 40, atLatest: true},
+                {name: "long unread tail", before: 300, after: 600, atLatest: false},
+                {
+                    name: "newer history is not loaded",
+                    before: 40,
+                    after: 40,
+                    hasMoreForward: true,
+                    atLatest: false,
+                },
+            ]) {
+                fixture.innerHTML = `
+                    <div style="position: relative; height: 200px; overflow-y: auto">
+                        <div class="before"></div>
+                        <div data-unread-boundary="101" style="height: 20px"></div>
+                        <div class="after"></div>
+                    </div>`;
+                const viewport = fixture.firstElementChild;
+                viewport.querySelector(".before").style.height = `${scenario.before}px`;
+                viewport.querySelector(".after").style.height = `${scenario.after}px`;
+                viewport.scrollTop = viewport.scrollHeight;
+                const initialTop = viewport.scrollTop;
+                const timeline = {
+                    state: {
+                        selectedChannelId: 10,
+                        timelineFirstUnreadMessageId: 101,
+                        timelineHasMoreForward: Boolean(scenario.hasMoreForward),
+                    },
+                    ui: {unseenMessages: 0, awayFromLatest: false},
+                    viewportRef: {el: viewport},
+                    followLatest: true,
+                    scrollToBottom: () =>
+                        assert.ok(false, "the unread anchor remains present"),
+                };
+                ConversationTimeline.prototype.scrollToInitialPosition.call(timeline);
+                await new Promise((resolve) => requestAnimationFrame(resolve));
+                assert.strictEqual(
+                    timeline.followLatest,
+                    scenario.atLatest,
+                    scenario.name
+                );
+                assert.strictEqual(
+                    timeline.ui.awayFromLatest,
+                    !scenario.atLatest,
+                    scenario.name
+                );
+                assert.strictEqual(
+                    timeline.state.timelineFirstUnreadMessageId,
+                    101,
+                    "positioning preserves the unread anchor"
+                );
+                if (scenario.atLatest) {
+                    assert.strictEqual(
+                        viewport.scrollTop,
+                        initialTop,
+                        "the no-movement case still reconciles the jump button"
+                    );
+                } else if (!scenario.hasMoreForward) {
+                    assert.strictEqual(
+                        viewport.scrollTop,
+                        viewport.querySelector('[data-unread-boundary="101"]')
+                            .offsetTop - 16,
+                        "a long unread tail still opens at its first unread message"
+                    );
+                }
+            }
+        }
+    );
+
+    QUnit.test(
         "checks connection health through the public API and preserves cache on error",
         async (assert) => {
             const calls = [];

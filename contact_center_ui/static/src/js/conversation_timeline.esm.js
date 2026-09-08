@@ -709,6 +709,12 @@ export class ConversationTimeline extends Component {
                 return;
             }
             viewport.scrollTop = Math.max(0, boundary.offsetTop - 16);
+            // The browser may clamp this position to the end without emitting a
+            // scroll event (including a timeline that does not overflow).
+            this.followLatest =
+                timelineViewportNearBottom(viewport) &&
+                !this.state.timelineHasMoreForward;
+            this.ui.awayFromLatest = !this.followLatest;
         });
     }
 
