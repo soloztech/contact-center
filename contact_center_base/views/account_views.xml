@@ -46,9 +46,14 @@
                                 name="company_id"
                                 groups="base.group_multi_company"
                             />
-                            <field name="owner_user_id" options="{'no_create': True}" />
+                            <field
+                                name="owner_user_id"
+                                domain="[('active', '=', True), ('share', '=', False), ('company_ids', 'in', [company_id]), ('groups_id', 'in', [%(contact_center_base.group_contact_center_agent)d])]"
+                                options="{'no_create': True}"
+                            />
                             <field
                                 name="default_team_id"
+                                domain="[('active', '=', True), ('company_id', '=', company_id)]"
                                 options="{'no_quick_create': True}"
                             />
                             <field
@@ -58,7 +63,7 @@
                             <field
                                 name="auto_assignment_user_id"
                                 string="Atribuir automaticamente a"
-                                domain="[('id', 'in', auto_assignment_eligible_user_ids)]"
+                                domain="[('id', 'in', auto_assignment_eligible_user_ids), ('active', '=', True), ('share', '=', False), ('company_ids', 'in', [company_id]), ('groups_id', 'in', [%(contact_center_base.group_contact_center_agent)d])]"
                                 options="{'no_create': True, 'no_open': True}"
                             />
                             <field name="outbound_signature_enabled" />
@@ -297,10 +302,14 @@
                         <page string="Agents"><field
                                 name="agent_ids"
                                 widget="many2many_tags"
+                                domain="[('active', '=', True), ('share', '=', False), ('company_ids', 'in', [company_id]), ('groups_id', 'in', [%(contact_center_base.group_contact_center_agent)d])]"
+                                options="{'no_create': True}"
                             /></page>
                         <page string="Supervisors"><field
                                 name="supervisor_ids"
                                 widget="many2many_tags"
+                                domain="[('active', '=', True), ('share', '=', False), ('company_ids', 'in', [company_id]), ('groups_id', 'in', [%(contact_center_base.group_contact_center_supervisor)d])]"
+                                options="{'no_create': True}"
                             /></page>
                     </notebook>
                 </sheet>
@@ -312,6 +321,68 @@
         <field name="name">Teams</field>
         <field name="res_model">contact.center.team</field>
         <field name="view_mode">tree,form</field>
+    </record>
+
+    <record id="view_contact_center_agents_search" model="ir.ui.view">
+        <field name="name">contact.center.agents.search</field>
+        <field name="model">res.users</field>
+        <field name="arch" type="xml">
+            <search string="Agentes">
+                <field
+                    name="name"
+                    string="Usuário"
+                    filter_domain="['|', '|', ('name', 'ilike', self), ('login', 'ilike', self), ('email', 'ilike', self)]"
+                />
+                <field name="company_ids" groups="base.group_multi_company" />
+                <filter
+                    name="contact_center_agents"
+                    string="Agentes cadastrados"
+                    domain="[('groups_id', 'in', [%(contact_center_base.group_contact_center_agent)d])]"
+                />
+                <separator />
+                <filter
+                    name="inactive"
+                    string="Arquivados"
+                    domain="[('active', '=', False)]"
+                />
+            </search>
+        </field>
+    </record>
+
+    <record id="action_contact_center_agents" model="ir.actions.act_window">
+        <field name="name">Agentes</field>
+        <field name="res_model">res.users</field>
+        <field name="view_mode">tree,form</field>
+        <field name="search_view_id" ref="view_contact_center_agents_search" />
+        <field name="domain">[('share', '=', False)]</field>
+        <field name="context">
+            {'search_default_contact_center_agents': 1, 'show_user_group_warning': True}
+        </field>
+        <field name="groups_id" eval="[(4, ref('base.group_erp_manager'))]" />
+        <field name="help" type="html">
+            <p
+                class="o_view_nocontent_smiling_face"
+            >Cadastre os agentes do Contact Center.</p>
+            <p>
+                Para habilitar um usuário existente, remova o filtro Agentes cadastrados,
+                abra seu cadastro e defina o perfil Contact Center em Direitos de acesso.
+                Depois, selecione o agente na equipe ou na caixa de entrada.
+            </p>
+        </field>
+    </record>
+
+    <record id="action_contact_center_agents_tree" model="ir.actions.act_window.view">
+        <field name="sequence" eval="10" />
+        <field name="view_mode">tree</field>
+        <field name="view_id" ref="base.view_users_tree" />
+        <field name="act_window_id" ref="action_contact_center_agents" />
+    </record>
+
+    <record id="action_contact_center_agents_form" model="ir.actions.act_window.view">
+        <field name="sequence" eval="20" />
+        <field name="view_mode">form</field>
+        <field name="view_id" ref="base.view_users_form" />
+        <field name="act_window_id" ref="action_contact_center_agents" />
     </record>
 
     <record id="view_contact_center_tag_tree" model="ir.ui.view">

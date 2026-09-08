@@ -126,16 +126,18 @@
                                 />
                                 <field
                                     name="owner_user_id"
+                                    domain="[('active', '=', True), ('share', '=', False), ('company_ids', 'in', [company_id]), ('groups_id', 'in', [%(contact_center_base.group_contact_center_agent)d])]"
                                     options="{'no_create': True}"
                                 />
                                 <field
                                     name="default_team_id"
+                                    domain="[('active', '=', True), ('company_id', '=', company_id)]"
                                     options="{'no_quick_create': True}"
                                 />
                                 <field
                                     name="auto_assignment_user_id"
                                     string="Atribuir automaticamente a"
-                                    domain="[('id', 'in', auto_assignment_eligible_user_ids)]"
+                                    domain="[('id', 'in', auto_assignment_eligible_user_ids), ('active', '=', True), ('share', '=', False), ('company_ids', 'in', [company_id]), ('groups_id', 'in', [%(contact_center_base.group_contact_center_agent)d])]"
                                     options="{'no_create': True, 'no_open': True}"
                                 />
                             </group>

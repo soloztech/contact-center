@@ -247,6 +247,14 @@
         sequence="30"
     />
     <menuitem
+        id="menu_contact_center_agents"
+        name="Agentes"
+        parent="menu_contact_center_configuration"
+        action="action_contact_center_agents"
+        sequence="35"
+        groups="base.group_erp_manager"
+    />
+    <menuitem
         id="menu_contact_center_tags"
         name="Tags"
         parent="menu_contact_center_configuration"
