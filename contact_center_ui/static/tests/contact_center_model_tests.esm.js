@@ -2362,6 +2362,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
         (assert) => {
             const message = {
                 message_id: 81,
+                content_type: "call.accept",
                 actions: {reply: false, react: false, edit: false, delete: false},
                 source_inbox_event_id: 345,
             };
@@ -2429,6 +2430,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             const actions = [];
             const message = {
                 message_id: 82,
+                content_type: "identity.security.changed",
                 actions: {reply: false, react: false, edit: false, delete: false},
                 source_inbox_event_id: 346,
             };
@@ -2629,6 +2631,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
 
             const timeline = {
                 state: {messages: [controlMessage]},
+                store: {capabilities: {view_source_webhook: false}},
                 isGroupConversation: false,
                 isRunContinuation: () => false,
                 endsRun: () => true,
@@ -2646,7 +2649,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                     timeline,
                     controlMessage
                 ),
-                "control events never expose message actions"
+                "control events without an authorized source have no actions"
             );
             const ariaLabel = ConversationTimeline.prototype.controlAriaLabel.call(
                 timeline,
@@ -2659,6 +2662,132 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             assert.strictEqual(ariaLabel, "Evento de chamada: Chamada recebida. 10:00");
             assert.notOk(ariaLabel.includes("provider-internal"));
             assert.notOk(ariaLabel.includes("opaque-provider-id"));
+        }
+    );
+
+    QUnit.test("control events expose only the authorized source action", (assert) => {
+        const message = {
+            message_id: 83,
+            content_type: "call.accept",
+            source_inbox_event_id: 347,
+            actions: {reply: true, react: true, edit: true, delete: true, resend: true},
+        };
+        const timeline = {
+            store: {
+                capabilities: {view_source_webhook: true},
+                selectedConversation: {conversation_type: "direct", can_send: true},
+            },
+            messageActionAllowed: ConversationTimeline.prototype.messageActionAllowed,
+        };
+        for (const contentType of [
+            "call.offer",
+            "call.accept",
+            "call.terminate",
+            "identity.security.changed",
+        ]) {
+            message.content_type = contentType;
+            assert.ok(
+                ConversationTimeline.prototype.hasActions.call(timeline, message),
+                `${contentType} exposes the diagnostic-only menu`
+            );
+            for (const action of ["reply", "react", "edit", "delete", "resend"]) {
+                assert.notOk(
+                    timeline.messageActionAllowed(message, action),
+                    `${contentType} never allows ${action}, even with stale DTO actions`
+                );
+            }
+        }
+        timeline.store.capabilities.view_source_webhook = false;
+        assert.notOk(ConversationTimeline.prototype.hasActions.call(timeline, message));
+        timeline.store.capabilities.view_source_webhook = true;
+        message.source_inbox_event_id = false;
+        assert.notOk(ConversationTimeline.prototype.hasActions.call(timeline, message));
+    });
+
+    QUnit.test(
+        "rendered control and message menus retain their own source and keyboard behavior",
+        async (assert) => {
+            const actions = [];
+            registry.category("services").add("action", {
+                start: () => ({doAction: async (action) => actions.push(action)}),
+            });
+            registry.category("services").add("dialog", {
+                start: () => ({add: () => () => undefined}),
+            });
+            makeFakeLocalizationService();
+            const env = await makeTestEnv();
+            const target = getFixture();
+            const store = new ContactCenterStore({
+                orm: {},
+                busService: new EventTarget(),
+            });
+            store.state.bootstrap = {capabilities: {view_source_webhook: true}};
+            store.state.selectedChannelId = 10;
+            store.state.conversations = [
+                openConversation({channel_id: 10, conversation_type: "direct"}),
+            ];
+            store.state.timelinePhase = "ready";
+            store.state.messages = ["call.accept", "text"].map(
+                (contentType, index) => ({
+                    message_id: 84 + index,
+                    source_inbox_event_id: 348 + index,
+                    content_type: contentType,
+                    body_text: contentType === "text" ? "Mensagem" : "Chamada atendida",
+                    date: "2026-08-29 12:00:00",
+                    direction: "inbound",
+                    origin: "provider",
+                    platform: "whatsapp",
+                    provider: "wuzapi",
+                    actions: {reply: false, react: false, edit: false, delete: false},
+                    media: [],
+                    reactions: [],
+                })
+            );
+            try {
+                await mount(ConversationTimeline, target, {
+                    env,
+                    props: {state: store.state, store},
+                });
+                assert.strictEqual(
+                    target.querySelectorAll(".cc-message--control").length,
+                    1
+                );
+                for (const id of [84, 85]) {
+                    const row = `[data-message-id="${id}"]`;
+                    const toggle = `${row} .cc-message-actions__toggle`;
+                    await click(target, toggle);
+                    const menu = target.querySelector(`${row} .cc-message-menu`);
+                    assert.strictEqual(
+                        menu.querySelectorAll('[role="menuitem"]').length,
+                        1
+                    );
+                    assert.strictEqual(
+                        menu.textContent.trim(),
+                        "Ver webhook de origem"
+                    );
+                    menu.dispatchEvent(
+                        new KeyboardEvent("keydown", {key: "ArrowDown", bubbles: true})
+                    );
+                    assert.strictEqual(
+                        document.activeElement,
+                        menu.querySelector("button")
+                    );
+                    menu.dispatchEvent(
+                        new KeyboardEvent("keydown", {key: "Escape", bubbles: true})
+                    );
+                    await nextTick();
+                    assert.notOk(target.querySelector(`${row} .cc-message-menu`));
+                    assert.strictEqual(
+                        document.activeElement,
+                        target.querySelector(toggle)
+                    );
+                    await click(target, toggle);
+                    await click(target, `${row} .cc-message-menu [role="menuitem"]`);
+                    assert.strictEqual(actions[actions.length - 1].res_id, id + 264);
+                }
+            } finally {
+                store.destroy();
+            }
         }
     );
 

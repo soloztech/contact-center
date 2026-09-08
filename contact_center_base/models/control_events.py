@@ -163,6 +163,7 @@ class ContactCenterApplicationControlEvents(models.AbstractModel):
         content_type,
         body,
         enrich_addresses=False,
+        inbox_event=None,
     ):
         if (
             binding.account_id != connection.account_id
@@ -184,6 +185,20 @@ class ContactCenterApplicationControlEvents(models.AbstractModel):
             limit=1,
         )
         if existing:
+            if (
+                existing.provider_connection_id != connection
+                or existing.content_type != content_type
+            ):
+                raise ValidationError(
+                    _("The existing control event belongs to another projection.")
+                )
+            if inbox_event and not existing.source_inbox_event_id:
+                existing.write({"source_inbox_event_id": inbox_event.id})
+                self._notify_ui(
+                    binding.channel_id,
+                    "message_updated",
+                    {"message_id": existing.message_id.id},
+                )
             return existing.message_id
         guest = self._ensure_control_guest_member(binding)
         public_user = self.env.ref("base.public_user")
@@ -205,6 +220,7 @@ class ContactCenterApplicationControlEvents(models.AbstractModel):
                 "message_id": message.id,
                 "channel_binding_id": binding.id,
                 "provider_connection_id": connection.id,
+                "source_inbox_event_id": inbox_event.id if inbox_event else False,
                 "direction": "inbound",
                 "origin": "provider",
                 "content_type": content_type,
@@ -238,10 +254,13 @@ class ContactCenterApplicationControlEvents(models.AbstractModel):
             }[state],
             body=self._call_card_body(state, call["direction"]),
             enrich_addresses=True,
+            inbox_event=inbox_event,
         )
 
     @api.model
-    def _process_identity_security_control_event(self, connection, event):
+    def _process_identity_security_control_event(
+        self, connection, event, inbox_event=None
+    ):
         evidence = self._validate_identity_security_event(event)
         binding = self._find_channel_binding(
             connection.account_id,
@@ -261,6 +280,7 @@ class ContactCenterApplicationControlEvents(models.AbstractModel):
             binding,
             external_message_id="control:identity-security:%s" % digest,
             content_type="identity.security.changed",
+            inbox_event=inbox_event,
             body=(
                 _(
                     "O provedor sinalizou uma possível alteração automática da "
@@ -281,11 +301,25 @@ class ContactCenterApplicationControlEvents(models.AbstractModel):
         ):
             return super()._process_event(connection, event, inbox_event=inbox_event)
         self._validate_event_scope(connection, event)
+        if inbox_event:
+            inbox_event = inbox_event.sudo()
+            inbox_event.ensure_one()
+            if (
+                inbox_event.provider_connection_id != connection
+                or inbox_event.account_id != connection.account_id
+                or inbox_event.company_id != connection.company_id
+                or inbox_event.normalized_dto_json != event.to_dict()
+            ):
+                raise ValidationError(
+                    _("The control source must be this exact normalized inbox event.")
+                )
         if event.event_type == "conversation.call.updated":
             return self._process_call_control_event(
                 connection, event, inbox_event=inbox_event
             )
-        return self._process_identity_security_control_event(connection, event)
+        return self._process_identity_security_control_event(
+            connection, event, inbox_event=inbox_event
+        )
 
     def _outbound_reply_binding(self, binding, connection, reply_to_message_id):
         if reply_to_message_id:

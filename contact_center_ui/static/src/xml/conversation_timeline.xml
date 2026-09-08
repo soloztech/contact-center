@@ -86,6 +86,9 @@
                                             </footer>
                                         </div>
                                     </div>
+                                    <t
+                                            t-call="contact_center_ui.TimelineMessageActions"
+                                        />
                                 </div>
                             </div>
                         </article>
@@ -264,140 +267,9 @@
                                             </button>
                                         </div>
                                     </div>
-                                    <div
-                                            t-if="hasActions(message)"
-                                            t-att-class="actionsClass(message)"
-                                            t-on-click.stop="() => {}"
-                                            t-on-keydown="onActionKeydown"
-                                        >
-                                        <button
-                                                type="button"
-                                                class="cc-message-actions__toggle"
-                                                aria-haspopup="menu"
-                                                t-att-aria-expanded="ui.openMenuId === message.message_id ? 'true' : 'false'"
-                                                aria-label="Ações da mensagem"
-                                                t-on-click="() => this.toggleMenu(message)"
-                                            >
-                                            <i
-                                                    class="fa fa-ellipsis-h"
-                                                    aria-hidden="true"
-                                                />
-                                        </button>
-                                        <div
-                                                t-if="ui.openMenuId === message.message_id"
-                                                class="cc-message-menu"
-                                                role="menu"
-                                            >
-                                            <button
-                                                    t-if="messageActionAllowed(message, 'reply')"
-                                                    type="button"
-                                                    role="menuitem"
-                                                    t-on-click="() => this.reply(message)"
-                                                >
-                                                <i
-                                                        class="fa fa-reply"
-                                                        aria-hidden="true"
-                                                    />
-                                                Responder
-                                            </button>
-                                            <button
-                                                    t-if="messageActionAllowed(message, 'react')"
-                                                    type="button"
-                                                    role="menuitem"
-                                                    t-on-click="() => this.openReactionPicker(message)"
-                                                >
-                                                <i
-                                                        class="fa fa-smile-o"
-                                                        aria-hidden="true"
-                                                    />
-                                                Reagir
-                                            </button>
-                                            <button
-                                                    t-if="messageActionAllowed(message, 'edit')"
-                                                    type="button"
-                                                    role="menuitem"
-                                                    t-on-click="() => this.startEdit(message)"
-                                                >
-                                                <i
-                                                        class="fa fa-pencil"
-                                                        aria-hidden="true"
-                                                    />
-                                                Editar
-                                            </button>
-                                            <button
-                                                    t-if="canViewSourceWebhook(message)"
-                                                    type="button"
-                                                    role="menuitem"
-                                                    t-on-click="() => this.viewSourceWebhook(message)"
-                                                >
-                                                <i
-                                                        class="fa fa-file-code-o"
-                                                        aria-hidden="true"
-                                                    />
-                                                Ver webhook de origem
-                                            </button>
-                                            <button
-                                                    t-if="messageActionAllowed(message, 'delete')"
-                                                    type="button"
-                                                    role="menuitem"
-                                                    class="is-danger"
-                                                    t-on-click="() => this.askDelete(message)"
-                                                >
-                                                <i
-                                                        class="fa fa-trash-o"
-                                                        aria-hidden="true"
-                                                    />
-                                                Apagar
-                                            </button>
-                                        </div>
-                                        <div
-                                                t-if="ui.reactionPickerId === message.message_id"
-                                                t-ref="reactionPicker"
-                                                class="cc-reaction-picker"
-                                                role="group"
-                                                aria-label="Escolher reação"
-                                            >
-                                            <button
-                                                    t-foreach="quickReactions"
-                                                    t-as="emoji"
-                                                    t-key="emoji"
-                                                    type="button"
-                                                    t-att-aria-label="'Reagir com ' + emoji"
-                                                    t-att-disabled="isBusy(message)"
-                                                    t-on-click="() => this.react(message, emoji)"
-                                                ><t t-esc="emoji" /></button>
-                                        </div>
-                                        <div
-                                                t-if="ui.deletingId === message.message_id"
-                                                t-ref="deleteConfirmation"
-                                                class="cc-delete-confirmation"
-                                                role="group"
-                                                aria-label="Confirmar exclusão da mensagem"
-                                            >
-                                            <strong>Apagar para todos?</strong>
-                                            <span
-                                                >Esta ação não pode ser desfeita no canal externo.</span>
-                                            <span
-                                                    t-if="keepsDeletedMessageContent"
-                                                >Nesta caixa, o conteúdo ficará visível e riscado.</span>
-                                            <span
-                                                    t-else=""
-                                                >Nesta caixa, restará apenas o aviso de mensagem apagada.</span>
-                                            <div>
-                                                <button
-                                                        type="button"
-                                                        t-on-click="closeActions"
-                                                        t-att-disabled="isBusy(message)"
-                                                    >Cancelar</button>
-                                                <button
-                                                        type="button"
-                                                        class="is-danger"
-                                                        t-on-click="() => this.deleteMessage(message)"
-                                                        t-att-disabled="isBusy(message)"
-                                                    >Apagar</button>
-                                            </div>
-                                        </div>
-                                    </div>
+                                    <t
+                                            t-call="contact_center_ui.TimelineMessageActions"
+                                        />
                                 </div>
                             </div>
                         </article>
@@ -436,6 +308,123 @@
                     /> novas mensagens</t>
                 <t t-else="">Ir ao fim</t>
             </button>
+        </div>
+    </t>
+    <t t-name="contact_center_ui.TimelineMessageActions" owl="1">
+        <div
+            t-if="hasActions(message)"
+            t-att-class="actionsClass(message)"
+            t-on-click.stop="() => {}"
+            t-on-keydown="onActionKeydown"
+        >
+            <button
+                type="button"
+                class="cc-message-actions__toggle"
+                aria-haspopup="menu"
+                t-att-aria-expanded="ui.openMenuId === message.message_id ? 'true' : 'false'"
+                aria-label="Ações da mensagem"
+                t-on-click="() => this.toggleMenu(message)"
+            >
+                <i class="fa fa-ellipsis-h" aria-hidden="true" />
+            </button>
+            <div
+                t-if="ui.openMenuId === message.message_id"
+                class="cc-message-menu"
+                role="menu"
+            >
+                <button
+                    t-if="messageActionAllowed(message, 'reply')"
+                    type="button"
+                    role="menuitem"
+                    t-on-click="() => this.reply(message)"
+                >
+                    <i class="fa fa-reply" aria-hidden="true" />
+                    Responder
+                </button>
+                <button
+                    t-if="messageActionAllowed(message, 'react')"
+                    type="button"
+                    role="menuitem"
+                    t-on-click="() => this.openReactionPicker(message)"
+                >
+                    <i class="fa fa-smile-o" aria-hidden="true" />
+                    Reagir
+                </button>
+                <button
+                    t-if="messageActionAllowed(message, 'edit')"
+                    type="button"
+                    role="menuitem"
+                    t-on-click="() => this.startEdit(message)"
+                >
+                    <i class="fa fa-pencil" aria-hidden="true" />
+                    Editar
+                </button>
+                <button
+                    t-if="canViewSourceWebhook(message)"
+                    type="button"
+                    role="menuitem"
+                    t-on-click="() => this.viewSourceWebhook(message)"
+                >
+                    <i class="fa fa-file-code-o" aria-hidden="true" />
+                    Ver webhook de origem
+                </button>
+                <button
+                    t-if="messageActionAllowed(message, 'delete')"
+                    type="button"
+                    role="menuitem"
+                    class="is-danger"
+                    t-on-click="() => this.askDelete(message)"
+                >
+                    <i class="fa fa-trash-o" aria-hidden="true" />
+                    Apagar
+                </button>
+            </div>
+            <div
+                t-if="ui.reactionPickerId === message.message_id"
+                t-ref="reactionPicker"
+                class="cc-reaction-picker"
+                role="group"
+                aria-label="Escolher reação"
+            >
+                <button
+                    t-foreach="quickReactions"
+                    t-as="emoji"
+                    t-key="emoji"
+                    type="button"
+                    t-att-aria-label="'Reagir com ' + emoji"
+                    t-att-disabled="isBusy(message)"
+                    t-on-click="() => this.react(message, emoji)"
+                ><t t-esc="emoji" /></button>
+            </div>
+            <div
+                t-if="ui.deletingId === message.message_id"
+                t-ref="deleteConfirmation"
+                class="cc-delete-confirmation"
+                role="group"
+                aria-label="Confirmar exclusão da mensagem"
+            >
+                <strong>Apagar para todos?</strong>
+                <span>Esta ação não pode ser desfeita no canal externo.</span>
+                <span
+                    t-if="keepsDeletedMessageContent"
+                >Nesta caixa, o conteúdo ficará visível e riscado.</span>
+                <span
+                    t-else=""
+                >Nesta caixa, restará apenas o aviso de mensagem apagada.</span>
+                <div>
+                    <button
+                        type="button"
+                        t-on-click="closeActions"
+                        t-att-disabled="isBusy(message)"
+                    >Cancelar</button>
+                    <button
+                        type="button"
+                        class="is-danger"
+                        t-on-click="() => this.deleteMessage(message)"
+                        t-att-disabled="isBusy(message)"
+                    >Apagar</button>
+                </div>
+            </div>
         </div>
     </t>
 </templates>

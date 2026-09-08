@@ -432,3 +432,20 @@ class TestSourceWebhookLink(SavepointCase):
         serialized = system_api._serialize_message(system_message, system_binding)
         self.assertEqual(serialized["source_inbox_event_id"], source.id)
         self.assertTrue(system_api.bootstrap()["capabilities"]["view_source_webhook"])
+
+    def test_control_source_ui_keeps_existing_system_only_permission(self):
+        channel, channel_binding = self._channel_binding()
+        source = self._empty_inbox_event()
+        binding = self._manual_binding(channel, channel_binding, source)
+        for content_type in ("call.accept", "identity.security.changed"):
+            binding.write({"content_type": content_type})
+            for user in (self.agent, self.contact_center_admin, self.system_admin):
+                ui = self.env["contact.center.ui.api"].with_user(user)
+                serialized = ui._serialize_message(
+                    binding.message_id.with_user(user), binding.with_user(user)
+                )
+                self.assertFalse(any(serialized["actions"].values()))
+                if user == self.system_admin:
+                    self.assertEqual(serialized["source_inbox_event_id"], source.id)
+                else:
+                    self.assertNotIn("source_inbox_event_id", serialized)

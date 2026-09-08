@@ -435,14 +435,12 @@ export class ConversationTimeline extends Component {
     }
 
     hasActions(message) {
-        if (isControlTimelineMessage(message)) {
-            return false;
-        }
         return (
             sourceWebhookActionEnabled(this.store.capabilities, message) ||
-            ["reply", "react", "edit", "delete"].some((action) =>
-                this.messageActionAllowed(message, action)
-            )
+            (!isControlTimelineMessage(message) &&
+                ["reply", "react", "edit", "delete"].some((action) =>
+                    this.messageActionAllowed(message, action)
+                ))
         );
     }
 

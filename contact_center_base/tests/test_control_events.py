@@ -172,6 +172,23 @@ class TestControlEvents(SavepointCase):
         }
         return EventDTO.from_dict(values)
 
+    def _source_event(self, event, connection=None):
+        connection = connection or self.connection
+        return (
+            self.env["contact.center.inbox.event"]
+            .sudo()
+            .with_context(contact_center_skip_enqueue=True)
+            .create(
+                {
+                    "provider_connection_id": connection.id,
+                    "inbox_dedupe_key": event.event_id,
+                    "provider_schema_version": connection.provider_schema_version,
+                    "raw_envelope_json": event.to_dict(),
+                    "normalized_dto_json": event.to_dict(),
+                }
+            )
+        )
+
     def _direct_conversation(self, jid, name="Known Person"):
         guest = self.env["mail.guest"].sudo().create({"name": name})
         identity = self.env["contact.center.identity"]._contact_center_create_managed(
@@ -478,6 +495,111 @@ class TestControlEvents(SavepointCase):
             self.application._process_event(
                 self.connection, EventDTO.from_dict(identity_event)
             )
+
+    def test_control_sources_are_persisted_and_missing_links_are_enriched(self):
+        jid = "5511900004110@s.whatsapp.net"
+        self._direct_conversation(jid)
+        events = [
+            self._call_event(jid, state)
+            for state in ("offered", "accepted", "terminated")
+        ] + [self._identity_security_event(jid)]
+        for event in events:
+            with self.subTest(event_type=event.event_type, extensions=event.extensions):
+                source = self._source_event(event)
+                message = self.application._process_event(
+                    self.connection, event, inbox_event=source
+                )
+                target = self._binding_for_message(message)
+                self.assertEqual(target.source_inbox_event_id, source)
+                self.assertEqual(
+                    self.application._process_event(
+                        self.connection, event, inbox_event=source
+                    ),
+                    message,
+                )
+
+        for event in (
+            self._call_event("5511900004111@s.whatsapp.net", "accepted"),
+            self._identity_security_event(jid),
+        ):
+            message = self.application._process_event(self.connection, event)
+            target = self._binding_for_message(message)
+            self.assertFalse(target.source_inbox_event_id)
+            source = self._source_event(event)
+            with mock.patch.object(
+                type(self.application), "_notify_ui", autospec=True
+            ) as notify:
+                replay = self.application._process_event(
+                    self.connection, event, inbox_event=source
+                )
+            self.assertEqual(replay, message)
+            self.assertEqual(target.source_inbox_event_id, source)
+            notify.assert_any_call(
+                self.application,
+                target.channel_binding_id.channel_id,
+                "message_updated",
+                {"message_id": message.id},
+            )
+
+    def test_control_source_preserves_first_event_on_semantic_replay(self):
+        jid = "5511900004112@s.whatsapp.net"
+        event = self._call_event(jid, "accepted")
+        first_source = self._source_event(event)
+        message = self.application._process_event(
+            self.connection, event, inbox_event=first_source
+        )
+        replay_event = self._call_event(jid, "accepted")
+        replay_source = self._source_event(replay_event)
+        self.assertNotEqual(replay_source, first_source)
+        replay = self.application._process_event(
+            self.connection, replay_event, inbox_event=replay_source
+        )
+        self.assertEqual(replay, message)
+        target = self._binding_for_message(message)
+        self.assertEqual(target.source_inbox_event_id, first_source)
+        with self.assertRaises(ValidationError), self.env.cr.savepoint():
+            target.write({"source_inbox_event_id": replay_source.id})
+
+    def test_control_source_rejects_wrong_event_or_connection(self):
+        jid = "5511900004113@s.whatsapp.net"
+        event = self._call_event(jid, "accepted")
+        message = self.application._process_event(self.connection, event)
+        target = self._binding_for_message(message)
+        wrong_event = self._call_event(jid, "terminated")
+        wrong_source = self._source_event(wrong_event)
+        with self.assertRaises(ValidationError), self.env.cr.savepoint():
+            self.application._process_event(
+                self.connection, event, inbox_event=wrong_source
+            )
+        secondary = self.connection.copy(
+            {
+                "name": "Secondary control connection",
+                "external_ref": "control-secondary-%s" % uuid.uuid4(),
+                "role": "standby",
+                "inbound_active": False,
+                "outbound_active": False,
+            }
+        )
+        wrong_connection_source = self._source_event(event, connection=secondary)
+        with self.assertRaises(ValidationError), self.env.cr.savepoint():
+            self.application._process_event(
+                self.connection, event, inbox_event=wrong_connection_source
+            )
+        target.invalidate_recordset(["source_inbox_event_id"])
+        self.assertFalse(target.source_inbox_event_id)
+
+    def test_control_replay_cannot_enrich_a_different_projection(self):
+        event = self._call_event("5511900004114@s.whatsapp.net", "accepted")
+        message = self.application._process_event(self.connection, event)
+        target = self._binding_for_message(message)
+        source = self._source_event(event)
+        # The external key is exact, but a conflicting projection must not
+        # acquire control-event provenance just because that key was reused.
+        target.write({"content_type": "text"})
+        with self.assertRaises(ValidationError), self.env.cr.savepoint():
+            self.application._process_event(self.connection, event, inbox_event=source)
+        target.invalidate_recordset(["source_inbox_event_id"])
+        self.assertFalse(target.source_inbox_event_id)
 
     def test_control_cards_have_no_ui_actions_and_reject_api_targets(self):
         jid = "5511900004106@s.whatsapp.net"
