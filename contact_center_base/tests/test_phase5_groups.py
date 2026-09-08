@@ -4150,6 +4150,7 @@ class TestContactCenterGroups(SavepointCase):
                 "delete_message": True,
                 "delivery_receipts": True,
                 "view_attribution": False,
+                "view_inbox_access": False,
                 "delete_conversation": False,
                 "ignore_conversation": False,
             },
