@@ -3,7 +3,7 @@
   "experimental": true,
   "upstream_repository": "https://github.com/asternic/wuzapi",
   "upstream_commit": "9487eca9a40f292d19953a44983979c85d91ccce",
-  "upstream_archive_url": "https://api.github.com/repos/asternic/wuzapi/tarball/9487eca9a40f292d19953a44983979c85d91ccce",
+  "upstream_archive_url": "https://codeload.github.com/asternic/wuzapi/tar.gz/9487eca9a40f292d19953a44983979c85d91ccce",
   "upstream_archive_sha256": "91044e47843e157f864b38a666eec70aa88c026c141b3a5d7d5df1c421c75100",
   "whatsmeow_commit": "b572e5bcb92bbc285b68cb6d6540da3093330e04",
   "files": ["carousel.go", "carousel_test.go"],
