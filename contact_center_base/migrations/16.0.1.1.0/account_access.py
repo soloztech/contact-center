@@ -181,6 +181,47 @@ def _records(env, model_name):
     return model.search(domain, order="id")
 
 
+def _validate_channel_account_coverage(env):
+    """Reject missing or ambiguous inbox authority, including inactive history."""
+    channels = _records(env, "mail.channel")
+    accounts = _records(env, ACCOUNT)
+    bindings = _records(env, "contact.center.channel.binding")
+    channel_ids = set(channels.ids)
+    account_ids = set(accounts.ids)
+    by_channel = {}
+    invalid_channels = set()
+    missing_accounts = set()
+    for binding in bindings:
+        channel_id = binding.channel_id.id
+        account_id = binding.account_id.id
+        by_channel.setdefault(channel_id, []).append(account_id)
+        if channel_id not in channel_ids:
+            invalid_channels.add(binding.id)
+        if account_id not in account_ids:
+            missing_accounts.add(binding.id)
+    problems = {
+        "orphan_channel_ids": channel_ids - set(by_channel),
+        "ambiguous_channel_ids": {
+            channel_id
+            for channel_id, linked_accounts in by_channel.items()
+            if len(linked_accounts) != 1
+        },
+        "invalid_channel_binding_ids": invalid_channels,
+        "missing_account_binding_ids": missing_accounts,
+    }
+    invalid = {
+        name: {"count": len(ids), "first_ids": sorted(ids)[:20]}
+        for name, ids in problems.items()
+        if ids
+    }
+    if invalid:
+        raise RuntimeError(
+            "Conversation inbox authority requires repair before migration: "
+            + json.dumps(invalid, sort_keys=True)
+        )
+    return {"channels": len(channels), "bindings": len(bindings)}
+
+
 def _values(record, field_names):
     result = {"id": record.id}
     for name in field_names:
@@ -251,6 +292,7 @@ def snapshot(env):
         name in model._fields for name in NEW_FIELDS
     ):
         raise RuntimeError("Access migration prepare requires the old registry")
+    _validate_channel_account_coverage(env)
     accounts = []
     for account in _records(env, ACCOUNT):
         accounts.append(
@@ -408,6 +450,7 @@ def rule_domain_plan(before_rules, security_xml_path):
 def validate_transition(env, before):
     """Prove singleton access, effective scope and unchanged business assignments."""
     _validate_snapshot(before)
+    _validate_channel_account_coverage(env)
     accounts = _records(env, ACCOUNT)
     if accounts.ids != [row["id"] for row in before["accounts"]]:
         raise RuntimeError("Inbox inventory changed across the access migration")
@@ -461,6 +504,7 @@ def finalize(env, before_snapshot=None, security_xml_path=None):
             for name in NEW_FIELDS
         ):
             raise RuntimeError("Access migration finalize requires the new registry")
+        _validate_channel_account_coverage(env)
         _assert_stable(env, before["stable"])
         xml_path = (
             security_xml_path

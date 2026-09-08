@@ -111,7 +111,11 @@ def _access_scope_command_ids(current_ids, commands):
         if not isinstance(command, (list, tuple)) or not command:
             raise ValidationError(_("Invalid inbox access command."))
         operation = command[0]
-        if type(operation) is not int or operation not in (3, 4, 5, 6):
+        if (
+            not isinstance(operation, int)
+            or isinstance(operation, bool)
+            or operation not in (3, 4, 5, 6)
+        ):
             raise ValidationError(
                 _(
                     "Select existing users and teams; their records cannot be edited here."

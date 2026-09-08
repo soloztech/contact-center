@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -187,10 +188,14 @@ class TestAccountAccessHandoff(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "single access fields"):
             migration._validate_snapshot(before)
 
-    def _finalize(self, env, validation=None):
+    def _finalize(self, env, validation=None, coverage_error=None):
         with patch.object(
             migration, "_stable", return_value=_before()["stable"]
-        ), patch.object(migration, "rule_domain_plan", return_value=[]), patch.object(
+        ), patch.object(
+            migration, "_validate_channel_account_coverage", side_effect=coverage_error
+        ), patch.object(
+            migration, "rule_domain_plan", return_value=[]
+        ), patch.object(
             migration, "_records", return_value=env.accounts
         ), patch.object(
             migration,
@@ -237,6 +242,67 @@ class TestAccountAccessHandoff(unittest.TestCase):
         self.assertTrue(result["already_done"])
         self.assertEqual(env.accounts[0].access_user_ids.ids, [6, 20])
         self.assertTrue(all(not account.writes for account in env.accounts))
+
+    def test_finalize_rejects_orphan_conversations_before_any_access_write(self):
+        env = _Env()
+        _store(env, _before())
+        with self.assertRaisesRegex(RuntimeError, "orphan"):
+            self._finalize(env, coverage_error=RuntimeError("orphan conversation"))
+        self.assertTrue(all(not account.writes for account in env.accounts))
+        self.assertEqual(env.params.get_param(migration.STATE_KEY), "prepared")
+
+
+class TestConversationAuthorityCoverage(unittest.TestCase):
+    def _coverage(self, channel_ids, pairs, account_ids=(10, 11)):
+        records = {
+            "mail.channel": _Accounts(
+                SimpleNamespace(id=value) for value in channel_ids
+            ),
+            migration.ACCOUNT: _Accounts(
+                SimpleNamespace(id=value) for value in account_ids
+            ),
+            "contact.center.channel.binding": _Accounts(
+                SimpleNamespace(
+                    id=index,
+                    channel_id=SimpleNamespace(id=channel_id),
+                    account_id=SimpleNamespace(id=account_id),
+                )
+                for index, (channel_id, account_id) in enumerate(pairs, 1)
+            ),
+        }
+        with patch.object(
+            migration, "_records", side_effect=lambda _env, name: records[name]
+        ):
+            return migration._validate_channel_account_coverage(object())
+
+    def test_every_channel_must_have_exactly_one_account_binding(self):
+        self.assertEqual(
+            self._coverage([100, 101], [(100, 10), (101, 11)]),
+            {"channels": 2, "bindings": 2},
+        )
+
+    def test_orphan_channels_are_rejected_with_bounded_ids(self):
+        with self.assertRaisesRegex(RuntimeError, "orphan_channel_ids") as failure:
+            self._coverage(range(100, 150), [])
+        diagnostic = json.loads(str(failure.exception).split(": ", 1)[1])
+        self.assertEqual(diagnostic["orphan_channel_ids"]["count"], 50)
+        self.assertEqual(
+            diagnostic["orphan_channel_ids"]["first_ids"], list(range(100, 120))
+        )
+
+    def test_two_accounts_cannot_claim_one_channel(self):
+        with self.assertRaisesRegex(RuntimeError, "ambiguous_channel_ids"):
+            self._coverage([100], [(100, 10), (100, 11)])
+
+    def test_duplicate_binding_to_same_account_is_also_rejected(self):
+        with self.assertRaisesRegex(RuntimeError, "ambiguous_channel_ids"):
+            self._coverage([100], [(100, 10), (100, 10)])
+
+    def test_binding_must_target_contact_center_channel_and_existing_account(self):
+        with self.assertRaisesRegex(RuntimeError, "invalid_channel_binding_ids"):
+            self._coverage([], [(100, 10)])
+        with self.assertRaisesRegex(RuntimeError, "missing_account_binding_ids"):
+            self._coverage([100], [(100, 99)])
 
 
 class TestCanonicalRuleMigration(unittest.TestCase):

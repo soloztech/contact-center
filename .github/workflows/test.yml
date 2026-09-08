@@ -94,10 +94,41 @@ jobs:
           mv "${GITHUB_WORKSPACE}/.ci-private-dependency/marketing-center" "${sibling_root}"
           python -m pip install --editable "${sibling_root}/setup/meta_api_base"
           python -m pip install --editable "${sibling_root}/setup/meta_webhook_base"
+      - name: Checkout installed Contact Center version for native upgrade rehearsal
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 33e662b1d95ba34a879c5f652719911c8902969f
+          path: .ci-old-contact-center
+          persist-credentials: false
+      - name: Isolate old addon source from candidate discovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          old_parent="$(mktemp -d "${RUNNER_TEMP}/contact-center-upgrade-old.XXXXXX")"
+          mv "${GITHUB_WORKSPACE}/.ci-old-contact-center" "${old_parent}/contact-center"
+          printf 'CC_ACCESS_OLD_ROOT=%s\n' "${old_parent}/contact-center" >> "$GITHUB_ENV"
       - name: Install addons and dependencies
         run: oca_install_addons
       - name: Test cumulative inbox access migration guards
         run: python -m unittest discover -s release_migrations/tests -p 'test_account_access_many2many.py'
+      - name: Rehearse native Contact Center access upgrade from installed version
+        shell: bash
+        timeout-minutes: 40
+        run: |
+          python release_migrations/native_access_upgrade_rehearsal.py \
+            --old-root "$CC_ACCESS_OLD_ROOT" \
+            --candidate-root "$GITHUB_WORKSPACE" \
+            --output "$GITHUB_WORKSPACE/.ci-access-upgrade"
+      - name: Upload native access upgrade evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Native access upgrade rehearsal - ${{ matrix.name }}
+          path: |
+            .ci-access-upgrade/*.json
+            .ci-access-upgrade/*.log
+          include-hidden-files: true
+          if-no-files-found: ignore
       - name: Check licenses
         run: manifestoo -d . check-licenses
       - name: Check development status

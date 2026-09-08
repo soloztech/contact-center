@@ -1,5 +1,6 @@
 import uuid
 
+from odoo import fields
 from odoo.exceptions import AccessError, ValidationError
 from odoo.tests.common import SavepointCase
 
@@ -494,6 +495,12 @@ class TestContactCenterAccessScope(SavepointCase):
                 [(2, record.id)],
                 [(6, 0, [True])],
                 [(4, -1)],
+                [(True, record.id)],
+                [(6.0, 0, record.ids)],
+                [("6", 0, record.ids)],
+                [fields.Command.create({"name": "Injected native"})],
+                [fields.Command.update(record.id, {"name": "Changed native"})],
+                [fields.Command.delete(record.id)],
             ):
                 with self.subTest(
                     field=field_name, commands=commands
@@ -505,6 +512,45 @@ class TestContactCenterAccessScope(SavepointCase):
         self.assertEqual(account.access_user_ids, self.maria)
         account.write({"access_user_ids": [(5, 0, 0)]})
         self.assertFalse(account.access_user_ids)
+
+    def test_native_field_commands_preserve_cumulative_access(self):
+        account = self.env["contact.center.account"].create(
+            {
+                "name": "Native commands %s" % uuid.uuid4(),
+                "company_id": self.env.company.id,
+                "platform": "whatsapp",
+                "access_user_ids": [fields.Command.set(self.joao.ids)],
+                "access_team_ids": [fields.Command.set(self.joao_team.ids)],
+            }
+        )
+        account.write(
+            {
+                "access_user_ids": [fields.Command.link(self.maria.id)],
+                "access_team_ids": [fields.Command.link(self.maria_team.id)],
+            }
+        )
+        self.assertEqual(
+            set(account.access_user_ids.ids), {self.joao.id, self.maria.id}
+        )
+        self.assertEqual(
+            set(account.access_team_ids.ids), {self.joao_team.id, self.maria_team.id}
+        )
+        account.write(
+            {
+                "access_user_ids": [fields.Command.unlink(self.joao.id)],
+                "access_team_ids": [fields.Command.unlink(self.joao_team.id)],
+            }
+        )
+        self.assertEqual(account.access_user_ids, self.maria)
+        self.assertEqual(account.access_team_ids, self.maria_team)
+        account.write(
+            {
+                "access_user_ids": [fields.Command.clear()],
+                "access_team_ids": [fields.Command.clear()],
+            }
+        )
+        self.assertFalse(account.access_user_ids)
+        self.assertFalse(account.access_team_ids)
 
     def test_team_context_defaults_cannot_grant_access_through_the_inverse(self):
         account = self.maria_inbox

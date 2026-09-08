@@ -146,7 +146,7 @@ class ContactCenterProviderConnection(models.Model):
             raise ValidationError(_("The activation direction is invalid."))
         blockers = []
         if not self.account_id._contact_center_access_is_ready():
-            blockers.append(_("inbox owner or access team has no valid attendant"))
+            blockers.append(_("inbox access users and teams have no valid attendant"))
         return blockers
 
     def _contact_center_assert_activation_ready(self, direction="inbound"):
