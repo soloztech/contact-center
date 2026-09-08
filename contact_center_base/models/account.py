@@ -242,6 +242,26 @@ class ContactCenterTeam(models.Model):
         ),
     ]
 
+    @api.model
+    def default_get(self, fields_list):
+        """The read-only inbox inverse must never apply relational defaults."""
+
+        if "account_ids" not in fields_list:
+            return super().default_get(fields_list)
+        field = self._fields["account_ids"]
+        saved_defaults = self.env["ir.default"].get_model_defaults(self._name)
+        if "default_account_ids" in self._context:
+            value = self._context["default_account_ids"]
+        elif "account_ids" in saved_defaults:
+            value = saved_defaults["account_ids"]
+        else:
+            value = field.default(self) if field.default else False
+        if value:
+            raise AccessError(_("Configure team access from the inbox."))
+        return super(
+            ContactCenterTeam, self.with_context(default_account_ids=[])
+        ).default_get(fields_list)
+
     @api.model_create_multi
     def create(self, vals_list):
         if "default_account_ids" in self.env.context or any(
@@ -948,6 +968,46 @@ class ContactCenterAccount(models.Model):
                 teams=teams,
             )
         return super().create(vals_list)
+
+    @api.model
+    def default_get(self, fields_list):
+        """Validate access defaults before the ORM can mutate related caches."""
+
+        access_fields = {"access_user_ids", "access_team_ids"}.intersection(fields_list)
+        if not access_fields:
+            return super().default_get(fields_list)
+        saved_defaults = self.env["ir.default"].get_model_defaults(self._name)
+        safe_context = {}
+        for name in access_fields:
+            key = "default_" + name
+            field = self._fields[name]
+            if key in self._context:
+                value = self._context[key]
+            elif name in saved_defaults:
+                value = saved_defaults[name]
+            elif field.default:
+                value = field.default(self)
+            else:
+                continue
+            if isinstance(value, models.BaseModel):
+                if value._name != field.comodel_name:
+                    raise ValidationError(_("Invalid inbox access default model."))
+                value = list(value._ids)
+            elif value is False or value is None:
+                value = []
+            if isinstance(value, (list, tuple)):
+                value = [
+                    fields.Command.link(item) if type(item) is int else item
+                    for item in value
+                ]
+            member_ids = _access_scope_command_ids([], value)
+            safe_context[key] = [fields.Command.set(sorted(member_ids))]
+        # Default normalization otherwise executes UPDATE commands against the
+        # related records' cache. Pass only the checked membership selection to
+        # native default_get, retaining its conversion of all unrelated fields.
+        return super(
+            ContactCenterAccount, self.with_context(**safe_context)
+        ).default_get(fields_list)
 
     @api.model
     def _contact_center_prepare_access_defaults(self, vals_list):

@@ -1,4 +1,6 @@
+import json
 import uuid
+from unittest.mock import patch
 
 from odoo import fields
 from odoo.exceptions import AccessError, ValidationError
@@ -582,6 +584,52 @@ class TestContactCenterAccessScope(SavepointCase):
         self.assertEqual(team.name, default_name)
         self.assertFalse(team.account_ids)
 
+    def test_team_default_get_cannot_mutate_the_readonly_inbox_inverse(self):
+        account = self.maria_inbox
+        original_name, original_teams = account.name, account.access_team_ids
+        model = self.env["contact.center.team"].with_user(self.owner_supervisor)
+        with self.assertRaisesRegex(
+            AccessError, "Configure team access from the inbox"
+        ), self.env.cr.savepoint():
+            model.with_context(
+                default_account_ids=[(1, account.id, {"name": "Unsafe inverse"})]
+            ).default_get(["account_ids"])
+        self.assertEqual(account.name, original_name)
+        self.assertEqual(account.access_team_ids, original_teams)
+
+        default = self.env["ir.default"].create(
+            {
+                "field_id": self.env["ir.model.fields"]
+                ._get(model._name, "account_ids")
+                .id,
+                "json_value": json.dumps([fields.Command.link(account.id)]),
+                "user_id": self.owner_supervisor.id,
+            }
+        )
+        try:
+            with self.assertRaisesRegex(
+                AccessError, "Configure team access from the inbox"
+            ), self.env.cr.savepoint():
+                model.default_get(["account_ids"])
+            with self.assertRaisesRegex(
+                AccessError, "Configure team access from the inbox"
+            ), self.env.cr.savepoint():
+                model.create(
+                    {
+                        "name": "Unsafe saved inverse %s" % uuid.uuid4(),
+                        "agent_ids": [fields.Command.set(self.owner_supervisor.ids)],
+                    }
+                )
+            defaults = model.with_context(
+                default_account_ids=False, default_name="Unrelated native default"
+            ).default_get(["account_ids", "name"])
+            self.assertEqual(defaults["account_ids"], [fields.Command.set([])])
+            self.assertEqual(defaults["name"], "Unrelated native default")
+            self.assertEqual(account.name, original_name)
+            self.assertEqual(account.access_team_ids, original_teams)
+        finally:
+            default.unlink()
+
     def test_account_context_defaults_use_membership_only_commands(self):
         for field_name, record in (
             ("access_user_ids", self.maria),
@@ -652,6 +700,80 @@ class TestContactCenterAccessScope(SavepointCase):
         self.assertGreater(
             self.outsider.contact_center_access_topology_revision, user_revision
         )
+
+    def test_default_get_rejects_context_and_stored_access_edits(self):
+        account_model = self.env["contact.center.account"]
+        for field_name, record in (
+            ("access_user_ids", self.maria),
+            ("access_team_ids", self.maria_team),
+        ):
+            original_name = record.name
+            commands = [(1, record.id, {"name": "Unsafe access default"})]
+            with self.subTest(field=field_name, source="context"):
+                with self.assertRaises(ValidationError), self.env.cr.savepoint():
+                    account_model.with_context(
+                        **{"default_" + field_name: commands}
+                    ).default_get([field_name])
+                self.assertEqual(record.name, original_name)
+
+            # Insert the stored JSON through ORM: ir.default.set itself converts
+            # values, which would obscure which boundary this test exercises.
+            default = self.env["ir.default"].create(
+                {
+                    "field_id": self.env["ir.model.fields"]
+                    ._get(account_model._name, field_name)
+                    .id,
+                    "json_value": json.dumps(commands),
+                    "user_id": self.env.uid,
+                }
+            )
+            try:
+                with self.subTest(field=field_name, source="ir.default"):
+                    with self.assertRaises(ValidationError), self.env.cr.savepoint():
+                        account_model.default_get([field_name])
+                    self.assertEqual(record.name, original_name)
+                    with self.assertRaises(ValidationError), self.env.cr.savepoint():
+                        account_model.create(
+                            {
+                                "name": "Invalid saved grant %s" % uuid.uuid4(),
+                                "platform": "whatsapp",
+                            }
+                        )
+                    self.assertEqual(record.name, original_name)
+            finally:
+                default.unlink()
+
+    def test_access_defaults_keep_native_shapes_and_explicit_precedence(self):
+        account_model = self.env["contact.center.account"]
+        field = account_model._fields["access_user_ids"]
+        for value in (self.maria.ids, self.maria, [fields.Command.link(self.maria.id)]):
+            with self.subTest(value=value), patch.object(
+                field, "default", lambda model: value
+            ):
+                defaults = account_model.default_get(["access_user_ids"])
+                self.assertEqual(
+                    defaults["access_user_ids"], [fields.Command.set(self.maria.ids)]
+                )
+                cleared = account_model.with_context(
+                    default_access_user_ids=False
+                ).default_get(["access_user_ids"])
+                self.assertEqual(cleared["access_user_ids"], [fields.Command.set([])])
+
+        original_name = self.maria.name
+        account = account_model.with_context(
+            default_access_user_ids=[(1, self.maria.id, {"name": "Ignored default"})],
+            default_name="Legitimate unrelated default",
+        ).create(
+            {
+                "platform": "whatsapp",
+                "access_user_ids": [],
+                "access_team_ids": [],
+            }
+        )
+        self.assertEqual(account.name, "Legitimate unrelated default")
+        self.assertFalse(account.access_user_ids)
+        self.assertFalse(account.access_team_ids)
+        self.assertEqual(self.maria.name, original_name)
 
     def test_default_auto_assignment_cannot_skip_scope_validation(self):
         with self.assertRaisesRegex(
