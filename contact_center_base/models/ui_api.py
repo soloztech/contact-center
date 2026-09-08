@@ -1400,6 +1400,10 @@ class ContactCenterUiApi(models.AbstractModel):
         effective_capabilities["view_attribution"] = bool(
             account and account._contact_center_user_can_view_attribution()
         )
+        can_view_inbox_access = self.env.user.has_group(
+            "contact_center_base.group_contact_center_supervisor"
+        )
+        effective_capabilities["view_inbox_access"] = can_view_inbox_access
         for operation in ("delete", "ignore"):
             effective_capabilities[operation + "_conversation"] = bool(
                 account
@@ -1519,18 +1523,26 @@ class ContactCenterUiApi(models.AbstractModel):
                 if conversation_type == "group"
                 else False
             ),
-            "access_teams": [
-                {"id": team.id, "name": team.name}
-                for team in channel.contact_center_access_team_ids.sorted(
-                    key=lambda item: (item.name, item.id)
-                )
-            ],
-            "access_users": [
-                {"id": user.id, "name": user.display_name}
-                for user in channel.contact_center_access_user_ids.sorted(
-                    key=lambda item: (item.name, item.id)
-                )
-            ],
+            "access_teams": (
+                [
+                    {"id": team.id, "name": team.name}
+                    for team in channel.contact_center_access_team_ids.sorted(
+                        key=lambda item: (item.name, item.id)
+                    )
+                ]
+                if can_view_inbox_access
+                else []
+            ),
+            "access_users": (
+                [
+                    {"id": user.id, "name": user.display_name}
+                    for user in channel.contact_center_access_user_ids.sorted(
+                        key=lambda item: (item.name, item.id)
+                    )
+                ]
+                if can_view_inbox_access
+                else []
+            ),
             "responsible": (
                 {
                     "id": channel.contact_center_responsible_id.id,

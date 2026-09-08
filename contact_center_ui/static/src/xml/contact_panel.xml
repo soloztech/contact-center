@@ -638,7 +638,10 @@
                             class="mb-0"
                         >Novas mensagens não serão registradas. O histórico existente será mantido.</p>
                     </div>
-                    <div class="cc-detail-field">
+                    <div
+                        t-if="conversation.capabilities &amp;&amp; conversation.capabilities.view_inbox_access === true"
+                        class="cc-detail-field"
+                    >
                         <span>Acesso da caixa</span>
                         <span
                             class="cc-detail-field__value cc-detail-field__value--access"
@@ -669,7 +672,7 @@
                     <label class="cc-detail-field">
                         <span>Responsável</span>
                         <select
-                            t-att-disabled="!store.capabilities.manage_assignment"
+                            t-if="store.capabilities.manage_assignment"
                             t-on-change="onResponsibleChange"
                         >
                             <option
@@ -684,6 +687,13 @@
                                 t-att-selected="conversation.responsible &amp;&amp; conversation.responsible.id === agent.id"
                             ><t t-esc="agent.name" /></option>
                         </select>
+                        <span t-else="" class="cc-detail-field__value">
+                            <t
+                                t-if="conversation.responsible"
+                                t-esc="conversation.responsible.name"
+                            />
+                            <t t-else="">Sem responsável</t>
+                        </span>
                     </label>
                 </section>
 
