@@ -302,7 +302,8 @@ class TestConversationLifecycleAndPreference(SavepointCase):
         self.assertTrue(page["has_more"])
         self.assertEqual(page["next_before_message_id"], messages[1].id)
         self.assertTrue(page["has_more_forward"])
-        self.assertEqual(page["next_after_message_id"], messages[2].id)
+        self.assertEqual(page["next_after_chronological_message_id"], messages[2].id)
+        self.assertFalse(page["next_after_message_id"])
         member.invalidate_recordset(["seen_message_id"])
         self.assertEqual(member.seen_message_id, seen_before)
 
@@ -312,6 +313,102 @@ class TestConversationLifecycleAndPreference(SavepointCase):
                 before_message_id=messages[1].id,
                 anchor_message_id=messages[2].id,
             )
+
+    def test_backfilled_history_pages_by_date_with_independent_ingestion_cursor(self):
+        channel, _binding, guest = self._conversation("backfill")
+        ui = self.env["contact.center.ui.api"].with_user(self.agent_a)
+        current = self._inbound(channel, guest, "Current", "2026-09-08 12:00:00")
+        oldest = self._inbound(channel, guest, "Imported oldest", "2026-09-06 12:00:00")
+        middle = self._inbound(channel, guest, "Imported middle", "2026-09-07 12:00:00")
+        self.assertLess(current.id, oldest.id)
+        self.assertLess(oldest.id, middle.id)
+
+        page = ui.get_timeline(channel.id, limit=1)
+        self.assertEqual([item["message_id"] for item in page["items"]], current.ids)
+        self.assertEqual(page["latest_received_message_id"], middle.id)
+        refreshed = ui.get_timeline(
+            channel.id, limit=1, known_received_message_id=current.id
+        )
+        self.assertTrue(refreshed["has_unloaded_received"])
+        caught_up = ui.get_timeline(
+            channel.id, limit=1, known_received_message_id=middle.id
+        )
+        self.assertFalse(caught_up["has_unloaded_received"])
+        page = ui.get_timeline(channel.id, before_message_id=current.id, limit=1)
+        self.assertEqual([item["message_id"] for item in page["items"]], middle.ids)
+        page = ui.get_timeline(channel.id, before_message_id=middle.id, limit=1)
+        self.assertEqual([item["message_id"] for item in page["items"]], oldest.ids)
+        self.assertFalse(page["has_more"])
+
+        anchor = ui.get_timeline(channel.id, anchor_message_id=oldest.id, limit=2)
+        self.assertEqual(
+            [item["message_id"] for item in anchor["items"]], [oldest.id, middle.id]
+        )
+        page = ui.get_timeline(
+            channel.id,
+            after_chronological_message_id=anchor[
+                "next_after_chronological_message_id"
+            ],
+            limit=2,
+        )
+        self.assertEqual([item["message_id"] for item in page["items"]], current.ids)
+        self.assertFalse(page["has_more_forward"])
+        delta = ui.get_timeline(channel.id, after_message_id=current.id, limit=2)
+        self.assertEqual(
+            [item["message_id"] for item in delta["items"]], [oldest.id, middle.id]
+        )
+        self.assertEqual(delta["next_after_message_id"], middle.id)
+        self.assertFalse(delta["next_after_chronological_message_id"])
+        self.assertEqual(channel.contact_center_last_message_id, current)
+        self.assertEqual(channel.contact_center_last_message_at, current.date)
+
+    def test_backfilled_history_unread_and_seen_use_chronological_position(self):
+        channel, _binding, guest = self._conversation("backfill-read")
+        ui = self.env["contact.center.ui.api"].with_user(self.agent_a)
+        current = self._inbound(channel, guest, "Current", "2026-09-08 12:00:00")
+        oldest = self._inbound(channel, guest, "Oldest", "2026-09-06 12:00:00")
+        middle = self._inbound(channel, guest, "Middle", "2026-09-07 12:00:00")
+        member = channel.with_user(
+            self.agent_a
+        )._contact_center_member_for_current_user()
+        ui.mark_seen(channel.id, oldest.id)
+        detail = ui.get_conversation(channel.id)["item"]
+        self.assertEqual(detail["first_unread_message_id"], middle.id)
+        self.assertEqual(detail["unread_count"], 2)
+        listed = next(
+            item
+            for item in ui.list_conversations()["items"]
+            if item["channel_id"] == channel.id
+        )
+        self.assertEqual(listed["first_unread_message_id"], middle.id)
+        ui.mark_seen(channel.id, middle.id)
+        ui.mark_seen(channel.id, current.id)
+        ui.mark_seen(channel.id, oldest.id)
+        member.invalidate_recordset()
+        self.assertEqual(member.seen_message_id, current)
+        self.assertEqual(member.fetched_message_id, current)
+        detail = ui.get_conversation(channel.id)["item"]
+        self.assertFalse(detail["first_unread_message_id"])
+        self.assertEqual(detail["unread_count"], 0)
+
+        other_ui = self.env["contact.center.ui.api"].with_user(self.agent_b)
+        other_ui.mark_seen(channel.id)
+        other = channel.with_user(
+            self.agent_b
+        )._contact_center_member_for_current_user()
+        self.assertEqual(other.seen_message_id, current)
+
+        # Guest reconciliation must not regress the read cursor to a backfill
+        # merely because it received a larger local message ID.
+        guest_member = channel.channel_member_ids.filtered("guest_id")[:1]
+        guest_member.with_context(
+            contact_center_membership_token=CONTACT_CENTER_MEMBERSHIP_TOKEN
+        ).write({"seen_message_id": oldest.id, "fetched_message_id": oldest.id})
+        merge_values = self.env[
+            "contact.center.identity"
+        ]._contact_center_merge_member_operational_values(member, guest_member)
+        self.assertNotIn("seen_message_id", merge_values)
+        self.assertNotIn("fetched_message_id", merge_values)
 
     def test_muting_suppresses_attention_but_not_realtime_delivery(self):
         channel, _binding, _guest = self._conversation("mute")

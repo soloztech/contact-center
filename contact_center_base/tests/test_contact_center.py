@@ -3208,7 +3208,7 @@ class TestContactCenter(SavepointCase):
             {
                 "segment": "activity",
                 "last_activity_at": fields.Datetime.to_string(
-                    dated_channels[1][1].create_date.replace(microsecond=0)
+                    dated_channels[1][1].date
                 ),
                 "channel_id": dated_channels[1][0].id,
             },
@@ -3275,7 +3275,7 @@ class TestContactCenter(SavepointCase):
         )
         self.assertEqual(
             dated_channels[2][0].contact_center_last_message_at,
-            dated_channels[2][1].create_date.replace(microsecond=0),
+            dated_channels[2][1].date,
         )
         delayed = (
             dated_channels[2][0]
@@ -3295,11 +3295,11 @@ class TestContactCenter(SavepointCase):
         )
         self.assertEqual(
             dated_channels[2][0].contact_center_last_message_id,
-            delayed,
+            dated_channels[2][1],
         )
         self.assertEqual(
             dated_channels[2][0].contact_center_last_message_at,
-            delayed.create_date.replace(microsecond=0),
+            dated_channels[2][1].date,
         )
 
     def test_ui_timeline_returns_plain_text_and_stable_cursor_pages(self):

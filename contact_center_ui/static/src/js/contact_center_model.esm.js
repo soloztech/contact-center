@@ -1447,6 +1447,23 @@ export function validateEnvelope(payload) {
 }
 
 /**
+ * Compare presentation positions independently from ingestion IDs.
+ *
+ * @param {Object} left first message DTO
+ * @param {Object} right second message DTO
+ * @returns {Number} chronological ordering comparison
+ */
+export function compareTimelineItems(left, right) {
+    const leftDate = typeof left.date === "string" ? left.date : "9999-12-31 23:59:59";
+    const rightDate =
+        typeof right.date === "string" ? right.date : "9999-12-31 23:59:59";
+    if (leftDate !== rightDate) {
+        return leftDate < rightDate ? -1 : 1;
+    }
+    return left.message_id - right.message_id;
+}
+
+/**
  * Merge timeline pages or live updates without mutating either input.
  *
  * When prepending an older page, existing items win on an overlap because they
@@ -1457,7 +1474,7 @@ export function validateEnvelope(payload) {
  * @param {Array<Object>} incoming older page or live updates
  * @param {Object} options merge options
  * @param {Boolean} options.prepend whether incoming contains an older page
- * @returns {Array<Object>} normalized items sorted by message ID
+ * @returns {Array<Object>} normalized items sorted by date and then message ID
  */
 export function mergeTimelineItems(existing, incoming, {prepend = false} = {}) {
     const currentItems = Array.isArray(existing) ? existing : [];
@@ -1488,7 +1505,7 @@ export function mergeTimelineItems(existing, incoming, {prepend = false} = {}) {
     return Array.from(byMessageId.values())
         .map(normalizeTimelineItem)
         .filter(Boolean)
-        .sort((left, right) => left.message_id - right.message_id);
+        .sort(compareTimelineItems);
 }
 
 export function deliveryMeta(state) {

@@ -3,6 +3,7 @@
 import {Component, useEffect, useRef, useState} from "@odoo/owl";
 import {MessageContent, controlTimelineMessageMeta} from "./message_content.esm";
 import {
+    compareTimelineItems,
     conversationUiPolicy,
     initials,
     messageActionEnabled,
@@ -183,6 +184,8 @@ export function timelineScrollDecision({
     phase,
     preserveScroll,
     previousLastMessageId,
+    lastMessage,
+    previousLastMessage,
     wasNearBottom,
 }) {
     if (phase !== "ready" || preserveScroll) {
@@ -191,7 +194,11 @@ export function timelineScrollDecision({
     if (channelChanged) {
         return "follow";
     }
-    if (lastMessageId <= previousLastMessageId) {
+    const hasNewTail =
+        lastMessage && previousLastMessage
+            ? compareTimelineItems(lastMessage, previousLastMessage) > 0
+            : lastMessageId > previousLastMessageId;
+    if (!hasNewTail) {
         return "preserve";
     }
     return wasNearBottom ? "follow" : "notify";
@@ -218,6 +225,7 @@ export class ConversationTimeline extends Component {
         this.followLatest = true;
         this.observedChannelId = false;
         this.observedLastMessageId = 0;
+        this.observedLastMessage = false;
         this.pendingInitialPositionChannelId = false;
         useEffect(
             () => this.synchronizeScroll(),
@@ -531,11 +539,15 @@ export class ConversationTimeline extends Component {
         const channelId = this.state.selectedChannelId;
         const channelChanged = channelId !== this.observedChannelId;
         const lastMessageId = this.latestMessageId;
+        const lastMessage =
+            this.state.messages[this.state.messages.length - 1] || false;
         if (channelChanged) {
             this.observedChannelId = channelId;
             this.pendingInitialPositionChannelId = channelId;
             this.observedLastMessageId =
                 this.state.timelinePhase === "ready" ? lastMessageId : 0;
+            this.observedLastMessage =
+                this.state.timelinePhase === "ready" ? lastMessage : false;
             this.followLatest = true;
             this.ui.unseenMessages = 0;
             this.ui.awayFromLatest = false;
@@ -550,28 +562,34 @@ export class ConversationTimeline extends Component {
             this.pendingInitialPositionChannelId === channelId
         ) {
             this.observedLastMessageId = lastMessageId;
+            this.observedLastMessage = lastMessage;
             this.scrollToInitialPosition();
             return;
         }
 
         const previousLastMessageId = this.observedLastMessageId;
+        const previousLastMessage = this.observedLastMessage;
         const decision = timelineScrollDecision({
             channelChanged,
             lastMessageId,
             phase: this.state.timelinePhase,
             preserveScroll: this.preserveScroll,
             previousLastMessageId,
+            lastMessage,
+            previousLastMessage,
             wasNearBottom: this.followLatest,
         });
         if (this.state.timelinePhase === "ready") {
             this.observedLastMessageId = lastMessageId;
+            this.observedLastMessage = lastMessage;
         }
         if (decision === "follow") {
             this.scrollToBottom({markSeen: !this.state.timelineHasMoreForward});
         } else if (decision === "notify") {
             const added = this.state.messages.filter(
                 (message) =>
-                    message.message_id > previousLastMessageId &&
+                    (!previousLastMessage ||
+                        compareTimelineItems(message, previousLastMessage) > 0) &&
                     !(
                         message.origin === "agent" &&
                         message.author &&

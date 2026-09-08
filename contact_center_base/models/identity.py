@@ -3,6 +3,7 @@ import datetime
 from odoo import _, api, fields, models
 from odoo.exceptions import AccessError, UserError, ValidationError
 
+from ..services.timeline import message_chronology_key
 from ..services.tokens import (
     CONTACT_CENTER_ATTRIBUTION_TOKEN,
     CONTACT_CENTER_MEMBERSHIP_TOKEN,
@@ -723,7 +724,10 @@ class ContactCenterIdentity(models.Model):
         for field_name in ("fetched_message_id", "seen_message_id"):
             current = survivor[field_name]
             incoming = retired[field_name]
-            if incoming and (not current or incoming.id > current.id):
+            if incoming and (
+                not current
+                or message_chronology_key(incoming) > message_chronology_key(current)
+            ):
                 values[field_name] = incoming.id
         for field_name in ("last_interest_dt", "last_seen_dt"):
             current = survivor[field_name]

@@ -16,6 +16,7 @@ from ..services.dto import (
     EventDTO,
     MediaDTO,
 )
+from ..services.timeline import message_chronology_key
 from ..services.tokens import CONTACT_CENTER_MEMBERSHIP_TOKEN
 
 _logger = logging.getLogger(__name__)
@@ -129,18 +130,18 @@ class ContactCenterApplication(models.AbstractModel):
         channel.invalidate_recordset(
             ["contact_center_last_message_id", "contact_center_last_message_at"]
         )
-        arrival_date = fields.Datetime.to_datetime(
-            message.create_date or fields.Datetime.now()
-        ).replace(microsecond=0)
         current_message = channel.contact_center_last_message_id
-        advances_cursor = not current_message or message.id > current_message.id
+        advances_cursor = not current_message or message_chronology_key(
+            message
+        ) > message_chronology_key(current_message)
         if advances_cursor:
             channel.sudo().with_context(
                 contact_center_membership_token=CONTACT_CENTER_MEMBERSHIP_TOKEN
             ).write(
                 {
                     "contact_center_last_message_id": message.id,
-                    "contact_center_last_message_at": arrival_date,
+                    "contact_center_last_message_at": message.date
+                    or fields.Datetime.now(),
                 }
             )
         payload = {"message_id": message.id}

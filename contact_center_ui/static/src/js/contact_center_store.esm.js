@@ -2,6 +2,7 @@
 
 import {
     CONNECTION_HEALTH_EVENT_TYPE,
+    compareTimelineItems,
     contactCenterNotifications,
     conversationPreference,
     conversationStateMeta,
@@ -92,7 +93,7 @@ function timelineQuery(mode, limit, beforeMessageId, afterMessageId, anchorMessa
         limit,
     };
     if (mode === "newer") {
-        query.after_message_id = afterMessageId;
+        query.after_chronological_message_id = afterMessageId;
     }
     if (anchorMessageId) {
         query.anchor_message_id = anchorMessageId;
@@ -707,7 +708,8 @@ function forwardTimelinePage(payload, afterMessageId) {
     if (
         items.some((item) => item.message_id <= afterMessageId) ||
         (items.length &&
-            payload.next_after_message_id !== items[items.length - 1].message_id) ||
+            payload.next_after_message_id !==
+                Math.max(...items.map((item) => item.message_id))) ||
         (!items.length && payload.next_after_message_id !== false) ||
         (payload.has_more_forward && !items.length)
     ) {
@@ -900,7 +902,7 @@ export class ContactCenterStore {
             timelineHasMore: false,
             nextBeforeMessageId: false,
             timelineHasMoreForward: false,
-            nextAfterMessageId: false,
+            nextAfterChronologicalMessageId: false,
             timelineFirstUnreadMessageId: false,
             attribution: {
                 channelId: false,
@@ -1663,7 +1665,7 @@ export class ContactCenterStore {
         this.state.timelineHasMore = false;
         this.state.nextBeforeMessageId = false;
         this.state.timelineHasMoreForward = false;
-        this.state.nextAfterMessageId = false;
+        this.state.nextAfterChronologicalMessageId = false;
         this.state.timelineFirstUnreadMessageId = false;
         this.state.timelinePhase = "idle";
         this.state.replyTo = false;
@@ -1985,7 +1987,7 @@ export class ContactCenterStore {
             this.state.timelineHasMore = false;
             this.state.nextBeforeMessageId = false;
             this.state.timelineHasMoreForward = false;
-            this.state.nextAfterMessageId = false;
+            this.state.nextAfterChronologicalMessageId = false;
             this.state.timelineFirstUnreadMessageId = false;
             this.state.timelinePhase = "idle";
             this.resetAttribution(channelId);
@@ -2500,6 +2502,12 @@ export class ContactCenterStore {
         this.timelineContiguousCursor = false;
     }
 
+    receivedTimelineCursor(channelId) {
+        return this.timelineContiguousChannelId === channelId
+            ? this.timelineContiguousCursor
+            : false;
+    }
+
     advanceTimelineContinuity(channelId, messageId) {
         if (!Number.isSafeInteger(messageId) || messageId <= 0) {
             return;
@@ -2530,29 +2538,29 @@ export class ContactCenterStore {
     updateTimelineContinuityAfterPage({
         mode,
         channelId,
-        latestIncoming,
+        latestReceivedMessageId,
         reanchorLatest,
         refreshHasOverlap,
         hasMore,
     }) {
         if (mode === "reset" || reanchorLatest) {
             this.resetTimelineContinuity();
-            if (latestIncoming) {
-                this.advanceTimelineContinuity(channelId, latestIncoming.message_id);
+            if (latestReceivedMessageId) {
+                this.advanceTimelineContinuity(channelId, latestReceivedMessageId);
             }
             return;
         }
-        if (!latestIncoming) {
+        if (!latestReceivedMessageId) {
             return;
         }
         if (mode === "older") {
             if (this.timelineContiguousChannelId !== channelId) {
-                this.advanceTimelineContinuity(channelId, latestIncoming.message_id);
+                this.advanceTimelineContinuity(channelId, latestReceivedMessageId);
             }
             return;
         }
         if (refreshHasOverlap || !hasMore) {
-            this.advanceTimelineContinuity(channelId, latestIncoming.message_id);
+            this.advanceTimelineContinuity(channelId, latestReceivedMessageId);
         }
     }
 
@@ -2573,13 +2581,33 @@ export class ContactCenterStore {
     }
 
     applyNewerTimelinePage(payload, incomingPage, existing, channelId) {
+        const cursor = existing.find(
+            (item) => item.message_id === this.state.nextAfterChronologicalMessageId
+        );
+        const last = incomingPage[incomingPage.length - 1];
+        if (
+            !cursor ||
+            typeof payload.has_more_forward !== "boolean" ||
+            incomingPage.some((item) => compareTimelineItems(item, cursor) <= 0) ||
+            payload.next_after_chronological_message_id !==
+                (last ? last.message_id : false) ||
+            (payload.has_more_forward && !last)
+        ) {
+            throw new TypeError("O cursor cronológico de mensagens é inválido.");
+        }
         this.state.messages = mergeTimelineItems(existing, incomingPage, {
             prepend: false,
         });
         this.state.timelineChannelId = channelId;
-        this.advanceTimelineContinuity(channelId, payload.next_after_message_id);
+        if (!payload.has_more_forward) {
+            this.advanceTimelineContinuity(
+                channelId,
+                payload.latest_received_message_id
+            );
+        }
         this.state.timelineHasMoreForward = Boolean(payload.has_more_forward);
-        this.state.nextAfterMessageId = payload.next_after_message_id || false;
+        this.state.nextAfterChronologicalMessageId =
+            payload.next_after_chronological_message_id || false;
         this.state.timelinePhase = "ready";
         this.reconcileReplySelection();
     }
@@ -2593,7 +2621,8 @@ export class ContactCenterStore {
             return;
         }
         this.state.timelineHasMoreForward = Boolean(payload.has_more_forward);
-        this.state.nextAfterMessageId = payload.next_after_message_id || false;
+        this.state.nextAfterChronologicalMessageId =
+            payload.next_after_chronological_message_id || false;
         this.state.timelineFirstUnreadMessageId =
             Number.isSafeInteger(payload.anchor_message_id) &&
             payload.anchor_message_id > 0
@@ -2637,11 +2666,15 @@ export class ContactCenterStore {
             });
         }
         this.state.timelineChannelId = channelId;
-        const latestIncoming = incomingPage[incomingPage.length - 1];
+        const latestReceivedMessageId = Number.isSafeInteger(
+            payload.latest_received_message_id
+        )
+            ? payload.latest_received_message_id
+            : Math.max(0, ...incomingPage.map((item) => item.message_id));
         this.updateTimelineContinuityAfterPage({
             mode,
             channelId,
-            latestIncoming,
+            latestReceivedMessageId,
             reanchorLatest,
             refreshHasOverlap,
             hasMore: Boolean(payload.has_more),
@@ -2669,7 +2702,12 @@ export class ContactCenterStore {
         if (this.timelineForwardChannelId === channelId && this.timelineForwardCursor) {
             return true;
         }
-        return this.timelineHeadHasContiguousGap(payload, channelId);
+        // A delayed or imported message can arrive behind the visible date
+        // window. Catch it by ingestion ID even when the newest page overlaps.
+        return (
+            payload.has_unloaded_received === true ||
+            this.timelineHeadHasContiguousGap(payload, channelId)
+        );
     }
 
     timelineHeadHasContiguousGap(payload, channelId) {
@@ -2691,7 +2729,11 @@ export class ContactCenterStore {
     }
 
     applyForwardTimelineItems(items, channelId, nextAfterMessageId) {
-        this.state.messages = mergeTimelineItems(this.state.messages, items, {
+        const oldest = this.state.messages[0];
+        const visibleItems = oldest
+            ? items.filter((item) => compareTimelineItems(item, oldest) >= 0)
+            : items;
+        this.state.messages = mergeTimelineItems(this.state.messages, visibleItems, {
             prepend: false,
         });
         this.state.timelineChannelId = channelId;
@@ -2740,6 +2782,7 @@ export class ContactCenterStore {
         const payload = await this.call("get_timeline", [channelId], {
             before_message_id: false,
             limit,
+            known_received_message_id: this.receivedTimelineCursor(channelId),
         });
         validateEnvelope(payload);
         if (!this.isCurrentTimelineRequest(request, channelId)) {
@@ -2880,9 +2923,13 @@ export class ContactCenterStore {
                 mode,
                 limit,
                 this.state.nextBeforeMessageId,
-                this.state.nextAfterMessageId,
+                this.state.nextAfterChronologicalMessageId,
                 firstUnreadMessageId
             );
+            if (mode === "refresh_latest") {
+                query.known_received_message_id =
+                    this.receivedTimelineCursor(channelId);
+            }
             const payload = await this.call("get_timeline", [channelId], query);
             validateEnvelope(payload);
             if (!this.isCurrentTimelineRequest(request, channelId)) {
@@ -2920,7 +2967,7 @@ export class ContactCenterStore {
         if (
             this.state.timelinePhase === "loading_newer" ||
             !this.state.timelineHasMoreForward ||
-            !this.state.nextAfterMessageId
+            !this.state.nextAfterChronologicalMessageId
         ) {
             return Promise.resolve(false);
         }
@@ -2980,9 +3027,12 @@ export class ContactCenterStore {
                 return false;
             }
             const latest = this.state.messages[this.state.messages.length - 1];
+            const seen = this.state.messages.find(
+                (item) => item.message_id === messageId
+            );
             if (
                 !this.state.timelineHasMoreForward &&
-                (!latest || latest.message_id <= messageId)
+                (!latest || (seen && compareTimelineItems(latest, seen) <= 0))
             ) {
                 const conversation = this.selectedConversation;
                 if (conversation) {

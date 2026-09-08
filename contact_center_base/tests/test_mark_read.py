@@ -151,7 +151,8 @@ class TestMarkRead(SavepointCase):
         )
         return channel, binding, guest
 
-    def _inbound_message(self, channel, binding, guest, external_id=None):
+    def _inbound_message(self, channel, binding, guest, external_id=None, date=None):
+        message_values = {"date": date} if date else {}
         message = channel._contact_center_post(
             origin="inbound",
             body="Inbound read target",
@@ -159,6 +160,7 @@ class TestMarkRead(SavepointCase):
             subtype_xmlid="mail.mt_comment",
             author_guest_id=guest.id,
             partner_ids=[],
+            **message_values,
         )
         target = (
             self.env["contact.center.message.binding"]
@@ -281,6 +283,174 @@ class TestMarkRead(SavepointCase):
                 for command in outboxes
             ],
             [["watermark-read-1"], ["watermark-read-2"]],
+        )
+
+    def test_read_batches_follow_dates_when_history_has_higher_ids(self):
+        self.account.mark_read_enabled = True
+        channel, binding, guest = self._conversation()
+        newer = self._inbound_message(
+            channel,
+            binding,
+            guest,
+            external_id="chronology-newer",
+            date="2026-09-08 12:00:00",
+        )
+        older = self._inbound_message(
+            channel,
+            binding,
+            guest,
+            external_id="chronology-older",
+            date="2026-09-07 12:00:00",
+        )
+        self.assertGreater(older[0].id, newer[0].id)
+
+        self._mark_seen(channel, older[0])
+        self._mark_seen(channel, newer[0])
+        repeated = self._mark_seen(channel, older[0])
+
+        outboxes = (
+            self.env["contact.center.outbox.command"]
+            .sudo()
+            .search([("channel_binding_id", "=", binding.id)], order="id")
+        )
+        self.assertEqual(repeated["message_id"], newer[0].id)
+        self.assertEqual(
+            [row.command_json["options"]["external_message_ids"] for row in outboxes],
+            [["chronology-older"], ["chronology-newer"]],
+        )
+        self.assertEqual(
+            self.env["contact.center.application"]._mark_read_watermark_message_id(
+                binding, self.connection
+            ),
+            newer[0].id,
+        )
+        # Dispatch validation must use the same ordering as persisted batches.
+        for outbox in outboxes:
+            outbox._process_one()
+            self.assertEqual(outbox.state, "done")
+
+    def test_imported_older_message_does_not_advance_read_watermark(self):
+        self.account.mark_read_enabled = True
+        channel, binding, guest = self._conversation()
+        newer = self._inbound_message(
+            channel,
+            binding,
+            guest,
+            external_id="already-read-newer",
+            date="2026-09-08 12:00:00",
+        )
+        self._mark_seen(channel, newer[0])
+        older = self._inbound_message(
+            channel,
+            binding,
+            guest,
+            external_id="imported-older",
+            date="2026-09-07 12:00:00",
+        )
+        self.assertGreater(older[0].id, newer[0].id)
+
+        self._mark_seen(channel, newer[0])
+
+        outboxes = (
+            self.env["contact.center.outbox.command"]
+            .sudo()
+            .search([("channel_binding_id", "=", binding.id)])
+        )
+        self.assertEqual(len(outboxes), 1)
+        self.assertEqual(outboxes.target_message_binding_id, newer[1])
+        self.assertEqual(
+            outboxes.command_json["options"]["external_message_ids"],
+            ["already-read-newer"],
+        )
+
+    def test_read_batch_order_and_limit_use_chronological_keys(self):
+        self.account.mark_read_enabled = True
+        channel, binding, guest = self._conversation()
+        rows = [
+            self._inbound_message(
+                channel,
+                binding,
+                guest,
+                external_id="chronology-batch-%s" % day,
+                date="2026-09-%02d 12:00:00" % day,
+            )
+            for day in (8, 7, 6)
+        ]
+        newer, middle, older = rows
+        targets = self.env["contact.center.application"]._mark_read_targets(
+            binding,
+            self.connection,
+            after_message_id=older[0].id,
+            through_message_id=newer[0].id,
+            limit=1,
+        )
+        self.assertEqual(targets, middle[1])
+
+        self._mark_seen(channel, newer[0])
+
+        outbox = (
+            self.env["contact.center.outbox.command"]
+            .sudo()
+            .search([("channel_binding_id", "=", binding.id)])
+        )
+        self.assertEqual(len(outbox), 1)
+        self.assertEqual(
+            outbox.command_json["options"]["external_message_ids"],
+            ["chronology-batch-6", "chronology-batch-7", "chronology-batch-8"],
+        )
+        self.assertEqual(outbox.target_message_binding_id, newer[1])
+        outbox._process_one()
+        self.assertEqual(outbox.state, "done")
+
+    def test_terminal_gap_is_revived_by_date_instead_of_message_id(self):
+        self.account.mark_read_enabled = True
+        channel, binding, guest = self._conversation()
+        rows = [
+            self._inbound_message(
+                channel,
+                binding,
+                guest,
+                external_id="chronology-gap-%s" % day,
+                date="2026-09-%02d 12:00:00" % day,
+            )
+            for day in (8, 7, 6)
+        ]
+        newer, middle, older = rows
+        for message, _target in reversed(rows):
+            self._mark_seen(channel, message)
+        outboxes = (
+            self.env["contact.center.outbox.command"]
+            .sudo()
+            .search([("channel_binding_id", "=", binding.id)], order="id")
+        )
+        self.assertEqual(len(outboxes), 3)
+        first_batch, terminal_batch, later_batch = outboxes
+        first_batch.write({"state": "done"})
+        terminal_batch.write({"state": "dead", "processed_at": fields.Datetime.now()})
+        later_batch.write({"state": "done"})
+        terminal_key = terminal_batch.outbox_idempotency_key
+        terminal_payload = terminal_batch.command_json
+        application = self.env["contact.center.application"]
+        self.assertEqual(
+            application._mark_read_progress_message_ids(binding, self.connection),
+            (older[0].id, middle[0].id, terminal_batch.id),
+        )
+
+        self._mark_seen(channel, newer[0])
+
+        self.assertEqual(terminal_batch.state, "pending")
+        self.assertEqual(terminal_batch.outbox_idempotency_key, terminal_key)
+        self.assertEqual(terminal_batch.command_json, terminal_payload)
+        self.assertEqual(later_batch.state, "done")
+        self.assertEqual(
+            application._mark_read_watermark_message_id(binding, self.connection),
+            newer[0].id,
+        )
+        self.assertEqual(
+            self.env["contact.center.outbox.command"]
+            .sudo()
+            .search_count([("channel_binding_id", "=", binding.id)]),
+            3,
         )
 
     def test_group_seen_never_creates_direct_read_command(self):

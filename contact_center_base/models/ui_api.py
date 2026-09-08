@@ -17,6 +17,7 @@ from ..services.media import (
     validate_provider_recorded_audio_capability,
 )
 from ..services.structured_content import outbound_structured_capabilities
+from ..services.timeline import chronology_domain, message_chronology_key
 from ..services.tokens import CONTACT_CENTER_MEMBERSHIP_TOKEN
 
 
@@ -216,11 +217,14 @@ class ContactCenterUiApi(models.AbstractModel):
         self._flush_first_unread_dependencies()
         self.env.cr.execute(
             """
-                SELECT MIN(message.id)
+                SELECT message.id
                   FROM mail_message AS message
+             LEFT JOIN mail_message AS seen ON seen.id = %s
                  WHERE message.model = 'mail.channel'
                    AND message.res_id = %s
-                   AND message.id > %s
+                   AND (seen.id IS NULL OR
+                       (COALESCE(message.date, '9999-12-31 23:59:59'::timestamp), message.id)
+                       > (COALESCE(seen.date, '9999-12-31 23:59:59'::timestamp), seen.id))
                    AND message.message_type NOT IN (
                        'notification', 'user_notification'
                    )
@@ -229,16 +233,21 @@ class ContactCenterUiApi(models.AbstractModel):
                          FROM contact_center_internal_note_request AS note_request
                         WHERE note_request.message_id = message.id
                    )
+              ORDER BY message.date, message.id
+                 LIMIT 1
             """,
-            [channel.id, member.seen_message_id.id or 0],
+            [member.seen_message_id.id or 0, channel.id],
         )
-        return self.env.cr.fetchone()[0] or False
+        row = self.env.cr.fetchone()
+        return row[0] if row else False
 
     @api.model
     def _flush_first_unread_dependencies(self):
         """Make the unread anchor agree with the operational unread counter."""
 
-        self.env["mail.message"].flush_model(["model", "res_id", "message_type"])
+        self.env["mail.message"].flush_model(
+            ["model", "res_id", "message_type", "date"]
+        )
         self.env["contact.center.internal.note.request"].flush_model(["message_id"])
 
     @api.model
@@ -1888,13 +1897,17 @@ class ContactCenterUiApi(models.AbstractModel):
             }
             self.env.cr.execute(
                 """
-                    SELECT scoped.channel_id, MIN(message.id)
+                    SELECT DISTINCT ON (scoped.channel_id)
+                           scoped.channel_id, message.id
                       FROM mail_message AS message
                       JOIN unnest(%s::int[], %s::int[])
                         AS scoped(channel_id, seen_message_id)
                         ON message.res_id = scoped.channel_id
-                       AND message.id > scoped.seen_message_id
+                 LEFT JOIN mail_message AS seen ON seen.id = scoped.seen_message_id
                      WHERE message.model = 'mail.channel'
+                       AND (seen.id IS NULL OR
+                           (COALESCE(message.date, '9999-12-31 23:59:59'::timestamp), message.id)
+                           > (COALESCE(seen.date, '9999-12-31 23:59:59'::timestamp), seen.id))
                        AND message.message_type NOT IN (
                            'notification', 'user_notification'
                        )
@@ -1903,7 +1916,7 @@ class ContactCenterUiApi(models.AbstractModel):
                              FROM contact_center_internal_note_request AS note_request
                             WHERE note_request.message_id = message.id
                        )
-                  GROUP BY scoped.channel_id
+                  ORDER BY scoped.channel_id, message.date, message.id
                 """,
                 [
                     list(seen_by_channel),
@@ -2169,8 +2182,10 @@ class ContactCenterUiApi(models.AbstractModel):
         limit=50,
         after_message_id=None,
         anchor_message_id=None,
+        after_chronological_message_id=None,
+        known_received_message_id=None,
     ):
-        """Return history, a bounded forward delta, or an anchor-first page."""
+        """Page history by date/ID, while realtime deltas retain an ingestion cursor."""
 
         channel, member = self._authorized_channel(channel_id)
         limit = self._bounded_int(
@@ -2179,7 +2194,22 @@ class ContactCenterUiApi(models.AbstractModel):
         has_before_cursor = before_message_id not in (None, False, "")
         has_after_cursor = after_message_id not in (None, False, "")
         has_anchor = anchor_message_id not in (None, False, "")
-        if sum((has_before_cursor, has_after_cursor, has_anchor)) > 1:
+        has_chronological_cursor = after_chronological_message_id not in (
+            None,
+            False,
+            "",
+        )
+        if (
+            sum(
+                (
+                    has_before_cursor,
+                    has_after_cursor,
+                    has_anchor,
+                    has_chronological_cursor,
+                )
+            )
+            > 1
+        ):
             raise ValidationError(
                 _("Timeline cursors and the message anchor are mutually exclusive.")
             )
@@ -2198,28 +2228,46 @@ class ContactCenterUiApi(models.AbstractModel):
             if has_anchor
             else False
         )
-        forward_mode = bool(after_cursor or anchor_cursor)
+        chronological_cursor = (
+            self._positive_id(after_chronological_message_id, _("message cursor"))
+            if has_chronological_cursor
+            else False
+        )
+        known_received_cursor = (
+            self._positive_id(known_received_message_id, _("received message cursor"))
+            if known_received_message_id not in (None, False, "")
+            else False
+        )
+        forward_mode = bool(after_cursor or anchor_cursor or chronological_cursor)
         domain = [
             ("model", "=", "mail.channel"),
             ("res_id", "=", channel.id),
             ("message_type", "not in", ("notification", "user_notification")),
         ]
-        if before_cursor:
-            domain.append(("id", "<", before_cursor))
+        base_domain = list(domain)
+        history_cursor = before_cursor or anchor_cursor or chronological_cursor
+        cursor_message = self.env["mail.message"]
+        if history_cursor:
+            cursor_message = self.env["mail.message"].search(
+                domain + [("id", "=", history_cursor)], limit=1
+            )
+            if not cursor_message:
+                raise ValidationError(
+                    _("The message cursor does not belong to this conversation.")
+                )
+            operator = "<" if before_cursor else (">=" if anchor_cursor else ">")
+            domain = expression.AND(
+                [domain, chronology_domain(cursor_message, operator)]
+            )
         elif after_cursor:
             domain.append(("id", ">", after_cursor))
-        elif anchor_cursor:
-            anchor = self.env["mail.message"].search(
-                domain + [("id", "=", anchor_cursor)], limit=1
-            )
-            if not anchor:
-                raise ValidationError(
-                    _("The message anchor does not belong to this conversation.")
-                )
-            domain.append(("id", ">=", anchor.id))
         messages = self.env["mail.message"].search(
             domain,
-            order="id asc" if forward_mode else "id desc",
+            order=(
+                "id asc"
+                if after_cursor
+                else ("date asc, id asc" if forward_mode else "date desc, id desc")
+            ),
             limit=limit + 1,
         )
         page_has_more = len(messages) > limit
@@ -2227,16 +2275,7 @@ class ContactCenterUiApi(models.AbstractModel):
         has_older_than_anchor = bool(
             anchor_cursor
             and self.env["mail.message"].search(
-                [
-                    ("model", "=", "mail.channel"),
-                    ("res_id", "=", channel.id),
-                    (
-                        "message_type",
-                        "not in",
-                        ("notification", "user_notification"),
-                    ),
-                    ("id", "<", anchor_cursor),
-                ],
+                expression.AND([base_domain, chronology_domain(cursor_message, "<")]),
                 limit=1,
             )
         )
@@ -2275,7 +2314,7 @@ class ContactCenterUiApi(models.AbstractModel):
             bindings
         )
         items = []
-        ordered_messages = messages if forward_mode else reversed(messages)
+        ordered_messages = messages.sorted(message_chronology_key)
         for message in ordered_messages:
             binding = binding_by_message.get(message.id)
             items.append(
@@ -2310,7 +2349,29 @@ class ContactCenterUiApi(models.AbstractModel):
             ),
             "has_more_forward": page_has_more if forward_mode else False,
             "next_after_message_id": (
-                messages[-1].id if forward_mode and messages else False
+                max(messages.ids) if after_cursor and messages else False
+            ),
+            "next_after_chronological_message_id": (
+                ordered_messages[-1].id
+                if (anchor_cursor or chronological_cursor) and messages
+                else False
+            ),
+            # This cursor is independent from the chronological page. An older
+            # imported/provider-delayed message can have the highest local ID.
+            "latest_received_message_id": self.env["mail.message"]
+            .search(base_domain, order="id desc", limit=1)
+            .id
+            or False,
+            "has_unloaded_received": bool(
+                known_received_cursor
+                and self.env["mail.message"].search(
+                    base_domain
+                    + [
+                        ("id", ">", known_received_cursor),
+                        ("id", "not in", messages.ids),
+                    ],
+                    limit=1,
+                )
             ),
         }
 
@@ -2424,7 +2485,7 @@ class ContactCenterUiApi(models.AbstractModel):
                 )
         else:
             message = self.env["mail.message"].search(
-                message_domain, order="id desc", limit=1
+                message_domain, order="date desc, id desc", limit=1
             )
         if not message:
             return {"channel_id": channel.id, "message_id": False}
@@ -2435,10 +2496,14 @@ class ContactCenterUiApi(models.AbstractModel):
             ["fetched_message_id", "seen_message_id", "last_seen_dt"]
         )
         values = {}
-        if not member.fetched_message_id or member.fetched_message_id.id < message.id:
+        if not member.fetched_message_id or message_chronology_key(
+            member.fetched_message_id
+        ) < message_chronology_key(message):
             values["fetched_message_id"] = message.id
         if seen and (
-            not member.seen_message_id or member.seen_message_id.id < message.id
+            not member.seen_message_id
+            or message_chronology_key(member.seen_message_id)
+            < message_chronology_key(message)
         ):
             values.update(
                 {

@@ -3290,6 +3290,35 @@ QUnit.module("contact_center_ui > model", (hooks) => {
         }
     );
 
+    QUnit.test(
+        "orders imported history by date with ID only breaking equal dates",
+        (assert) => {
+            const current = {message_id: 10, date: "2026-09-08 12:00:00"};
+            const earlier = {message_id: 30, date: "2026-09-07 12:00:00"};
+            const sameDate = {message_id: 20, date: "2026-09-08 12:00:00"};
+            assert.deepEqual(
+                mergeTimelineItems([current], [sameDate, earlier]).map(
+                    (item) => item.message_id
+                ),
+                [30, 10, 20]
+            );
+            assert.strictEqual(
+                timelineScrollDecision({
+                    channelChanged: false,
+                    phase: "ready",
+                    preserveScroll: false,
+                    wasNearBottom: true,
+                    lastMessageId: 10,
+                    previousLastMessageId: 30,
+                    lastMessage: current,
+                    previousLastMessage: earlier,
+                }),
+                "follow",
+                "a later chronological tail can have a smaller ID"
+            );
+        }
+    );
+
     QUnit.test("keeps untrusted message bodies as inert strings", (assert) => {
         const malicious = '<img src=x onerror="globalThis.pwned=true">';
         let coerced = false;
@@ -8050,7 +8079,8 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                         has_more: true,
                         next_before_message_id: 101,
                         has_more_forward: true,
-                        next_after_message_id: 102,
+                        next_after_chronological_message_id: 102,
+                        latest_received_message_id: 103,
                     };
                 }
                 return {
@@ -8060,7 +8090,8 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                     has_more: false,
                     next_before_message_id: false,
                     has_more_forward: false,
-                    next_after_message_id: 103,
+                    next_after_chronological_message_id: 103,
+                    latest_received_message_id: 103,
                 };
             };
 
@@ -8076,7 +8107,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             });
             assert.strictEqual(store.state.timelineFirstUnreadMessageId, 101);
             assert.ok(store.state.timelineHasMoreForward);
-            assert.strictEqual(store.state.nextAfterMessageId, 102);
+            assert.strictEqual(store.state.nextAfterChronologicalMessageId, 102);
             assert.strictEqual(
                 calls.length,
                 1,
@@ -8089,7 +8120,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 args: [10],
                 kwargs: {
                     before_message_id: false,
-                    after_message_id: 102,
+                    after_chronological_message_id: 102,
                     limit: 50,
                 },
             });
@@ -8103,6 +8134,127 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 103,
                 "forward paging advances the realtime continuity boundary"
             );
+        }
+    );
+
+    QUnit.test(
+        "chronological forward paging accepts decreasing IDs",
+        async (assert) => {
+            const store = new ContactCenterStore({
+                orm: {},
+                busService: {removeEventListener: () => undefined},
+                notification: false,
+            });
+            store.state.selectedChannelId = 10;
+            store.state.timelineChannelId = 10;
+            const older = {message_id: 300, date: "2026-09-07 12:00:00"};
+            const current = {message_id: 100, date: "2026-09-08 12:00:00"};
+            store.state.messages = [older];
+            store.state.nextAfterChronologicalMessageId = 300;
+            store.state.timelineHasMoreForward = true;
+            store.call = async (method, _args, kwargs) => {
+                assert.strictEqual(method, "get_timeline");
+                assert.strictEqual(kwargs.after_chronological_message_id, 300);
+                assert.notOk(kwargs.after_message_id);
+                return {
+                    schema_version: SUPPORTED_SCHEMA_VERSION,
+                    channel_id: 10,
+                    items: [current],
+                    has_more: false,
+                    has_more_forward: false,
+                    next_after_chronological_message_id: 100,
+                    latest_received_message_id: 300,
+                };
+            };
+            assert.ok(await store.loadNewerMessages());
+            assert.deepEqual(
+                store.state.messages.map((item) => item.message_id),
+                [300, 100]
+            );
+            assert.strictEqual(
+                store.timelineContiguousCursor,
+                300,
+                "transport cursor remains monotonic"
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "transport catchup handles backdated arrivals without disconnected history",
+        async (assert) => {
+            const store = new ContactCenterStore({
+                orm: {},
+                busService: {removeEventListener: () => undefined},
+                notification: false,
+            });
+            store.state.selectedChannelId = 10;
+            store.state.timelineChannelId = 10;
+            store.timelineRequest = 1;
+            store.state.messages = [{message_id: 100, date: "2026-09-08 12:00:00"}];
+            store.advanceTimelineContinuity(10, 100);
+            store.call = async (_method, _args, kwargs) => {
+                assert.strictEqual(kwargs.after_message_id, 100);
+                return {
+                    schema_version: SUPPORTED_SCHEMA_VERSION,
+                    channel_id: 10,
+                    items: [
+                        {message_id: 300, date: "2026-09-07 12:00:00"},
+                        {message_id: 200, date: "2026-09-08 13:00:00"},
+                    ],
+                    has_more_forward: false,
+                    next_after_message_id: 300,
+                };
+            };
+            const page = await store.fetchForwardTimelinePage(1, 10, 100, 50);
+            assert.strictEqual(
+                page.nextAfterMessageId,
+                300,
+                "cursor uses max ingestion ID, not displayed tail"
+            );
+            store.applyForwardTimelineItems(page.items, 10, page.nextAfterMessageId);
+            assert.deepEqual(
+                store.state.messages.map((item) => item.message_id),
+                [100, 200],
+                "an arrival older than the loaded window remains available through older pagination"
+            );
+            assert.strictEqual(store.timelineContiguousCursor, 300);
+            assert.ok(
+                store.timelineNeedsForwardRecovery(
+                    {
+                        items: [store.state.messages[1]],
+                        has_more: false,
+                        has_unloaded_received: true,
+                    },
+                    10
+                ),
+                "backdated arrivals trigger catchup even with overlapping newest messages"
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "mark seen clears unread at a lower-ID chronological tail",
+        async (assert) => {
+            const store = new ContactCenterStore({
+                orm: {},
+                busService: {removeEventListener: () => undefined},
+                notification: false,
+            });
+            store.state.selectedChannelId = 10;
+            store.state.timelineChannelId = 10;
+            store.state.messages = [
+                {message_id: 300, date: "2026-09-07 12:00:00"},
+                {message_id: 100, date: "2026-09-08 12:00:00"},
+            ];
+            store.state.conversations = [
+                {channel_id: 10, unread_count: 1, first_unread_message_id: 100},
+            ];
+            store.call = async () => ({channel_id: 10, message_id: 100});
+            assert.ok(await store.markSeen(100));
+            assert.strictEqual(store.selectedConversation.unread_count, 0);
+            store.destroy();
         }
     );
 
@@ -8326,6 +8478,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             assert.deepEqual(calls[0].kwargs, {
                 before_message_id: false,
                 limit: 100,
+                known_received_message_id: 200,
             });
             assert.strictEqual(
                 calls.length,
@@ -8420,6 +8573,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             assert.deepEqual(calls[0], {
                 before_message_id: false,
                 limit: 100,
+                known_received_message_id: 50,
             });
             assert.deepEqual(calls.slice(1, 4), [
                 {after_message_id: 50, limit: 100},
@@ -8429,6 +8583,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             assert.deepEqual(calls[4], {
                 before_message_id: false,
                 limit: 100,
+                known_received_message_id: 300,
             });
             assert.strictEqual(store.state.messages.length, 300);
             assert.strictEqual(store.state.messages[0].message_id, 1);

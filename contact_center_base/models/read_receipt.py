@@ -8,6 +8,7 @@ from odoo.exceptions import UserError, ValidationError
 
 from ..services.adapter import conversation_capabilities
 from ..services.dto import CommandDTO, ConversationDTO, DTOValidationError
+from ..services.timeline import MISSING_MESSAGE_DATE, message_chronology_key
 
 _logger = logging.getLogger(__name__)
 
@@ -57,12 +58,8 @@ class ContactCenterApplicationReadReceipt(models.AbstractModel):
     def _mark_read_progress_message_ids(self, binding, connection):
         """Return the contiguous watermark and first retryable terminal target."""
 
-        # This method deliberately crosses from ORM-managed outbox state into a
-        # raw aggregate.  Flush the exact columns used by the query first: a
-        # terminal ``dead``/``cancelled`` transition must be visible before we
-        # decide that a read batch is covered.  Otherwise a command that never
-        # reached the provider can transiently advance the watermark and can no
-        # longer be selected for safe, idempotent revival.
+        # Flush ORM terminal transitions before computing the contiguous batch
+        # coverage. A dead/cancelled row must never transiently advance it.
         self.env["contact.center.outbox.command"].sudo().flush_model(
             [
                 "channel_binding_id",
@@ -74,58 +71,56 @@ class ContactCenterApplicationReadReceipt(models.AbstractModel):
             ]
         )
         self.env["contact.center.message.binding"].sudo().flush_model(["message_id"])
+        self.env["mail.message"].sudo().flush_model(["date"])
         self.env.cr.execute(
             """
             WITH scoped AS (
                 SELECT command.id AS command_id,
-                       target.message_id,
+                       message.id AS message_id,
+                       COALESCE(message.date, %s) AS message_date,
                        command.state,
                        command.resolution
                   FROM contact_center_outbox_command AS command
                   JOIN contact_center_message_binding AS target
                     ON target.id = command.target_message_binding_id
+                  JOIN mail_message AS message
+                    ON message.id = target.message_id
                  WHERE command.channel_binding_id = %s
                    AND command.provider_connection_id = %s
                    AND command.command_type = 'mark_read'
             ), terminal AS (
-                SELECT command_id, message_id
+                SELECT command_id, message_id, message_date
                   FROM scoped
                  WHERE state IN ('dead', 'cancelled')
                    AND resolution IS NULL
-                 ORDER BY message_id, command_id
+                 ORDER BY message_date, message_id, command_id
+                 LIMIT 1
+            ), watermark AS (
+                SELECT scoped.message_id
+                  FROM scoped
+                 WHERE (
+                           scoped.state IN (
+                               'pending', 'retry', 'processing', 'done', 'uncertain'
+                           )
+                           OR (
+                               scoped.state = 'cancelled'
+                               AND scoped.resolution IS NOT NULL
+                           )
+                       )
+                   AND (
+                           NOT EXISTS (SELECT 1 FROM terminal)
+                           OR (scoped.message_date, scoped.message_id) < (
+                               SELECT message_date, message_id FROM terminal
+                           )
+                       )
+                 ORDER BY scoped.message_date DESC, scoped.message_id DESC
                  LIMIT 1
             )
-            SELECT COALESCE(
-                       MAX(scoped.message_id) FILTER (
-                           WHERE (
-                               scoped.state IN (
-                                   'pending',
-                                   'retry',
-                                   'processing',
-                                   'done',
-                                   'uncertain'
-                               )
-                               OR (
-                                   scoped.state = 'cancelled'
-                                   AND scoped.resolution IS NOT NULL
-                               )
-                           )
-                           AND (
-                               (SELECT message_id FROM terminal) IS NULL
-                               OR scoped.message_id < (
-                                   SELECT message_id FROM terminal
-                               )
-                           )
-                       ),
-                       0
-                   ) AS watermark_message_id,
-                   COALESCE((SELECT message_id FROM terminal), 0)
-                       AS terminal_message_id,
+            SELECT COALESCE((SELECT message_id FROM watermark), 0),
+                   COALESCE((SELECT message_id FROM terminal), 0),
                    COALESCE((SELECT command_id FROM terminal), 0)
-                       AS terminal_command_id
-              FROM scoped
             """,
-            [binding.id, connection.id],
+            [MISSING_MESSAGE_DATE, binding.id, connection.id],
         )
         row = self.env.cr.fetchone() or (0, 0, 0)
         return int(row[0] or 0), int(row[1] or 0), int(row[2] or 0)
@@ -146,6 +141,17 @@ class ContactCenterApplicationReadReceipt(models.AbstractModel):
         """Return one ordered provider-ID batch covered by the local pointer."""
 
         target_model = self.env["contact.center.message.binding"].sudo()
+        message_model = self.env["mail.message"].sudo()
+        through_message = message_model.browse(through_message_id).exists()
+        if not through_message:
+            return target_model.browse()
+        through_date, through_id = message_chronology_key(through_message)
+        after_date, after_id = MISSING_MESSAGE_DATE, 0
+        if after_message_id:
+            after_message = message_model.browse(after_message_id).exists()
+            if not after_message:
+                return target_model.browse()
+            after_date, after_id = message_chronology_key(after_message)
         target_model.flush_model(
             [
                 "channel_binding_id",
@@ -157,33 +163,41 @@ class ContactCenterApplicationReadReceipt(models.AbstractModel):
                 "content_type",
             ]
         )
-        # Odoo 16 applies comparison and ordering operators on a Many2one through
-        # the target model's display/order expression.  Here the watermark is the
-        # actual mail.message primary key, and mail.message itself orders newest
-        # first.  Use the stored FK explicitly so both bounds and batch order are
-        # numeric, stable, and independent from display-name semantics.
+        message_model.flush_model(["date"])
+        # Bound and order on message chronology in PostgreSQL: imported history
+        # may have larger IDs, and only one bounded batch should enter memory.
         self.env.cr.execute(
             """
-            SELECT id
-              FROM contact_center_message_binding
-             WHERE channel_binding_id = %s
-               AND provider_connection_id = %s
-               AND message_id > %s
-               AND message_id <= %s
-               AND direction = 'inbound'
-               AND external_message_id IS NOT NULL
-               AND external_message_id <> ''
-               AND message_state <> 'deleted'
-               AND NOT (content_type = ANY(%s))
-             ORDER BY message_id, id
+            SELECT target.id
+              FROM contact_center_message_binding AS target
+              JOIN mail_message AS message ON message.id = target.message_id
+             WHERE target.channel_binding_id = %s
+               AND target.provider_connection_id = %s
+               AND (
+                   %s
+                   OR (COALESCE(message.date, %s), message.id) > (%s, %s)
+               )
+               AND (COALESCE(message.date, %s), message.id) <= (%s, %s)
+               AND target.direction = 'inbound'
+               AND target.external_message_id IS NOT NULL
+               AND target.external_message_id <> ''
+               AND target.message_state <> 'deleted'
+               AND NOT (target.content_type = ANY(%s))
+             ORDER BY COALESCE(message.date, %s), message.id, target.id
              LIMIT %s
             """,
             [
                 binding.id,
                 connection.id,
-                after_message_id,
-                through_message_id,
+                not bool(after_message_id),
+                MISSING_MESSAGE_DATE,
+                after_date,
+                after_id,
+                MISSING_MESSAGE_DATE,
+                through_date,
+                through_id,
                 list(_CONTROL_CONTENT_TYPES),
+                MISSING_MESSAGE_DATE,
                 limit,
             ],
         )
@@ -322,7 +336,11 @@ class ContactCenterApplicationReadReceipt(models.AbstractModel):
         for _batch_number in range(_MARK_READ_MAX_BATCHES_PER_POINTER):
             batch_terminal_message_id = (
                 terminal_message_id
-                if terminal_message_id and terminal_message_id <= message.id
+                if terminal_message_id
+                and message_chronology_key(
+                    self.env["mail.message"].sudo().browse(terminal_message_id)
+                )
+                <= message_chronology_key(message)
                 else 0
             )
             targets = self._mark_read_targets(
@@ -392,7 +410,11 @@ class ContactCenterApplicationReadReceipt(models.AbstractModel):
                 command,
             )
             terminal_reconciled = False
-            if batch_terminal_message_id and watermark >= batch_terminal_message_id:
+            if batch_terminal_message_id and message_chronology_key(
+                self.env["mail.message"].sudo().browse(watermark)
+            ) >= message_chronology_key(
+                self.env["mail.message"].sudo().browse(batch_terminal_message_id)
+            ):
                 (
                     refreshed_watermark,
                     refreshed_terminal_message_id,
@@ -403,7 +425,12 @@ class ContactCenterApplicationReadReceipt(models.AbstractModel):
                     # the gap as a hard barrier instead of issuing a wider,
                     # differently keyed read batch beyond it.
                     break
-                watermark = max(watermark, refreshed_watermark)
+                if refreshed_watermark and message_chronology_key(
+                    self.env["mail.message"].sudo().browse(refreshed_watermark)
+                ) > message_chronology_key(
+                    self.env["mail.message"].sudo().browse(watermark)
+                ):
+                    watermark = refreshed_watermark
                 terminal_message_id = refreshed_terminal_message_id
                 terminal_command_id = refreshed_terminal_command_id
                 terminal_reconciled = True
@@ -704,8 +731,8 @@ class ContactCenterOutboxReadReceipt(models.Model):
                         ("content_type", "not in", _CONTROL_CONTENT_TYPES),
                         ("external_message_id", "in", external_ids),
                     ],
-                    order="message_id, id",
                 )
+                .sorted(key=lambda item: message_chronology_key(item.message_id))
             )
             persisted_ids = target_bindings.mapped("external_message_id")
             if (

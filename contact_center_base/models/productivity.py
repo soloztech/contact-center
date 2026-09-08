@@ -114,7 +114,7 @@ class MailChannelMemberProductivity(models.Model):
     _inherit = "mail.channel.member"
 
     def _compute_message_unread(self):
-        """Exclude ledger-backed internal notes from operational unread counts."""
+        """Count chronological unread messages, excluding internal notes."""
 
         super()._compute_message_unread()
         members = self.browse(self.ids).filtered(
@@ -123,6 +123,9 @@ class MailChannelMemberProductivity(models.Model):
         if not members:
             return
         self.env["contact.center.internal.note.request"].flush_model(["message_id"])
+        self.env["mail.message"].flush_model(
+            ["date", "model", "res_id", "message_type"]
+        )
         members.flush_recordset(["channel_id", "seen_message_id"])
         self.env.cr.execute(
             """
@@ -131,24 +134,22 @@ class MailChannelMemberProductivity(models.Model):
               JOIN mail_message AS message
                 ON message.model = 'mail.channel'
                AND message.res_id = member.channel_id
-              JOIN contact_center_internal_note_request AS note_request
-                ON note_request.message_id = message.id
+         LEFT JOIN mail_message AS seen ON seen.id = member.seen_message_id
              WHERE member.id = ANY(%s)
-               AND (
-                    member.seen_message_id IS NULL
-                    OR message.id > member.seen_message_id
-               )
+               AND message.message_type NOT IN ('notification', 'user_notification')
+               AND (seen.id IS NULL OR
+                    (COALESCE(message.date, '9999-12-31 23:59:59'::timestamp), message.id)
+                    > (COALESCE(seen.date, '9999-12-31 23:59:59'::timestamp), seen.id))
+               AND NOT EXISTS (
+                    SELECT 1 FROM contact_center_internal_note_request AS note_request
+                     WHERE note_request.message_id = message.id)
           GROUP BY member.id
             """,
             [members.ids],
         )
-        internal_note_count = dict(self.env.cr.fetchall())
+        unread_count = dict(self.env.cr.fetchall())
         for member in members:
-            member.message_unread_counter = max(
-                0,
-                (member.message_unread_counter or 0)
-                - internal_note_count.get(member.id, 0),
-            )
+            member.message_unread_counter = unread_count.get(member.id, 0)
 
 
 class MailMessageProductivity(models.Model):
