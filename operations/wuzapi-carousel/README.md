@@ -109,6 +109,10 @@ enviam mensagens ou fazem upload de mídia no WhatsApp. A preparação recusa á
 existente e arquivo upstream com hash divergente. Para uma nova revisão, preparar outra
 pasta e guardar o novo `*.prepared.json`.
 
+O workflow `WuzAPI carousel prototype` repete a preparação, a suíte Go completa e o
+build quando esta pasta muda em um PR. Ele não configura credenciais de sessão nem
+substitui a homologação visual no destinatário.
+
 O [procedimento de homologação](acceptance.md) define a instância separada, o pareamento
 humano e as provas necessárias antes de integrar a opção ao Contact Center. Não executar
 o binário sobre o banco/volume de uma instância compartilhada.
