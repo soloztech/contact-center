@@ -102,7 +102,7 @@ class TestCrmStageSyncConcurrency(TransactionCase):
                     "company_id": company.id,
                     "platform": "whatsapp",
                     "external_ref": "crm-concurrency-%s" % token,
-                    "default_team_id": team.id,
+                    "access_team_ids": [(6, 0, team.ids)],
                     "default_pipeline_id": pipeline.id,
                 }
             )
@@ -127,7 +127,7 @@ class TestCrmStageSyncConcurrency(TransactionCase):
                 identity=identity,
                 conversation_type="direct",
                 name="CRM concurrency %s" % token,
-                team=team,
+                teams=team,
                 guest_ids=guest.ids,
             )
             channel_binding = (

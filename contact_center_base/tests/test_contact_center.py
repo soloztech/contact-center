@@ -165,7 +165,7 @@ class TestContactCenter(SavepointCase):
                 "company_id": cls.env.company.id,
                 "platform": "whatsapp",
                 "external_ref": "account-test-%s" % uuid.uuid4(),
-                "default_team_id": cls.team.id,
+                "access_team_ids": [(6, 0, cls.team.ids)],
             }
         )
         cls.connection = cls.env["contact.center.provider.connection"].create(
@@ -217,7 +217,7 @@ class TestContactCenter(SavepointCase):
         channel = self.env["mail.channel"]._contact_center_create_channel(
             account=self.account,
             identity=identity,
-            team=self.team,
+            teams=self.team,
             partner_ids=self.agent.partner_id.ids,
             guest_ids=identity.mail_guest_id.ids,
         )
@@ -482,12 +482,12 @@ class TestContactCenter(SavepointCase):
             ).create({"guest_id": extra_guest.id})
 
         original_company = channel.contact_center_company_id
-        original_team = channel.contact_center_team_id
+        original_team = channel.contact_center_access_team_ids
         original_responsible = channel.contact_center_responsible_id
         original_state = channel.contact_center_state
         for operational_values in (
             {"contact_center_company_id": False},
-            {"contact_center_team_id": False},
+            {"contact_center_access_team_ids": [(5, 0, 0)]},
             {"contact_center_responsible_id": False},
             {"contact_center_state": "resolved"},
             {"contact_center_tag_ids": [(5, 0, 0)]},
@@ -502,7 +502,7 @@ class TestContactCenter(SavepointCase):
         channel.invalidate_recordset(["channel_member_ids"])
         self.assertEqual(set(channel.sudo().channel_member_ids.ids), members_before)
         self.assertEqual(channel.contact_center_company_id, original_company)
-        self.assertEqual(channel.contact_center_team_id, original_team)
+        self.assertEqual(channel.contact_center_access_team_ids, original_team)
         self.assertEqual(channel.contact_center_responsible_id, original_responsible)
         self.assertEqual(channel.contact_center_state, original_state)
 
@@ -704,7 +704,7 @@ class TestContactCenter(SavepointCase):
         )
         archived_team.write({"active": False})
         with self.assertRaises(ValidationError), self.env.cr.savepoint():
-            self.account.write({"default_team_id": archived_team.id})
+            self.account.write({"access_team_ids": [(6, 0, archived_team.ids)]})
         tag = self.env["contact.center.tag"].create(
             {"name": "Immutable company", "company_id": self.env.company.id}
         )
@@ -4353,13 +4353,13 @@ class TestContactCenter(SavepointCase):
                 "company_id": self.env.company.id,
                 "platform": "whatsapp",
                 "external_ref": "central-account-%s" % uuid.uuid4(),
-                "default_team_id": self.team.id,
+                "access_team_ids": [(6, 0, self.team.ids)],
             }
         )
         second_channel = self.env["mail.channel"]._contact_center_create_channel(
             account=second_account,
             identity=identity,
-            team=self.team,
+            teams=self.team,
             partner_ids=self.agent.partner_id.ids,
             guest_ids=identity.mail_guest_id.ids,
         )
@@ -4547,7 +4547,7 @@ class TestContactCenter(SavepointCase):
                 "company_id": other_company.id,
                 "platform": "whatsapp",
                 "external_ref": "other-company-%s" % uuid.uuid4(),
-                "default_team_id": other_team.id,
+                "access_team_ids": [(6, 0, other_team.ids)],
             }
         )
         guest = self.env["mail.guest"].sudo().create({"name": "Other Company Guest"})
@@ -4565,7 +4565,7 @@ class TestContactCenter(SavepointCase):
         channel = self.env["mail.channel"]._contact_center_create_channel(
             account=other_account,
             identity=identity,
-            team=other_team,
+            teams=other_team,
             partner_ids=self.agent.partner_id.ids,
             guest_ids=guest.ids,
         )

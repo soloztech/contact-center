@@ -101,6 +101,50 @@ def _relational_command_ids(commands):
     return record_ids
 
 
+def _access_scope_command_ids(current_ids, commands):
+    """Apply membership-only commands without editing access authorities."""
+
+    if not isinstance(commands, (list, tuple)):
+        raise ValidationError(_("Inbox access must use relational commands."))
+    record_ids = set(current_ids)
+    for command in commands:
+        if not isinstance(command, (list, tuple)) or not command:
+            raise ValidationError(_("Invalid inbox access command."))
+        operation = command[0]
+        if type(operation) is not int or operation not in (3, 4, 5, 6):
+            raise ValidationError(
+                _(
+                    "Select existing users and teams; their records cannot be edited here."
+                )
+            )
+        if operation in (3, 4):
+            if (
+                len(command) not in (2, 3)
+                or type(command[1]) is not int
+                or command[1] <= 0
+                or (len(command) == 3 and command[2] not in (0, False, None))
+            ):
+                raise ValidationError(_("Invalid inbox access member."))
+            if operation == 4:
+                record_ids.add(command[1])
+            else:
+                record_ids.discard(command[1])
+        elif operation == 5:
+            if len(command) > 3 or any(command[1:]):
+                raise ValidationError(_("Invalid inbox access clear command."))
+            record_ids.clear()
+        else:
+            if (
+                len(command) != 3
+                or command[1] not in (0, False, None)
+                or not isinstance(command[2], (list, tuple))
+                or any(type(value) is not int or value <= 0 for value in command[2])
+            ):
+                raise ValidationError(_("Invalid inbox access selection."))
+            record_ids = set(command[2])
+    return record_ids
+
+
 def _odoo_datetime(value=None):
     """Return one UTC-naive datetime accepted by Odoo fields."""
 
@@ -172,9 +216,11 @@ class ContactCenterTeam(models.Model):
         context={"active_test": False},
         check_company=True,
     )
-    account_ids = fields.One2many(
+    account_ids = fields.Many2many(
         "contact.center.account",
-        "default_team_id",
+        "contact_center_account_access_team_rel",
+        "team_id",
+        "account_id",
         string="Shared Inboxes",
         readonly=True,
     )
@@ -194,6 +240,10 @@ class ContactCenterTeam(models.Model):
 
     @api.model_create_multi
     def create(self, vals_list):
+        if "default_account_ids" in self.env.context or any(
+            "account_ids" in values for values in vals_list
+        ):
+            raise AccessError(_("Configure team access from the inbox."))
         if any("access_topology_revision" in values for values in vals_list):
             raise AccessError(
                 _("The Contact Center access topology revision is internal.")
@@ -211,8 +261,8 @@ class ContactCenterTeam(models.Model):
     def _contact_center_scope_domain(self, user=None, companies=None):
         """Return the operational inbox scope for one internal user.
 
-        Roles grant operations. Team roster membership grants shared inboxes,
-        while an inbox owner can also read the roster of that inbox's team.
+        Roles grant operations. Anyone with access to an inbox can read the
+        rosters of every team sharing that inbox for assignment and collaboration.
         """
 
         user = user or self.env.user
@@ -222,9 +272,13 @@ class ContactCenterTeam(models.Model):
             ("company_id", "in", companies.ids),
             "|",
             "|",
+            "|",
+            "|",
             ("agent_ids", "=", user.id),
             ("supervisor_ids", "=", user.id),
-            ("account_ids.owner_user_id", "=", user.id),
+            ("account_ids.access_user_ids", "=", user.id),
+            ("account_ids.access_team_ids.agent_ids", "=", user.id),
+            ("account_ids.access_team_ids.supervisor_ids", "=", user.id),
         ]
 
     def _contact_center_has_user(self, user=None):
@@ -301,6 +355,8 @@ class ContactCenterTeam(models.Model):
             )
 
     def write(self, values):
+        if "account_ids" in values:
+            raise AccessError(_("Configure team access from the inbox."))
         if "access_topology_revision" in values:
             raise AccessError(
                 _("The Contact Center access topology revision is internal.")
@@ -312,22 +368,22 @@ class ContactCenterTeam(models.Model):
         roster_fields = {"agent_ids", "supervisor_ids"} & set(values)
         affected_accounts = self.env["contact.center.account"]
         affected_user_ids = set((self.agent_ids | self.supervisor_ids).ids)
-        previous_partner_ids_by_team = {}
+        previous_partner_ids_by_account = {}
         if roster_fields:
             for field_name in roster_fields:
                 affected_user_ids.update(
                     _relational_command_ids(values.get(field_name))
                 )
-            previous_partner_ids_by_team = {
-                team.id: (team.agent_ids | team.supervisor_ids).partner_id.ids
-                for team in self
-            }
             affected_accounts = (
                 self.env["contact.center.account"]
                 .sudo()
                 .with_context(active_test=False)
-                .search([("default_team_id", "in", self.ids)])
+                .search([("access_team_ids", "in", self.ids)])
             )
+            previous_partner_ids_by_account = {
+                account.id: account._contact_center_effective_users().partner_id.ids
+                for account in affected_accounts
+            }
         if roster_fields or {"active", "company_id"} & set(values):
             self.env["contact.center.account"]._contact_center_lock_access_topology(
                 account_ids=affected_accounts.ids,
@@ -346,21 +402,20 @@ class ContactCenterTeam(models.Model):
                 application._notify_connection_health(
                     connection,
                     invalidate=True,
-                    additional_partner_ids=previous_partner_ids_by_team.get(
-                        connection.account_id.default_team_id.id, []
+                    additional_partner_ids=previous_partner_ids_by_account.get(
+                        connection.account_id.id, []
                     ),
                 )
         return result
 
     def _contact_center_reconcile_channels(self):
-        for team in self:
-            accounts = (
-                self.env["contact.center.account"]
-                .sudo()
-                .with_context(active_test=False)
-                .search([("default_team_id", "=", team.id)])
-            )
-            accounts._contact_center_reconcile_channels()
+        accounts = (
+            self.env["contact.center.account"]
+            .sudo()
+            .with_context(active_test=False)
+            .search([("access_team_ids", "in", self.ids)])
+        )
+        accounts._contact_center_reconcile_channels()
         return True
 
     def _contact_center_check_not_referenced(self, operation):
@@ -371,17 +426,17 @@ class ContactCenterTeam(models.Model):
             .search_count(
                 [
                     ("channel_type", "=", "contact_center"),
-                    ("contact_center_team_id", "in", self.ids),
+                    ("contact_center_access_team_ids", "in", self.ids),
                 ]
             )
         )
-        default_for_account = (
+        access_for_account = (
             self.env["contact.center.account"]
             .sudo()
             .with_context(active_test=False)
-            .search_count([("default_team_id", "in", self.ids)])
+            .search_count([("access_team_ids", "in", self.ids)])
         )
-        if assigned or default_for_account:
+        if assigned or access_for_account:
             raise ValidationError(
                 _(
                     "A team assigned to conversations or accounts cannot be %s.",
@@ -520,8 +575,8 @@ class ResUsers(models.Model):
             .search(
                 [
                     "|",
-                    ("owner_user_id", "in", self.ids),
-                    ("default_team_id", "in", teams.ids),
+                    ("access_user_ids", "in", self.ids),
+                    ("access_team_ids", "in", teams.ids),
                 ]
             )
         )
@@ -546,13 +601,13 @@ class ResUsers(models.Model):
             )
         )
         teams._check_contact_center_groups()
-        owned_accounts = (
+        direct_access_accounts = (
             self.env["contact.center.account"]
             .sudo()
             .with_context(active_test=False)
-            .search([("owner_user_id", "in", self.ids)])
+            .search([("access_user_ids", "in", self.ids)])
         )
-        owned_accounts._check_contact_center_access_configuration()
+        direct_access_accounts._check_contact_center_access_configuration()
         channels = (
             self.env["mail.channel"]
             .sudo()
@@ -581,11 +636,11 @@ class ResUsers(models.Model):
             team_ids=teams_to_lock.ids,
             user_ids=self.ids,
         )
-        owned_accounts = (
+        direct_access_accounts = (
             self.env["contact.center.account"]
             .sudo()
             .with_context(active_test=False)
-            .search_count([("owner_user_id", "in", self.ids)])
+            .search_count([("access_user_ids", "in", self.ids)])
         )
         teams = (
             self.env["contact.center.team"]
@@ -609,7 +664,7 @@ class ResUsers(models.Model):
                 ]
             )
         )
-        if owned_accounts or teams or channel_memberships:
+        if direct_access_accounts or teams or channel_memberships:
             raise AccessError(
                 _(
                     "Users who own Contact Center inboxes, belong to service teams, "
@@ -724,28 +779,35 @@ class ContactCenterAccount(models.Model):
         domain="[('company_id', 'in', [False, company_id])]",
         help="Optional author for messages sent from another device.",
     )
-    owner_user_id = fields.Many2one(
+    access_user_ids = fields.Many2many(
         "res.users",
-        string="Inbox Owner",
-        index=True,
-        ondelete="restrict",
+        "contact_center_account_access_user_rel",
+        "account_id",
+        "user_id",
+        string="Authorized Users",
+        check_company=True,
+        context={"active_test": False},
         domain=(
             "[('active', '=', True), ('share', '=', False), "
             "('company_ids', 'in', company_id)]"
         ),
         help=(
-            "Optional exclusive owner of this inbox. The owner and every member "
-            "of the access team form one union of authorized attendants."
+            "Users who can attend this inbox, together with agents and supervisors "
+            "of every selected access team."
         ),
     )
-    default_team_id = fields.Many2one(
+    access_team_ids = fields.Many2many(
         "contact.center.team",
-        string="Access Team",
+        "contact_center_account_access_team_rel",
+        "account_id",
+        "team_id",
+        string="Access Teams",
         check_company=True,
-        domain="[('company_id', '=', company_id)]",
+        context={"active_test": False},
+        domain="[('active', '=', True), ('company_id', '=', company_id)]",
         help=(
-            "Optional shared-access team. Leave it empty for an owner-only inbox. "
-            "When owner and team are both set, both scopes can attend."
+            "Every selected team's agents and supervisors can attend this inbox. "
+            "Team access and directly selected users are cumulative."
         ),
     )
     auto_assignment_eligible_user_ids = fields.Many2many(
@@ -753,7 +815,7 @@ class ContactCenterAccount(models.Model):
         string="Eligible Automatic Assignees",
         compute="_compute_auto_assignment_eligible_user_ids",
         compute_sudo=True,
-        help="Active internal users in the effective owner and access-team scope.",
+        help="Active internal users in the effective direct-user and access-team scope.",
     )
     auto_assignment_user_id = fields.Many2one(
         "res.users",
@@ -765,7 +827,7 @@ class ContactCenterAccount(models.Model):
             "Leave empty to keep automatic assignment disabled and let an agent "
             "use Assume. When set, each new inbound conversation or inbound "
             "message assigns an unassigned conversation to this user. The user "
-            "must remain in the inbox owner/access-team scope."
+            "must remain in the inbox user or access-team scope."
         ),
     )
     group_outbound_enabled = fields.Boolean(
@@ -851,43 +913,52 @@ class ContactCenterAccount(models.Model):
 
     @api.model_create_multi
     def create(self, vals_list):
+        vals_list = self._contact_center_prepare_access_defaults(vals_list)
         internal_revision_fields = {
             "access_topology_revision",
             "inbound_projection_revision",
         }
         if any(internal_revision_fields.intersection(values) for values in vals_list):
             raise AccessError(_("Contact Center concurrency revisions are internal."))
-        team_ids = {
-            int(values["default_team_id"])
-            for values in vals_list
-            if values.get("default_team_id")
-        }
-        user_ids = {
-            int(values["owner_user_id"])
-            for values in vals_list
-            if values.get("owner_user_id")
-        }
-        user_ids.update(
-            int(values["auto_assignment_user_id"])
-            for values in vals_list
-            if values.get("auto_assignment_user_id")
-        )
+        team_ids = set()
+        user_ids = set()
+        for values in vals_list:
+            users, teams = self._contact_center_access_scope_values(values)
+            team_ids.update(teams.ids)
+            user_ids.update(users.ids)
+            user_ids.update(_relational_command_ids(values.get("access_user_ids", [])))
+            team_ids.update(_relational_command_ids(values.get("access_team_ids", [])))
+            if values.get("auto_assignment_user_id"):
+                user_ids.add(int(values["auto_assignment_user_id"]))
         self._contact_center_lock_access_topology(
             team_ids=team_ids,
             user_ids=user_ids,
         )
         for values in vals_list:
-            assignee = self.env["res.users"].browse(
-                values.get("auto_assignment_user_id")
-            )
-            owner = self.env["res.users"].browse(values.get("owner_user_id"))
-            team = self.env["contact.center.team"].browse(values.get("default_team_id"))
+            users, teams = self._contact_center_access_scope_values(values)
             self._contact_center_validate_auto_assignment_scope(
-                assignee=assignee,
-                owner=owner,
-                team=team,
+                assignee=self.env["res.users"].browse(
+                    values.get("auto_assignment_user_id")
+                ),
+                users=users,
+                teams=teams,
             )
         return super().create(vals_list)
+
+    @api.model
+    def _contact_center_prepare_access_defaults(self, vals_list):
+        """Validate and lock the same grants that ORM defaults will persist."""
+
+        authority_fields = {
+            "access_user_ids",
+            "access_team_ids",
+            "auto_assignment_user_id",
+        }
+        missing_fields = set().union(
+            *(authority_fields - set(values) for values in vals_list)
+        )
+        defaults = self.default_get(sorted(missing_fields)) if missing_fields else {}
+        return [dict(defaults, **values) for values in vals_list]
 
     def _contact_center_display_address(self):
         """Return a bounded display-only form of this account's own identity."""
@@ -927,7 +998,7 @@ class ContactCenterAccount(models.Model):
 
     @api.model
     def _contact_center_scope_domain(self, user=None, companies=None):
-        """Return inboxes directly owned by ``user`` or shared with their team."""
+        """Return inboxes shared with the user directly or through any team."""
 
         user = user or self.env.user
         if companies is None:
@@ -936,9 +1007,9 @@ class ContactCenterAccount(models.Model):
             ("company_id", "in", companies.ids),
             "|",
             "|",
-            ("owner_user_id", "=", user.id),
-            ("default_team_id.agent_ids", "=", user.id),
-            ("default_team_id.supervisor_ids", "=", user.id),
+            ("access_user_ids", "=", user.id),
+            ("access_team_ids.agent_ids", "=", user.id),
+            ("access_team_ids.supervisor_ids", "=", user.id),
         ]
 
     @api.model
@@ -1054,7 +1125,7 @@ class ContactCenterAccount(models.Model):
         """Reject transitions from a configured live route to no attendants.
 
         A brand-new unassigned inbox/connection remains a valid fail-closed draft.
-        Once a live primary route has an access scope, however, owner/team mutations
+        Once a live primary route has an access scope, however, user/team mutations
         cannot silently orphan it; the provider must first be demoted/archived or a
         replacement attendant must be assigned.
         """
@@ -1089,46 +1160,72 @@ class ContactCenterAccount(models.Model):
             raise ValidationError(
                 _(
                     "An active Contact Center provider route cannot lose its last "
-                    "attendant. Assign an inbox owner or team attendant first, or "
+                    "attendant. Assign an inbox user or team attendant first, or "
                     "demote/archive the provider route."
                 )
             )
         return True
 
     @api.model
-    def _contact_center_users_for_access_scope(self, owner=None, team=None):
-        """Return valid internal users in one owner/team access-scope union."""
+    def _contact_center_access_scope_values(self, values, account=None):
+        """Resolve a prospective selection; access edits only link existing records."""
 
-        users = self.env["res.users"]
-        if owner:
-            users |= owner
-        if team and team.active:
-            users |= team.agent_ids | team.supervisor_ids
+        records = []
+        for field_name, model_name in (
+            ("access_user_ids", "res.users"),
+            ("access_team_ids", "contact.center.team"),
+        ):
+            current = account[field_name].ids if account else []
+            selected_ids = (
+                _access_scope_command_ids(current, values[field_name])
+                if field_name in values
+                else set(current)
+            )
+            selected = (
+                self.env[model_name]
+                .with_context(active_test=False)
+                .browse(sorted(selected_ids))
+                .exists()
+            )
+            if len(selected) != len(selected_ids):
+                raise ValidationError(
+                    _("Every selected inbox user and team must exist.")
+                )
+            records.append(selected)
+        return tuple(records)
+
+    @api.model
+    def _contact_center_users_for_access_scope(self, users=None, teams=None):
+        """Return the union of direct users and every active team's attendants."""
+
+        users = users or self.env["res.users"]
+        teams = (teams or self.env["contact.center.team"]).filtered("active")
+        users |= teams.agent_ids | teams.supervisor_ids
         return users.filtered(lambda user: user.active and not user.share)
 
     def _contact_center_effective_users(self):
-        """Return the owner/team union used by ACL projection and assignment."""
+        """Return the user/team union used by ACL projection and assignment."""
 
         users = self.env["res.users"]
         for account in self:
             users |= self._contact_center_users_for_access_scope(
-                owner=account.owner_user_id,
-                team=account.default_team_id,
+                users=account.access_user_ids,
+                teams=account.access_team_ids,
             )
         return users
 
     @api.depends(
-        "owner_user_id",
-        "owner_user_id.active",
-        "owner_user_id.share",
-        "default_team_id",
-        "default_team_id.active",
-        "default_team_id.agent_ids",
-        "default_team_id.agent_ids.active",
-        "default_team_id.agent_ids.share",
-        "default_team_id.supervisor_ids",
-        "default_team_id.supervisor_ids.active",
-        "default_team_id.supervisor_ids.share",
+        "access_user_ids",
+        "access_user_ids.active",
+        "access_user_ids.share",
+        "access_team_ids",
+        "access_team_ids.active",
+        "access_team_ids.agent_ids",
+        "access_team_ids.agent_ids.active",
+        "access_team_ids.agent_ids.share",
+        "access_team_ids.supervisor_ids",
+        "access_team_ids.supervisor_ids.active",
+        "access_team_ids.supervisor_ids.share",
     )
     def _compute_auto_assignment_eligible_user_ids(self):
         for account in self:
@@ -1142,32 +1239,32 @@ class ContactCenterAccount(models.Model):
         for account in self:
             self._contact_center_validate_auto_assignment_scope(
                 assignee=account.auto_assignment_user_id,
-                owner=account.owner_user_id,
-                team=account.default_team_id,
+                users=account.access_user_ids,
+                teams=account.access_team_ids,
             )
         return True
 
     @api.model
     def _contact_center_validate_auto_assignment_scope(
-        self, *, assignee=None, owner=None, team=None
+        self, *, assignee=None, users=None, teams=None
     ):
         """Validate one prospective policy before it reaches persistent state."""
 
         assignee = assignee or self.env["res.users"]
         if assignee and assignee not in self._contact_center_users_for_access_scope(
-            owner=owner,
-            team=team,
+            users=users,
+            teams=teams,
         ):
             raise ValidationError(
                 _(
                     "The automatic assignee must be an active internal user "
-                    "in the inbox owner or access-team scope."
+                    "in the inbox user or access-team scope."
                 )
             )
         return True
 
     def _contact_center_reconcile_auto_assignment(self):
-        """Disable a stale policy after an owner/team/roster revocation.
+        """Disable a stale policy after a user/team/roster revocation.
 
         Access revocation is authoritative. It must not be rejected merely because
         the revoked user was selected for automatic assignment; clearing the optional
@@ -1190,20 +1287,11 @@ class ContactCenterAccount(models.Model):
             return True
         assignee = self.env["res.users"].browse(values.get("auto_assignment_user_id"))
         for account in self:
-            owner = (
-                self.env["res.users"].browse(values.get("owner_user_id"))
-                if "owner_user_id" in values
-                else account.owner_user_id
-            )
-            team = (
-                self.env["contact.center.team"].browse(values.get("default_team_id"))
-                if "default_team_id" in values
-                else account.default_team_id
-            )
+            users, teams = self._contact_center_access_scope_values(values, account)
             self._contact_center_validate_auto_assignment_scope(
                 assignee=assignee,
-                owner=owner,
-                team=team,
+                users=users,
+                teams=teams,
             )
         return True
 
@@ -1222,40 +1310,45 @@ class ContactCenterAccount(models.Model):
             raise AccessError(_("You are not assigned to this Contact Center inbox."))
         return True
 
-    @api.constrains("owner_user_id", "default_team_id", "company_id")
+    @api.constrains("access_user_ids", "access_team_ids", "company_id")
     def _check_contact_center_access_configuration(self):
         agent_group = self.env.ref(
             "contact_center_base.group_contact_center_agent", raise_if_not_found=False
         )
         for account in self:
-            if account.default_team_id and not account.default_team_id.active:
+            if any(not team.active for team in account.access_team_ids):
                 raise ValidationError(
-                    _("The Contact Center access team must be active.")
+                    _("Every Contact Center access team must be active.")
                 )
-            owner = account.owner_user_id
-            if not owner:
-                continue
-            reasons = []
-            if not owner.active:
-                reasons.append(_("the user is archived"))
-            if owner.share:
-                reasons.append(_("the user is external/portal"))
-            if agent_group and agent_group not in owner.groups_id:
-                reasons.append(_("the Contact Center agent role is missing"))
-            if account.company_id not in owner.company_ids:
-                reasons.append(_("the user cannot access the inbox company"))
-            if reasons:
+            if any(
+                team.company_id != account.company_id
+                for team in account.access_team_ids
+            ):
                 raise ValidationError(
-                    _(
-                        "%(user)s cannot own Contact Center inbox %(inbox)s because "
-                        "%(reasons)s."
+                    _("Every access team must belong to the inbox company.")
+                )
+            for user in account.access_user_ids:
+                reasons = []
+                if not user.active:
+                    reasons.append(_("the user is archived"))
+                if user.share:
+                    reasons.append(_("the user is external/portal"))
+                if agent_group and agent_group not in user.groups_id:
+                    reasons.append(_("the Contact Center agent role is missing"))
+                if account.company_id not in user.company_ids:
+                    reasons.append(_("the user cannot access the inbox company"))
+                if reasons:
+                    raise ValidationError(
+                        _(
+                            "%(user)s cannot access Contact Center inbox %(inbox)s "
+                            "because %(reasons)s."
+                        )
+                        % {
+                            "user": user.display_name,
+                            "inbox": account.display_name,
+                            "reasons": ", ".join(reasons),
+                        }
                     )
-                    % {
-                        "user": owner.display_name,
-                        "inbox": account.display_name,
-                        "reasons": ", ".join(reasons),
-                    }
-                )
 
     def _contact_center_reconcile_channels(self):
         """Project an inbox access change to exact native channel membership."""
@@ -1275,8 +1368,12 @@ class ContactCenterAccount(models.Model):
                 old_partner_ids = channel.sudo().channel_member_ids.partner_id.ids
                 responsible = channel.contact_center_responsible_id
                 values = {
-                    "contact_center_owner_user_id": account.owner_user_id.id or False,
-                    "contact_center_team_id": account.default_team_id.id or False,
+                    "contact_center_access_user_ids": [
+                        (6, 0, account.access_user_ids.ids)
+                    ],
+                    "contact_center_access_team_ids": [
+                        (6, 0, account.access_team_ids.ids)
+                    ],
                 }
                 if responsible and responsible not in users:
                     values["contact_center_responsible_id"] = False
@@ -1338,15 +1435,11 @@ class ContactCenterAccount(models.Model):
         active_changed = "active" in values and any(
             bool(values["active"]) != account.active for account in self
         )
-        team_changed = "default_team_id" in values and any(
-            (values["default_team_id"] or False)
-            != (account.default_team_id.id or False)
-            for account in self
-        )
-        owner_changed = "owner_user_id" in values and any(
-            (values["owner_user_id"] or False) != (account.owner_user_id.id or False)
-            for account in self
-        )
+        if {"access_user_ids", "access_team_ids"}.intersection(values):
+            for account in self:
+                self._contact_center_access_scope_values(values, account)
+        team_changed = "access_team_ids" in values
+        users_changed = "access_user_ids" in values
         auto_assignment_changed = "auto_assignment_user_id" in values and any(
             (values["auto_assignment_user_id"] or False)
             != (account.auto_assignment_user_id.id or False)
@@ -1355,7 +1448,7 @@ class ContactCenterAccount(models.Model):
         projection_changed_fields = self._contact_center_projection_changed_fields(
             values
         )
-        scope_changed = active_changed or team_changed or owner_changed
+        scope_changed = active_changed or team_changed or users_changed
         assignment_topology_changed = scope_changed or auto_assignment_changed
         previous_partner_ids_by_account = (
             {
@@ -1366,17 +1459,19 @@ class ContactCenterAccount(models.Model):
             else {}
         )
         if assignment_topology_changed and self.ids:
-            scope_team_ids = set(self.mapped("default_team_id").ids)
+            scope_team_ids = set(self.mapped("access_team_ids").ids)
             scope_user_ids = set(
                 (
-                    self.mapped("owner_user_id")
+                    self.mapped("access_user_ids")
                     | self.mapped("auto_assignment_user_id")
                 ).ids
             )
-            if values.get("default_team_id"):
-                scope_team_ids.add(int(values["default_team_id"]))
-            if values.get("owner_user_id"):
-                scope_user_ids.add(int(values["owner_user_id"]))
+            scope_team_ids.update(
+                _relational_command_ids(values.get("access_team_ids", []))
+            )
+            scope_user_ids.update(
+                _relational_command_ids(values.get("access_user_ids", []))
+            )
             if values.get("auto_assignment_user_id"):
                 scope_user_ids.add(int(values["auto_assignment_user_id"]))
             self._contact_center_lock_access_topology(
@@ -1385,7 +1480,7 @@ class ContactCenterAccount(models.Model):
                 user_ids=scope_user_ids,
             )
         self._contact_center_validate_auto_assignment_write(
-            values, auto_assignment_changed
+            values, "auto_assignment_user_id" in values
         )
         affected_connections = (
             self.sudo().with_context(active_test=False).mapped("connection_ids")
@@ -1713,9 +1808,9 @@ class ContactCenterProviderConnection(models.Model):
             ("company_id", "in", companies.ids),
             "|",
             "|",
-            ("account_id.owner_user_id", "=", user.id),
-            ("account_id.default_team_id.agent_ids", "=", user.id),
-            ("account_id.default_team_id.supervisor_ids", "=", user.id),
+            ("account_id.access_user_ids", "=", user.id),
+            ("account_id.access_team_ids.agent_ids", "=", user.id),
+            ("account_id.access_team_ids.supervisor_ids", "=", user.id),
         ]
 
     @api.model
@@ -2104,8 +2199,8 @@ class ContactCenterProviderConnection(models.Model):
         ).invalidate_recordset(
             [
                 "active",
-                "owner_user_id",
-                "default_team_id",
+                "access_user_ids",
+                "access_team_ids",
                 "group_outbound_enabled",
                 "outbound_signature_enabled",
                 "mark_read_enabled",
@@ -2256,7 +2351,7 @@ class ContactCenterProviderConnection(models.Model):
             ):
                 raise ValidationError(
                     _(
-                        "Assign an inbox owner or team attendant before activating "
+                        "Assign an inbox user or team attendant before activating "
                         "the primary provider route."
                     )
                 )
@@ -3087,7 +3182,7 @@ class ContactCenterProviderConnection(models.Model):
             ]
         )
         self.account_id.invalidate_recordset(
-            ["active", "owner_user_id", "default_team_id"]
+            ["active", "access_user_ids", "access_team_ids"]
         )
         return bool(
             row

@@ -90,7 +90,7 @@ class TestCrossAccountIdentity(SavepointCase):
                 "company_id": company.id,
                 "platform": "whatsapp",
                 "external_ref": "account-%s" % uuid.uuid4(),
-                "default_team_id": team.id,
+                "access_team_ids": [(6, 0, team.ids)],
             }
         )
         connection = env["contact.center.provider.connection"].create(
@@ -679,7 +679,7 @@ class TestCrossAccountIdentity(SavepointCase):
         )
         for xmlid in rule_xmlids:
             rule = self.env.ref("contact_center_base.%s" % xmlid)
-            self.assertIn("account_id.default_team_id.agent_ids", rule.domain_force)
+            self.assertIn("account_id.access_team_ids.agent_ids", rule.domain_force)
             self.assertIn(
                 "identity_id.channel_binding_ids.channel_id.channel_member_ids",
                 rule.domain_force,

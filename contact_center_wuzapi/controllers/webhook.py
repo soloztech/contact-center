@@ -310,10 +310,10 @@ def _locked_ingress_response(connection, adapter, headers, body):
         ]
     )
     connection.account_id.invalidate_recordset(
-        ["active", "owner_user_id", "default_team_id"]
+        ["active", "access_user_ids", "access_team_ids"]
     )
-    if connection.account_id.default_team_id:
-        connection.account_id.default_team_id.invalidate_recordset(
+    if connection.account_id.access_team_ids:
+        connection.account_id.access_team_ids.invalidate_recordset(
             ["active", "agent_ids", "supervisor_ids"]
         )
     # The first signature check protects the account-level lock from public

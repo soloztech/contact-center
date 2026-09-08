@@ -110,8 +110,8 @@ class TestContactCenterCrm(SavepointCase):
                 "company_id": cls.env.company.id,
                 "platform": "whatsapp",
                 "external_ref": str(uuid.uuid4()),
-                "default_team_id": team.id if team else False,
-                "owner_user_id": owner.id if owner else False,
+                "access_team_ids": [(6, 0, team.ids if team else [])],
+                "access_user_ids": [(6, 0, owner.ids if owner else [])],
                 "default_pipeline_id": pipeline.id,
             }
         )
@@ -1055,12 +1055,14 @@ class TestContactCenterCrm(SavepointCase):
         case.invalidate_recordset(["crm_link_ids", "crm_lead_id"])
         lead = case.crm_lead_id
 
-        account.write({"default_team_id": target_team.id})
+        account.write({"access_team_ids": [(6, 0, target_team.ids)]})
 
-        channel.invalidate_recordset(["contact_center_team_id", "channel_member_ids"])
+        channel.invalidate_recordset(
+            ["contact_center_access_team_ids", "channel_member_ids"]
+        )
         case.invalidate_recordset(["team_id", "crm_link_ids", "crm_lead_id"])
-        self.assertEqual(account.default_team_id, target_team)
-        self.assertEqual(channel.contact_center_team_id, target_team)
+        self.assertEqual(account.access_team_ids, target_team)
+        self.assertEqual(channel.contact_center_access_team_ids, target_team)
         self.assertEqual(case.team_id, target_team)
         self.assertEqual(case.crm_lead_id, lead)
         self.assertIn(
@@ -1134,14 +1136,16 @@ class TestContactCenterCrm(SavepointCase):
         with self.assertRaisesRegex(
             ValidationError, "bound to another CRM sales team"
         ), self.env.cr.savepoint():
-            account.write({"default_team_id": target_team.id})
+            account.write({"access_team_ids": [(6, 0, target_team.ids)]})
 
-        account.invalidate_recordset(["default_team_id"])
-        channel.invalidate_recordset(["contact_center_team_id", "channel_member_ids"])
+        account.invalidate_recordset(["access_team_ids"])
+        channel.invalidate_recordset(
+            ["contact_center_access_team_ids", "channel_member_ids"]
+        )
         case.invalidate_recordset(["team_id", "crm_link_ids", "crm_lead_id"])
         link.invalidate_recordset(["contact_center_team_id"])
-        self.assertEqual(account.default_team_id, self.team_a)
-        self.assertEqual(channel.contact_center_team_id, self.team_a)
+        self.assertEqual(account.access_team_ids, self.team_a)
+        self.assertEqual(channel.contact_center_access_team_ids, self.team_a)
         self.assertEqual(case.team_id, self.team_a)
         self.assertEqual(
             set(channel.sudo().channel_member_ids.partner_id.ids),

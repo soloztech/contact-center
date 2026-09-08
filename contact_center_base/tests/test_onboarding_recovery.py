@@ -31,7 +31,7 @@ class TestOnboardingRecovery(SavepointCase):
                 "company_id": self.env.company.id,
                 "platform": "whatsapp",
                 "external_ref": "onboarding-recovery-account-%s" % token,
-                "owner_user_id": self.admin.id,
+                "access_user_ids": [fields.Command.set(self.admin.ids)],
             }
         )
         onboarding_ref = str(uuid.uuid4())

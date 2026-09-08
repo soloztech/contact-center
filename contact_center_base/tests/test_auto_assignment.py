@@ -56,9 +56,9 @@ class TestContactCenterAutoAssignment(SavepointCase):
             "external_ref": "auto-account-%s" % token,
         }
         if team:
-            values["default_team_id"] = team.id
+            values["access_team_ids"] = [(6, 0, [team.id])]
         if owner:
-            values["owner_user_id"] = owner.id
+            values["access_user_ids"] = [(6, 0, [owner.id])]
         if auto_user:
             values["auto_assignment_user_id"] = auto_user.id
         return cls.env["contact.center.account"].create(values)
@@ -202,7 +202,7 @@ class TestContactCenterAutoAssignment(SavepointCase):
         _message, channel = self._process(connection, uuid.uuid4().hex)
         self.assertEqual(channel.contact_center_responsible_id, self.outsider)
 
-        account.write({"owner_user_id": False})
+        account.write({"access_user_ids": [(5, 0, 0)]})
         account.invalidate_recordset(["auto_assignment_user_id"])
         channel.invalidate_recordset(["contact_center_responsible_id"])
 
@@ -229,7 +229,7 @@ class TestContactCenterAutoAssignment(SavepointCase):
         connection = self._create_connection(account)
         _message, channel = self._process(connection, uuid.uuid4().hex)
 
-        account.write({"default_team_id": False})
+        account.write({"access_team_ids": [(5, 0, 0)]})
         account.invalidate_recordset(["auto_assignment_user_id"])
         channel.invalidate_recordset(["contact_center_responsible_id"])
 
@@ -242,10 +242,59 @@ class TestContactCenterAutoAssignment(SavepointCase):
             owner=self.primary_agent,
             auto_user=self.primary_agent,
         )
-        account.write({"owner_user_id": False})
+        account.write({"access_user_ids": [(5, 0, 0)]})
         account.invalidate_recordset(["auto_assignment_user_id"])
 
         self.assertEqual(account.auto_assignment_user_id, self.primary_agent)
+
+    def test_assignment_survives_removing_one_of_multiple_team_grants(self):
+        second_team = self.env["contact.center.team"].create(
+            {
+                "name": "Second auto assignment team %s" % uuid.uuid4(),
+                "company_id": self.env.company.id,
+                "agent_ids": [(6, 0, (self.primary_agent | self.outsider).ids)],
+            }
+        )
+        self.account.write(
+            {
+                "access_team_ids": [(4, second_team.id)],
+                "access_user_ids": [
+                    (6, 0, (self.primary_agent | self.secondary_agent).ids)
+                ],
+                "auto_assignment_user_id": self.primary_agent.id,
+            }
+        )
+        _message, channel = self._process(self.connection, uuid.uuid4().hex)
+        self.account.write({"access_user_ids": [(3, self.primary_agent.id)]})
+        self.account.write({"access_team_ids": [(3, self.team.id)]})
+        self.assertEqual(self.account.auto_assignment_user_id, self.primary_agent)
+        self.assertEqual(channel.contact_center_responsible_id, self.primary_agent)
+        second_team.write({"agent_ids": [(3, self.primary_agent.id)]})
+        self.assertFalse(self.account.auto_assignment_user_id)
+        self.assertFalse(channel.contact_center_responsible_id)
+
+    def test_new_assignee_is_validated_against_prospective_multi_team_scope(self):
+        second_team = self.env["contact.center.team"].create(
+            {
+                "name": "Prospective auto assignment team %s" % uuid.uuid4(),
+                "company_id": self.env.company.id,
+                "agent_ids": [(6, 0, self.outsider.ids)],
+            }
+        )
+        self.account.write(
+            {
+                "access_team_ids": [(4, second_team.id)],
+                "auto_assignment_user_id": self.outsider.id,
+            }
+        )
+        self.assertEqual(self.account.auto_assignment_user_id, self.outsider)
+        with self.assertRaises(ValidationError):
+            self.account.write(
+                {
+                    "access_team_ids": [(3, second_team.id)],
+                    "auto_assignment_user_id": self.outsider.id,
+                }
+            )
 
     def test_duplicate_event_keeps_one_message_and_one_assignment(self):
         self.account.write({"auto_assignment_user_id": self.primary_agent.id})

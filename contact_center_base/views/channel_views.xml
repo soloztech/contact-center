@@ -14,8 +14,18 @@
                     <group>
                         <group>
                             <field name="contact_center_company_id" readonly="1" />
-                            <field name="contact_center_team_id" readonly="1" />
-                            <field name="contact_center_owner_user_id" readonly="1" />
+                            <field
+                                name="contact_center_access_team_ids"
+                                string="Equipes com acesso"
+                                widget="many2many_tags"
+                                readonly="1"
+                            />
+                            <field
+                                name="contact_center_access_user_ids"
+                                string="Usuários com acesso"
+                                widget="many2many_tags"
+                                readonly="1"
+                            />
                             <field name="contact_center_responsible_id" readonly="1" />
                             <field name="contact_center_state" readonly="1" />
                         </group>
@@ -52,8 +62,16 @@
                     name="contact_center_company_id"
                     groups="base.group_multi_company"
                 />
-                <field name="contact_center_team_id" />
-                <field name="contact_center_owner_user_id" />
+                <field
+                    name="contact_center_access_team_ids"
+                    string="Equipes com acesso"
+                    widget="many2many_tags"
+                />
+                <field
+                    name="contact_center_access_user_ids"
+                    string="Usuários com acesso"
+                    widget="many2many_tags"
+                />
                 <field name="contact_center_responsible_id" />
                 <field name="contact_center_state" />
                 <field name="active" />

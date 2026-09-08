@@ -405,7 +405,7 @@
             ref="contact_center_base.view_contact_center_account_form"
         />
         <field name="arch" type="xml">
-            <field name="default_team_id" position="after">
+            <field name="access_team_ids" position="after">
                 <field name="default_pipeline_id" />
             </field>
         </field>

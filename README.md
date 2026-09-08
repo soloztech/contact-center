@@ -6,11 +6,11 @@
 Provider-neutral contact center for Odoo 16, with a standalone Owl inbox, WhatsApp
 through WuzAPI, and Messenger and Page-linked Instagram through Meta.
 
-This is the **1.0 greenfield pre-release baseline**. All six addons use version
-`16.0.1.0.0`. The supported starting point is a clean installation; older development
-snapshots require their own explicit laboratory procedure. Historical migrations are not
-part of this baseline. Persistent schema or data changes after the first production
-release must include normal cumulative migrations.
+All six addons use version **`16.0.1.1.0`**. Clean installations need no data handoff.
+Upgrades from the `16.0.1.0.0` production baseline use the cumulative
+[inbox-access migration](operations/account-access-upgrade.md), which preserves
+existing users, teams and conversation assignments. Older development snapshots
+still require their explicit laboratory procedures before this upgrade.
 
 The [current audit](reviews/2026-09-05-greenfield-audit.md) records changes,
 verification and remaining limits. Historical test counts, deployment hashes and phase
@@ -35,7 +35,7 @@ functional marketing addons.
 
 ## Accounts, identities and access
 
-An account is one logical inbox. It owns conversations, owner/team scope, assignments
+An account is one logical inbox. It owns conversations, user/team scope, assignments
 and operational policy. A provider connection is one transport attached to that account.
 Connections have `primary`, `standby`, `migration` or `historical` roles. Only the
 active primary admits traffic; sending also requires outbound enablement and verified
@@ -53,10 +53,12 @@ PSID and IGSID remain account-scoped. Each inbox retains its own channel and sta
 companies remain isolated. Manual names and contact links take precedence over provider
 profile updates.
 
-Agent and Supervisor roles grant operations; account ownership and explicit team rosters
-determine scope. Shared inboxes use a team, while an owner can operate an exclusive
-inbox. Roster changes reconcile native channel memberships and remove historical access
-for users who lose their scope. Administrators have privileged, company-scoped
+Agent and Supervisor roles grant operations. Each inbox can authorize several users
+and several teams, cumulatively: a user can attend through a direct grant or through
+any selected team's roster. Direct grants and teams can be combined. Roster changes
+reconcile native channel memberships and remove historical access when the user has
+no remaining grant. A conversation's responsible agent and optional automatic
+assignee remain singular. Administrators have privileged, company-scoped
 configuration and technical-ledger access.
 
 ## Operator capabilities

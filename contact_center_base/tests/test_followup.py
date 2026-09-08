@@ -81,7 +81,7 @@ class TestContactCenterFollowup(TransactionCase):
                 "company_id": cls.env.company.id,
                 "platform": "whatsapp",
                 "external_ref": "productivity-account-%s" % uuid.uuid4(),
-                "default_team_id": cls.team.id,
+                "access_team_ids": [(6, 0, [cls.team.id])],
             }
         )
         cls.connection = cls.env["contact.center.provider.connection"].create(
@@ -130,7 +130,7 @@ class TestContactCenterFollowup(TransactionCase):
             identity=identity if conversation_type == "direct" else None,
             conversation_type=conversation_type,
             name="Productivity %s %s" % (conversation_type, token[:8]),
-            team=cls.team,
+            teams=cls.team,
             guest_ids=guest.ids,
         )
         binding = (
@@ -558,6 +558,39 @@ class TestContactCenterFollowup(TransactionCase):
             {"activity_id": result["activity"]["id"]},
         )
 
+    def test_followup_keeps_assignee_until_last_overlapping_grant_is_removed(self):
+        second_team = self.env["contact.center.team"].create(
+            {
+                "name": "Follow-up second team %s" % uuid.uuid4(),
+                "company_id": self.env.company.id,
+                "agent_ids": [(6, 0, self.agent.ids)],
+                "supervisor_ids": [(6, 0, self.supervisor.ids)],
+            }
+        )
+        self.account.write(
+            {
+                "access_user_ids": [(6, 0, self.agent.ids)],
+                "access_team_ids": [(4, second_team.id)],
+            }
+        )
+        scheduled = self._api().schedule_followup(
+            self.channel.id,
+            {
+                "client_request_id": str(uuid.uuid4()),
+                "date_deadline": fields.Date.to_string(self._today()),
+                "summary": "Overlapping access follow-up",
+                "user_id": self.agent.id,
+            },
+        )
+        activity = self.env["mail.activity"].browse(scheduled["activity"]["id"])
+        self.account.write({"access_team_ids": [(3, self.team.id)]})
+        second_team.write({"agent_ids": [(3, self.agent.id)]})
+        self.assertEqual(activity.user_id, self.agent)
+        self.account.write({"access_user_ids": [(3, self.agent.id)]})
+        self.assertEqual(activity.user_id, self.supervisor)
+        self.assertEqual(activity.res_model, "mail.channel")
+        self.assertEqual(activity.res_id, self.channel.id)
+
     def test_schedule_followup_locks_access_topology_before_channel_fence(self):
         events = []
         activity_type = type(self.env["mail.activity"])
@@ -835,7 +868,7 @@ class TestFollowupCompletionConcurrency(TransactionCase):
                     "company_id": company.id,
                     "platform": "whatsapp",
                     "external_ref": "productivity-concurrency-%s" % token,
-                    "default_team_id": team.id,
+                    "access_team_ids": [(6, 0, [team.id])],
                 }
             )
             connection = env["contact.center.provider.connection"].create(
@@ -876,7 +909,7 @@ class TestFollowupCompletionConcurrency(TransactionCase):
                 identity=identity,
                 conversation_type="direct",
                 name="Productivity concurrency %s" % token,
-                team=team,
+                teams=team,
                 guest_ids=guest.ids,
             )
             binding = (

@@ -109,8 +109,9 @@
                         <div class="o_cc_setup_kicker">1 · Atendimento</div>
                         <h2>Como esta caixa será usada?</h2>
                         <p class="text-muted">
-                            O proprietário recebe acesso individual. A equipe é
-                            opcional e compartilha a caixa com todos os seus membros.
+                            Selecione usuários e equipes que poderão atender nesta caixa.
+                            Os acessos são cumulativos e incluem todos os membros
+                            das equipes selecionadas.
                         </p>
                         <group>
                             <group>
@@ -122,17 +123,21 @@
                                 <field
                                     name="company_id"
                                     groups="base.group_multi_company"
-                                    options="{'no_create': True}"
+                                    options="{'no_create': True, 'no_create_edit': True}"
                                 />
                                 <field
-                                    name="owner_user_id"
+                                    name="access_user_ids"
+                                    string="Usuários com acesso"
+                                    widget="many2many_tags"
                                     domain="[('active', '=', True), ('share', '=', False), ('company_ids', 'in', [company_id]), ('groups_id', 'in', [%(contact_center_base.group_contact_center_agent)d])]"
-                                    options="{'no_create': True}"
+                                    options="{'no_create': True, 'no_create_edit': True}"
                                 />
                                 <field
-                                    name="default_team_id"
+                                    name="access_team_ids"
+                                    string="Equipes com acesso"
+                                    widget="many2many_tags"
                                     domain="[('active', '=', True), ('company_id', '=', company_id)]"
-                                    options="{'no_quick_create': True}"
+                                    options="{'no_create': True, 'no_create_edit': True}"
                                 />
                                 <field
                                     name="auto_assignment_user_id"

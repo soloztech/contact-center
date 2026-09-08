@@ -100,7 +100,7 @@ class TestContactCenterIdentityAvatar(SavepointCase):
                 "company_id": cls.env.company.id,
                 "platform": "whatsapp",
                 "external_ref": "avatar-account-%s" % uuid.uuid4(),
-                "default_team_id": cls.team.id,
+                "access_team_ids": [(6, 0, cls.team.ids)],
             }
         )
         now = fields.Datetime.now()

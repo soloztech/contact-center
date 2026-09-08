@@ -29,7 +29,7 @@ class WuzapiCase(SavepointCase):
                 "name": "WuzAPI test account",
                 "company_id": cls.env.company.id,
                 "platform": "whatsapp",
-                "owner_user_id": cls.agent.id,
+                "access_user_ids": [(6, 0, cls.agent.ids)],
             }
         )
         cls.connection = cls.env["contact.center.provider.connection"].create(

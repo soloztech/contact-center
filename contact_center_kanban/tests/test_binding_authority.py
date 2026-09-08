@@ -581,7 +581,7 @@ class TestCrmRosterAggregateConcurrency(TransactionCase):
                     "company_id": env.company.id,
                     "platform": "whatsapp",
                     "external_ref": "crm-roster-%s" % token,
-                    "default_team_id": team.id,
+                    "access_team_ids": [(6, 0, team.ids)],
                     "default_pipeline_id": pipeline.id,
                 }
             )

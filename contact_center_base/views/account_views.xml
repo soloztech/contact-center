@@ -8,8 +8,16 @@
                 <field name="name" />
                 <field name="platform" />
                 <field name="company_id" groups="base.group_multi_company" />
-                <field name="owner_user_id" />
-                <field name="default_team_id" />
+                <field
+                    name="access_user_ids"
+                    string="Usuários com acesso"
+                    widget="many2many_tags"
+                />
+                <field
+                    name="access_team_ids"
+                    string="Equipes com acesso"
+                    widget="many2many_tags"
+                />
                 <field
                     name="auto_assignment_user_id"
                     string="Atribuir automaticamente a"
@@ -47,14 +55,18 @@
                                 groups="base.group_multi_company"
                             />
                             <field
-                                name="owner_user_id"
+                                name="access_user_ids"
+                                string="Usuários com acesso"
+                                widget="many2many_tags"
                                 domain="[('active', '=', True), ('share', '=', False), ('company_ids', 'in', [company_id]), ('groups_id', 'in', [%(contact_center_base.group_contact_center_agent)d])]"
-                                options="{'no_create': True}"
+                                options="{'no_create': True, 'no_create_edit': True}"
                             />
                             <field
-                                name="default_team_id"
+                                name="access_team_ids"
+                                string="Equipes com acesso"
+                                widget="many2many_tags"
                                 domain="[('active', '=', True), ('company_id', '=', company_id)]"
-                                options="{'no_quick_create': True}"
+                                options="{'no_create': True, 'no_create_edit': True}"
                             />
                             <field
                                 name="auto_assignment_eligible_user_ids"
@@ -303,13 +315,13 @@
                                 name="agent_ids"
                                 widget="many2many_tags"
                                 domain="[('active', '=', True), ('share', '=', False), ('company_ids', 'in', [company_id]), ('groups_id', 'in', [%(contact_center_base.group_contact_center_agent)d])]"
-                                options="{'no_create': True}"
+                                options="{'no_create': True, 'no_create_edit': True}"
                             /></page>
                         <page string="Supervisors"><field
                                 name="supervisor_ids"
                                 widget="many2many_tags"
                                 domain="[('active', '=', True), ('share', '=', False), ('company_ids', 'in', [company_id]), ('groups_id', 'in', [%(contact_center_base.group_contact_center_supervisor)d])]"
-                                options="{'no_create': True}"
+                                options="{'no_create': True, 'no_create_edit': True}"
                             /></page>
                     </notebook>
                 </sheet>

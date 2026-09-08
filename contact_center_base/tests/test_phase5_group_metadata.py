@@ -87,7 +87,7 @@ class TestContactCenterGroupMetadata(SavepointCase):
                 "company_id": cls.env.company.id,
                 "platform": "whatsapp",
                 "external_ref": "metadata-account-%s" % uuid.uuid4(),
-                "default_team_id": cls.team.id,
+                "access_team_ids": [(6, 0, cls.team.ids)],
                 "group_inbound_enabled": True,
             }
         )

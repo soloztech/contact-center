@@ -1,7 +1,7 @@
 {
     "name": "Contact Center Kanban",
     "summary": "Optional Atendimentos, pipelines and CRM stage synchronization",
-    "version": "16.0.1.0.0",
+    "version": "16.0.1.1.0",
     "category": "Productivity/Discuss",
     "author": "Soloz Technologies",
     "website": "https://github.com/soloztech/contact-center",

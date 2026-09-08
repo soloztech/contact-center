@@ -403,8 +403,8 @@ class TestMetaWebhookConsumer(MetaCase):
     def test_owner_only_account_projects_and_enqueues_the_new_webhook(self):
         self.account.write(
             {
-                "owner_user_id": self.agent.id,
-                "default_team_id": False,
+                "access_user_ids": [(6, 0, self.agent.ids)],
+                "access_team_ids": [(6, 0, [])],
             }
         )
         delivery = self.create_delivery(self._envelope(mid="m_meta_owner_only"))
@@ -425,12 +425,12 @@ class TestMetaWebhookConsumer(MetaCase):
         with self.assertRaises(ValidationError), self.env.cr.savepoint():
             self.account.write(
                 {
-                    "owner_user_id": False,
-                    "default_team_id": False,
+                    "access_user_ids": [(6, 0, [])],
+                    "access_team_ids": [(6, 0, [])],
                 }
             )
 
-        self.account.invalidate_recordset(["owner_user_id", "default_team_id"])
+        self.account.invalidate_recordset(["access_user_ids", "access_team_ids"])
         self.assertTrue(self.account._contact_center_access_is_ready())
         self.assertTrue(self.connection._meta_inbound_route_is_ready())
 

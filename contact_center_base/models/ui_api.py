@@ -1508,22 +1508,18 @@ class ContactCenterUiApi(models.AbstractModel):
                 if conversation_type == "group"
                 else False
             ),
-            "team": (
-                {
-                    "id": channel.contact_center_team_id.id,
-                    "name": channel.contact_center_team_id.name,
-                }
-                if channel.contact_center_team_id
-                else False
-            ),
-            "owner": (
-                {
-                    "id": channel.contact_center_owner_user_id.id,
-                    "name": channel.contact_center_owner_user_id.display_name,
-                }
-                if channel.contact_center_owner_user_id
-                else False
-            ),
+            "access_teams": [
+                {"id": team.id, "name": team.name}
+                for team in channel.contact_center_access_team_ids.sorted(
+                    key=lambda item: (item.name, item.id)
+                )
+            ],
+            "access_users": [
+                {"id": user.id, "name": user.display_name}
+                for user in channel.contact_center_access_user_ids.sorted(
+                    key=lambda item: (item.name, item.id)
+                )
+            ],
             "responsible": (
                 {
                     "id": channel.contact_center_responsible_id.id,
@@ -2662,7 +2658,7 @@ class ContactCenterUiApi(models.AbstractModel):
         channel.invalidate_recordset(
             [
                 "contact_center_state",
-                "contact_center_team_id",
+                "contact_center_access_team_ids",
                 "contact_center_responsible_id",
                 "contact_center_tag_ids",
                 "channel_member_ids",

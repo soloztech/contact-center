@@ -154,8 +154,8 @@ class MetaFixtureMixin:
                 "company_id": company.id,
                 "platform": platform,
                 "own_external_identity": asset_id,
-                "owner_user_id": owner.id if owner else False,
-                "default_team_id": team.id if team else False,
+                "access_user_ids": [(6, 0, owner.ids if owner else [])],
+                "access_team_ids": [(6, 0, team.ids if team else [])],
                 "active": active,
             }
         )

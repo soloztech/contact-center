@@ -22,7 +22,7 @@ class ConversationCrmCase(TransactionCase):
                 "platform": "whatsapp",
                 "external_ref": str(uuid.uuid4()),
                 "company_id": cls.env.company.id,
-                "owner_user_id": cls.agent.id,
+                "access_user_ids": [(6, 0, cls.agent.ids)],
             }
         )
         cls.customer = cls.env["res.partner"].create(
@@ -90,7 +90,7 @@ class ConversationCrmCase(TransactionCase):
                 "platform": "whatsapp",
                 "external_ref": str(uuid.uuid4()),
                 "company_id": cls.env.company.id,
-                "owner_user_id": user.id,
+                "access_user_ids": [(6, 0, user.ids)],
             }
         )
         return cls._channel(account, cls.person)

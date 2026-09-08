@@ -55,7 +55,7 @@ class TestProviderConnectionRoles(SavepointCase):
                 "external_ref": "role-account-%s" % uuid.uuid4(),
                 # Test transactions run as the inactive technical superuser.
                 # Ownership is an operational grant, so use the active admin.
-                "owner_user_id": cls.env.ref("base.user_admin").id,
+                "access_user_ids": [(6, 0, cls.env.ref("base.user_admin").ids)],
             }
         )
 
@@ -397,7 +397,7 @@ class TestProviderConnectionRoleConcurrency(TransactionCase):
                         "company_id": env.company.id,
                         "platform": "whatsapp",
                         "external_ref": "concurrent-role-account-%s" % token,
-                        "owner_user_id": env.ref("base.user_admin").id,
+                        "access_user_ids": [(6, 0, env.ref("base.user_admin").ids)],
                     }
                 )
                 fixture["account_id"] = account.id

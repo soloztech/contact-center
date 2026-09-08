@@ -55,7 +55,7 @@ class TestPhase1Concurrency(TransactionCase):
                     "company_id": company.id,
                     "platform": "whatsapp",
                     "external_ref": "concurrency-account-%s" % token,
-                    "default_team_id": team.id,
+                    "access_team_ids": [(6, 0, team.ids)],
                 }
             )
             connection = env["contact.center.provider.connection"].create(
@@ -1023,7 +1023,7 @@ class TestPhase1Concurrency(TransactionCase):
                     "company_id": company.id,
                     "platform": "whatsapp",
                     "external_ref": "concurrency-account-%s" % token,
-                    "default_team_id": team.id,
+                    "access_team_ids": [(6, 0, team.ids)],
                     "group_inbound_enabled": True,
                 }
             )

@@ -433,7 +433,7 @@ class ContactCenterPipeline(models.Model):
                     ]
                 )
                 for account in accounts:
-                    account_pipeline = account.default_team_id.default_pipeline_id
+                    account_pipeline = account._contact_center_unique_team_pipeline()
                     if (
                         not account_pipeline
                         or not account_pipeline.active
@@ -742,7 +742,7 @@ class ContactCenterTeamPipeline(models.Model):
                 self.env["contact.center.account"]
                 .sudo()
                 .with_context(active_test=False)
-                .search([("default_team_id", "in", self.ids)])
+                .search([("access_team_ids", "in", self.ids)])
             )
             pipeline_ids = set(self.mapped("pipeline_ids").ids)
             pipeline_ids.update(self.mapped("default_pipeline_id").ids)
@@ -783,11 +783,16 @@ class ContactCenterTeamPipeline(models.Model):
                 team.default_pipeline_id._contact_center_initial_stage()
             invalid_account = account_model.search(
                 [
-                    ("default_team_id", "=", team.id),
+                    ("access_team_ids", "=", team.id),
                     ("default_pipeline_id", "not in", team.pipeline_ids.ids or [0]),
                 ],
-                limit=1,
-            )
+            ).filtered(
+                lambda account: account.default_pipeline_id
+                and account.default_pipeline_id
+                not in account.access_team_ids.mapped("pipeline_ids")
+            )[
+                :1
+            ]
             if invalid_account:
                 raise ValidationError(
                     _(
@@ -898,22 +903,26 @@ class ContactCenterAccountPipeline(models.Model):
         domain="[('company_id', '=', company_id), ('active', '=', True)]",
     )
 
+    def _contact_center_unique_team_pipeline(self):
+        """Infer a default only when the access teams agree on one pipeline."""
+
+        self.ensure_one()
+        pipelines = self.access_team_ids.mapped("default_pipeline_id")
+        return pipelines if len(pipelines) == 1 else pipelines.browse()
+
     @api.model_create_multi
     def create(self, vals_list):
         pipeline_model = self.env["contact.center.pipeline"]
         prepared = []
-        for source in vals_list:
+        for source in self._contact_center_prepare_access_defaults(vals_list):
             values = dict(source)
             if not values.get("default_pipeline_id"):
                 company = self.env["res.company"].browse(
                     values.get("company_id") or self.env.company.id
                 )
-                team = (
-                    self.env["contact.center.team"]
-                    .browse(values.get("default_team_id"))
-                    .exists()
-                )
-                pipeline = team.default_pipeline_id if team else pipeline_model.browse()
+                _users, teams = self._contact_center_access_scope_values(values)
+                pipelines = teams.mapped("default_pipeline_id")
+                pipeline = pipelines if len(pipelines) == 1 else pipeline_model.browse()
                 if (
                     not pipeline
                     or not pipeline.active
@@ -926,17 +935,20 @@ class ContactCenterAccountPipeline(models.Model):
                     )
                 values["default_pipeline_id"] = pipeline.id
             prepared.append(values)
-        team_ids = {
-            int(values["default_team_id"])
-            for values in prepared
-            if values.get("default_team_id")
-        }
-        user_ids = {
-            int(values[field_name])
-            for values in prepared
-            for field_name in ("owner_user_id", "auto_assignment_user_id")
-            if values.get(field_name)
-        }
+        team_ids = set()
+        user_ids = set()
+        for values in prepared:
+            users, teams = self._contact_center_access_scope_values(values)
+            team_ids.update(teams.ids)
+            user_ids.update(users.ids)
+        user_ids.update(
+            {
+                int(values[field_name])
+                for values in prepared
+                for field_name in ("auto_assignment_user_id",)
+                if values.get(field_name)
+            }
+        )
         pipeline_ids = {
             int(values["default_pipeline_id"])
             for values in prepared
@@ -960,9 +972,9 @@ class ContactCenterAccountPipeline(models.Model):
                 pipeline_ids.add(int(values["default_pipeline_id"]))
             self._contact_center_lock_access_topology(
                 account_ids=self.ids,
-                team_ids=self.mapped("default_team_id").ids,
+                team_ids=self.mapped("access_team_ids").ids,
                 user_ids=(
-                    self.mapped("owner_user_id")
+                    self.mapped("access_user_ids")
                     | self.mapped("auto_assignment_user_id")
                 ).ids,
                 pipeline_ids=pipeline_ids,
@@ -970,7 +982,7 @@ class ContactCenterAccountPipeline(models.Model):
             self.invalidate_recordset(["default_pipeline_id"])
         return super().write(values)
 
-    @api.constrains("company_id", "default_team_id", "default_pipeline_id")
+    @api.constrains("company_id", "access_team_ids", "default_pipeline_id")
     def _check_default_pipeline_configuration(self):
         for account in self:
             pipeline = account.default_pipeline_id
@@ -984,11 +996,11 @@ class ContactCenterAccountPipeline(models.Model):
                 raise ValidationError(_("The inbox default pipeline must be active."))
             pipeline._contact_center_initial_stage()
             if (
-                account.default_team_id
-                and pipeline not in account.default_team_id.pipeline_ids
+                account.access_team_ids
+                and pipeline not in account.access_team_ids.mapped("pipeline_ids")
             ):
                 raise ValidationError(
-                    _("The inbox default pipeline must be enabled for its access team.")
+                    _("The inbox default pipeline must be enabled for an access team.")
                 )
 
 
@@ -1005,6 +1017,13 @@ class MailChannelCase(models.Model):
         compute="_compute_contact_center_case_count",
         string="Quantidade de atendimentos",
     )
+
+    def _contact_center_default_case_team(self):
+        """A case can infer its operational team only from an unambiguous scope."""
+
+        self.ensure_one()
+        teams = self.contact_center_access_team_ids
+        return teams if len(teams) == 1 else teams.browse()
 
     @api.depends("contact_center_case_ids")
     def _compute_contact_center_case_count(self):
@@ -1037,9 +1056,15 @@ class MailChannelCase(models.Model):
                 .with_context(active_test=False)
                 .search([("channel_id", "=", channel.id)])
             )
-            team = channel.contact_center_team_id
-            if team:
-                missing_pipelines = cases.mapped("pipeline_id") - team.pipeline_ids
+            for case in cases:
+                team = case.team_id
+                if not team or team not in channel.contact_center_access_team_ids:
+                    team = channel._contact_center_default_case_team()
+                missing_pipelines = (
+                    case.pipeline_id - team.pipeline_ids
+                    if team
+                    else self.env["contact.center.pipeline"]
+                )
                 if missing_pipelines:
                     raise ValidationError(
                         _(
@@ -1053,7 +1078,6 @@ class MailChannelCase(models.Model):
                             "team": team.display_name,
                         }
                     )
-            for case in cases:
                 values = {}
                 if case.team_id != team:
                     values["team_id"] = team.id if team else False
@@ -1083,7 +1107,7 @@ class MailChannelCase(models.Model):
         self.ensure_one()
         if self.channel_type != "contact_center":
             return self.env["contact.center.case"]
-        team = team or self.contact_center_team_id
+        team = team or self._contact_center_default_case_team()
         account = account or self._contact_center_case_account()
         company = self.contact_center_company_id
         if not company:
@@ -1102,9 +1126,7 @@ class MailChannelCase(models.Model):
             pipeline = self.env[
                 "contact.center.pipeline"
             ]._contact_center_provision_default_pipeline(company)
-        responsible = (
-            self.contact_center_responsible_id or self.contact_center_owner_user_id
-        )
+        responsible = self.contact_center_responsible_id
         self.env["contact.center.case"]._contact_center_lock_case_topology_ids(
             account_ids=account.ids,
             team_ids=team.ids,
@@ -1115,9 +1137,9 @@ class MailChannelCase(models.Model):
         self.invalidate_recordset(
             [
                 "contact_center_company_id",
-                "contact_center_owner_user_id",
+                "contact_center_access_user_ids",
                 "contact_center_responsible_id",
-                "contact_center_team_id",
+                "contact_center_access_team_ids",
             ]
         )
         existing = (
@@ -1193,7 +1215,7 @@ class MailChannelCase(models.Model):
         action["context"] = {
             "default_channel_id": self.id,
             "default_company_id": self.contact_center_company_id.id,
-            "default_team_id": self.contact_center_team_id.id,
+            "default_team_id": self._contact_center_default_case_team().id,
             "search_default_group_stage": 1,
         }
         return action
@@ -1339,7 +1361,7 @@ class ContactCenterCase(models.Model):
         for channel in cases.mapped("channel_id"):
             accounts |= channel._contact_center_case_account()
         teams = cases.mapped("team_id") | cases.mapped(
-            "channel_id.contact_center_team_id"
+            "channel_id.contact_center_access_team_ids"
         )
         users = cases.mapped("responsible_user_id") | self.env["res.users"].browse(
             list(extra_user_ids or [])
@@ -1387,11 +1409,8 @@ class ContactCenterCase(models.Model):
             if not channel or channel.channel_type != "contact_center":
                 continue
             case.company_id = channel.contact_center_company_id
-            case.team_id = channel.contact_center_team_id
-            case.responsible_user_id = (
-                channel.contact_center_responsible_id
-                or channel.contact_center_owner_user_id
-            )
+            case.team_id = channel._contact_center_default_case_team()
+            case.responsible_user_id = channel.contact_center_responsible_id
             account = channel._contact_center_case_account()
             pipeline = account.default_pipeline_id if account else False
             if not pipeline and case.team_id:
@@ -1469,7 +1488,7 @@ class ContactCenterCase(models.Model):
             team_value = (
                 values["team_id"]
                 if "team_id" in values
-                else channel.contact_center_team_id.id
+                else channel._contact_center_default_case_team().id
             )
             team = self.env["contact.center.team"].browse(team_value).exists()
             account = channel._contact_center_case_account()
@@ -1516,10 +1535,7 @@ class ContactCenterCase(models.Model):
                     "responsible_user_id": (
                         values["responsible_user_id"]
                         if "responsible_user_id" in values
-                        else (
-                            channel.contact_center_responsible_id
-                            or channel.contact_center_owner_user_id
-                        ).id
+                        else (channel.contact_center_responsible_id).id
                     ),
                     "opened_at": values.get("opened_at") or now,
                     "stage_changed_at": values.get("stage_changed_at") or now,
@@ -1642,9 +1658,12 @@ class ContactCenterCase(models.Model):
             raise ValidationError(_("Cases require a Contact Center conversation."))
         if self.channel_id.contact_center_company_id != self.company_id:
             raise ValidationError(_("The case and conversation companies differ."))
-        if self.team_id != self.channel_id.contact_center_team_id:
+        if (
+            self.team_id
+            and self.team_id not in self.channel_id.contact_center_access_team_ids
+        ):
             raise ValidationError(
-                _("The case team must match the conversation access team.")
+                _("The case team must be one of the conversation access teams.")
             )
         if self.team_id and self.team_id.company_id != self.company_id:
             raise ValidationError(_("The case team belongs to another company."))
@@ -1682,8 +1701,8 @@ class ContactCenterCase(models.Model):
             )
         account = self._contact_center_case_access_account()
         allowed_users = self.env["res.users"]
-        if self.channel_id.contact_center_owner_user_id:
-            allowed_users |= self.channel_id.contact_center_owner_user_id
+        if self.channel_id.contact_center_access_user_ids:
+            allowed_users |= self.channel_id.contact_center_access_user_ids
         if account:
             allowed_users |= account._contact_center_effective_users()
         if self.team_id:

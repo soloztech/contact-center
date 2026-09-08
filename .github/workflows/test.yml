@@ -96,6 +96,8 @@ jobs:
           python -m pip install --editable "${sibling_root}/setup/meta_webhook_base"
       - name: Install addons and dependencies
         run: oca_install_addons
+      - name: Test cumulative inbox access migration guards
+        run: python -m unittest discover -s release_migrations/tests -p 'test_account_access_many2many.py'
       - name: Check licenses
         run: manifestoo -d . check-licenses
       - name: Check development status

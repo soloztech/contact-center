@@ -42,7 +42,7 @@ class TestContactCenterBaseProductivity(SavepointCase):
                 "company_id": cls.env.company.id,
                 "platform": "whatsapp",
                 "external_ref": "base-productivity-%s" % uuid.uuid4(),
-                "default_team_id": cls.team.id,
+                "access_team_ids": [(6, 0, cls.team.ids)],
             }
         )
         guest = cls.env["mail.guest"].sudo().create({"name": "Base Guest"})
@@ -62,7 +62,7 @@ class TestContactCenterBaseProductivity(SavepointCase):
             identity=identity,
             conversation_type="direct",
             name="Base Productivity Conversation",
-            team=cls.team,
+            teams=cls.team,
             guest_ids=guest.ids,
         )
         cls.env["contact.center.channel.binding"].sudo().create(
@@ -77,6 +77,38 @@ class TestContactCenterBaseProductivity(SavepointCase):
 
     def _api(self):
         return self.env["contact.center.ui.api"].with_user(self.agent)
+
+    def test_quick_replies_include_every_shared_access_team(self):
+        other_team = self.env["contact.center.team"].create(
+            {
+                "name": "Shared reply team %s" % uuid.uuid4(),
+                "company_id": self.env.company.id,
+            }
+        )
+        self.account.write({"access_team_ids": [(4, other_team.id)]})
+        marker = uuid.uuid4().hex[:10]
+        shortcode = self.env["mail.shortcode"].create(
+            {
+                "source": "other-team-%s" % marker,
+                "substitution": "Reply from another authorized team",
+                "description": marker,
+            }
+        )
+        self.env["contact.center.quick.reply.binding"].create(
+            {
+                "shortcode_id": shortcode.id,
+                "company_id": self.env.company.id,
+                "scope": "team",
+                "team_id": other_team.id,
+            }
+        )
+        replies = self._api().search_quick_replies(self.channel.id, marker)
+        self.assertEqual(len(replies["items"]), 1)
+        self.assertEqual(replies["items"][0]["body"], shortcode.substitution)
+        self.account.write({"access_team_ids": [(3, other_team.id)]})
+        self.assertFalse(
+            self._api().search_quick_replies(self.channel.id, marker)["items"]
+        )
 
     def test_quick_reply_internal_note_and_schedule_are_base_features(self):
         marker = uuid.uuid4().hex[:10]

@@ -30,3 +30,4 @@ from . import (
     test_technical_menus,
 )
 from . import test_followup
+from . import test_multi_access_ui

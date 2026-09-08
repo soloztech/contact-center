@@ -28,7 +28,7 @@ class TestGroupParticipantDeliveryLedger(SavepointCase):
                 "company_id": cls.env.company.id,
                 "platform": "whatsapp",
                 "external_ref": "group-receipt-account-%s" % uuid.uuid4(),
-                "default_team_id": cls.team.id,
+                "access_team_ids": [(6, 0, cls.team.ids)],
                 "technical_author_id": cls.agent.partner_id.id,
             }
         )
@@ -51,7 +51,7 @@ class TestGroupParticipantDeliveryLedger(SavepointCase):
             account=cls.account,
             conversation_type="group",
             name="Group Receipt Conversation",
-            team=cls.team,
+            teams=cls.team,
             partner_ids=cls.agent.partner_id.ids,
         )
         cls.channel_binding = (

@@ -100,9 +100,9 @@ class TestContactCenterAccessScope(SavepointCase):
             "external_ref": str(uuid.uuid4()),
         }
         if team:
-            values["default_team_id"] = team.id
+            values["access_team_ids"] = [(6, 0, [team.id])]
         if owner:
-            values["owner_user_id"] = owner.id
+            values["access_user_ids"] = [(6, 0, [owner.id])]
         return cls.env["contact.center.account"].create(values)
 
     @classmethod
@@ -124,7 +124,7 @@ class TestContactCenterAccessScope(SavepointCase):
         channel = cls.env["mail.channel"]._contact_center_create_channel(
             account=account,
             identity=identity,
-            team=account.default_team_id,
+            teams=account.access_team_ids,
             guest_ids=guest.ids,
         )
         cls.env["contact.center.channel.binding"].sudo().create(
@@ -251,8 +251,8 @@ class TestContactCenterAccessScope(SavepointCase):
         )
         self.assertIn(account.id, {item["id"] for item in bootstrap["accounts"]})
         self.assertIn(self.outsider.id, {item["id"] for item in bootstrap["agents"]})
-        self.assertFalse(channel.contact_center_team_id)
-        self.assertEqual(channel.contact_center_owner_user_id, self.outsider)
+        self.assertFalse(channel.contact_center_access_team_ids)
+        self.assertEqual(channel.contact_center_access_user_ids, self.outsider)
         self.assertEqual(
             set(channel.sudo().channel_member_ids.partner_id.ids),
             set(self.outsider.partner_id.ids),
@@ -308,7 +308,7 @@ class TestContactCenterAccessScope(SavepointCase):
             self.env["mail.channel"]._contact_center_create_channel(
                 account=account,
                 identity=binding.identity_id,
-                team=self.maria_team,
+                teams=self.maria_team,
             )
 
     def test_live_route_cannot_lose_the_last_union_attendant_from_either_side(self):
@@ -330,15 +330,18 @@ class TestContactCenterAccessScope(SavepointCase):
 
         account_revision = account.access_topology_revision
         team.write({"agent_ids": [(5, 0, 0)]})
-        account.invalidate_recordset(["access_topology_revision", "owner_user_id"])
+        account.invalidate_recordset(["access_topology_revision", "access_user_ids"])
         self.assertGreater(account.access_topology_revision, account_revision)
         with self.assertRaises(ValidationError), self.env.cr.savepoint():
-            account.write({"owner_user_id": False})
-        self.assertEqual(account.owner_user_id, self.outsider)
+            account.write({"access_user_ids": [(5, 0, 0)]})
+        self.assertEqual(account.access_user_ids, self.outsider)
 
         team.write({"agent_ids": [(4, self.joao.id)]})
-        account.write({"owner_user_id": False})
-        self.assertFalse(account.owner_user_id)
+        account.write({"access_user_ids": [(5, 0, 0)]})
+        self.assertFalse(account.access_user_ids)
+        with self.assertRaises(AccessError):
+            self.maria_team.write({"account_ids": [(4, account.id)]})
+        self.assertNotIn(self.maria_team, account.access_team_ids)
         with self.assertRaises(ValidationError), self.env.cr.savepoint():
             team.write({"agent_ids": [(5, 0, 0)]})
         self.assertEqual(team.agent_ids, self.joao)
@@ -366,15 +369,15 @@ class TestContactCenterAccessScope(SavepointCase):
         ).update_conversation(channel.id, {"responsible_id": self.outsider.id})
         self.assertEqual(channel.contact_center_responsible_id, self.outsider)
 
-        account.write({"owner_user_id": False})
+        account.write({"access_user_ids": [(5, 0, 0)]})
         channel.invalidate_recordset(
             [
-                "contact_center_owner_user_id",
+                "contact_center_access_user_ids",
                 "contact_center_responsible_id",
                 "channel_member_ids",
             ]
         )
-        self.assertFalse(channel.contact_center_owner_user_id)
+        self.assertFalse(channel.contact_center_access_user_ids)
         self.assertFalse(channel.contact_center_responsible_id)
         self.assertNotIn(
             self.outsider.partner_id.id,
@@ -406,7 +409,7 @@ class TestContactCenterAccessScope(SavepointCase):
         )
         merged_binding.write({"active": False, "merged_into_id": survivor_binding.id})
 
-        account.write({"owner_user_id": False})
+        account.write({"access_user_ids": [(5, 0, 0)]})
 
         for channel in inactive_channel | survivor_channel | merged_channel:
             channel.invalidate_recordset(["channel_member_ids"])
@@ -414,6 +417,234 @@ class TestContactCenterAccessScope(SavepointCase):
                 self.outsider.partner_id.id,
                 channel.sudo().channel_member_ids.partner_id.ids,
             )
+
+    def test_multiple_users_and_teams_grant_one_exact_union(self):
+        account = self._create_inbox("Multiple grants", owner=self.outsider)
+        direct_users = self.outsider | self.owner_supervisor
+        teams = self.joao_team | self.maria_team
+        account.write(
+            {
+                "access_user_ids": [(6, 0, direct_users.ids)],
+                "access_team_ids": [(6, 0, teams.ids)],
+            }
+        )
+        channel = self._create_conversation(account)
+        expected = direct_users | teams.agent_ids | teams.supervisor_ids
+        self.assertEqual(
+            set(account._contact_center_effective_users().ids), set(expected.ids)
+        )
+        self.assertEqual(
+            set(channel.contact_center_access_user_ids.ids), set(direct_users.ids)
+        )
+        self.assertEqual(
+            set(channel.contact_center_access_team_ids.ids), set(teams.ids)
+        )
+        members = channel.sudo().channel_member_ids.filtered("partner_id")
+        self.assertEqual(set(members.partner_id.ids), set(expected.partner_id.ids))
+        self.assertEqual(len(members), len(expected.partner_id))
+        for user in expected:
+            with self.subTest(user=user.id):
+                self.assertEqual(
+                    account.with_user(user).search([("id", "=", account.id)]), account
+                )
+                self.env["contact.center.ui.api"].with_user(user).get_conversation(
+                    channel.id
+                )
+        for team in teams:
+            self.assertIn(account, team.account_ids)
+        isolated = self._create_team("Outside shared inbox", agents=self.outsider)
+        visible_teams = (
+            self.env["contact.center.team"]
+            .with_user(self.joao)
+            .search([("id", "in", (self.maria_team | isolated).ids)])
+        )
+        self.assertIn(self.maria_team, visible_teams)
+        self.assertNotIn(isolated, visible_teams)
+        self.assertFalse(channel.contact_center_responsible_id)
+
+    def test_removal_preserves_membership_until_every_grant_is_removed(self):
+        overlap_team = self._create_team("Overlapping", agents=self.joao | self.maria)
+        account = self._create_inbox(
+            "Overlapping grants", team=self.joao_team, owner=self.joao
+        )
+        account.write({"access_team_ids": [(4, overlap_team.id)]})
+        channel = self._create_conversation(account)
+        api = self.env["contact.center.ui.api"].with_user(self.supervisor)
+        api.update_conversation(channel.id, {"responsible_id": self.joao.id})
+        account.write({"access_user_ids": [(3, self.joao.id)]})
+        account.write({"access_team_ids": [(3, self.joao_team.id)]})
+        self.assertIn(self.joao.partner_id, channel.channel_member_ids.partner_id)
+        self.assertEqual(channel.contact_center_responsible_id, self.joao)
+        overlap_team.write({"agent_ids": [(3, self.joao.id)]})
+        self.assertNotIn(self.joao.partner_id, channel.channel_member_ids.partner_id)
+        self.assertIn(self.maria.partner_id, channel.channel_member_ids.partner_id)
+        self.assertFalse(channel.contact_center_responsible_id)
+
+    def test_access_commands_cannot_edit_users_or_teams_or_bypass_validation(self):
+        account = self._create_inbox("Membership commands", owner=self.joao)
+        for field_name, record in (
+            ("access_user_ids", self.maria),
+            ("access_team_ids", self.maria_team),
+        ):
+            original_name = record.name
+            for commands in (
+                False,
+                [(0, 0, {"name": "Injected"})],
+                [(1, record.id, {"name": "Changed"})],
+                [(2, record.id)],
+                [(6, 0, [True])],
+                [(4, -1)],
+            ):
+                with self.subTest(
+                    field=field_name, commands=commands
+                ), self.assertRaises(ValidationError):
+                    account.write({field_name: commands})
+            self.assertEqual(record.name, original_name)
+            self.assertTrue(record.exists())
+        account.write({"access_user_ids": [(4, self.maria.id), (3, self.joao.id)]})
+        self.assertEqual(account.access_user_ids, self.maria)
+        account.write({"access_user_ids": [(5, 0, 0)]})
+        self.assertFalse(account.access_user_ids)
+
+    def test_team_context_defaults_cannot_grant_access_through_the_inverse(self):
+        account = self.maria_inbox
+        self.assertFalse(
+            account.with_user(self.owner_supervisor).search([("id", "=", account.id)])
+        )
+        original_teams = account.access_team_ids
+        model = self.env["contact.center.team"].with_user(self.owner_supervisor)
+        with self.assertRaisesRegex(
+            AccessError, "Configure team access from the inbox"
+        ), self.env.cr.savepoint():
+            model.with_context(default_account_ids=[(4, account.id)]).create(
+                {
+                    "name": "Injected inverse access %s" % uuid.uuid4(),
+                    "company_id": self.env.company.id,
+                    "agent_ids": [(6, 0, self.owner_supervisor.ids)],
+                }
+            )
+        account.invalidate_recordset(["access_team_ids"])
+        self.assertEqual(account.access_team_ids, original_teams)
+
+        default_name = "Allowed team default %s" % uuid.uuid4()
+        team = model.with_context(default_name=default_name).create(
+            {
+                "company_id": self.env.company.id,
+                "agent_ids": [(6, 0, self.owner_supervisor.ids)],
+            }
+        )
+        self.assertEqual(team.name, default_name)
+        self.assertFalse(team.account_ids)
+
+    def test_account_context_defaults_use_membership_only_commands(self):
+        for field_name, record in (
+            ("access_user_ids", self.maria),
+            ("access_team_ids", self.maria_team),
+        ):
+            original_name = record.name
+            with self.subTest(field=field_name), self.assertRaises(
+                ValidationError
+            ), self.env.cr.savepoint():
+                self.env["contact.center.account"].with_context(
+                    **{
+                        "default_%s"
+                        % field_name: [
+                            (1, record.id, {"name": "Injected through a default"})
+                        ]
+                    }
+                ).create(
+                    {
+                        "name": "Invalid default grant %s" % uuid.uuid4(),
+                        "company_id": self.env.company.id,
+                        "platform": "whatsapp",
+                    }
+                )
+            self.assertEqual(record.name, original_name)
+
+    def test_account_context_defaults_lock_authorities_and_preserve_explicit_empty(
+        self,
+    ):
+        self.maria_team.flush_recordset(["access_topology_revision"])
+        self.outsider.flush_recordset(["contact_center_access_topology_revision"])
+        team_revision = self.maria_team.access_topology_revision
+        user_revision = self.outsider.contact_center_access_topology_revision
+        inherited, empty = (
+            self.env["contact.center.account"]
+            .with_context(
+                default_access_user_ids=[(6, 0, self.outsider.ids)],
+                default_access_team_ids=[(6, 0, self.maria_team.ids)],
+                default_auto_assignment_user_id=self.maria.id,
+            )
+            .create(
+                [
+                    {
+                        "name": "Inherited default grants %s" % uuid.uuid4(),
+                        "company_id": self.env.company.id,
+                        "platform": "whatsapp",
+                    },
+                    {
+                        "name": "Explicit empty grants %s" % uuid.uuid4(),
+                        "company_id": self.env.company.id,
+                        "platform": "whatsapp",
+                        "access_user_ids": [],
+                        "access_team_ids": [],
+                        "auto_assignment_user_id": False,
+                    },
+                ]
+            )
+        )
+
+        self.assertEqual(inherited.access_user_ids, self.outsider)
+        self.assertEqual(inherited.access_team_ids, self.maria_team)
+        self.assertEqual(inherited.auto_assignment_user_id, self.maria)
+        self.assertFalse(empty.access_user_ids)
+        self.assertFalse(empty.access_team_ids)
+        self.assertFalse(empty.auto_assignment_user_id)
+        self.maria_team.invalidate_recordset(["access_topology_revision"])
+        self.outsider.invalidate_recordset(["contact_center_access_topology_revision"])
+        self.assertGreater(self.maria_team.access_topology_revision, team_revision)
+        self.assertGreater(
+            self.outsider.contact_center_access_topology_revision, user_revision
+        )
+
+    def test_default_auto_assignment_cannot_skip_scope_validation(self):
+        with self.assertRaisesRegex(
+            ValidationError, "automatic assignee"
+        ), self.env.cr.savepoint():
+            self.env["contact.center.account"].with_context(
+                default_auto_assignment_user_id=self.outsider.id,
+            ).create(
+                {
+                    "name": "Invalid default assignment %s" % uuid.uuid4(),
+                    "company_id": self.env.company.id,
+                    "platform": "whatsapp",
+                    "access_user_ids": [(6, 0, self.joao.ids)],
+                }
+            )
+
+    def test_every_selected_user_and_team_must_match_role_and_company(self):
+        account = self._create_inbox("Validated grants", owner=self.joao)
+        non_agent = self._create_user(
+            "No role in multiple grants", self.env.ref("base.group_user")
+        )
+        company = self.env["res.company"].create(
+            {"name": "Access scope %s" % uuid.uuid4()}
+        )
+        foreign_agent = self._create_user(
+            "Foreign agent", self.agent_group, company=company
+        )
+        foreign_team = self._create_team(
+            "Foreign team", agents=foreign_agent, company=company
+        )
+        for values in (
+            {"access_user_ids": [(6, 0, (self.joao | non_agent).ids)]},
+            {"access_user_ids": [(6, 0, (self.joao | foreign_agent).ids)]},
+            {"access_team_ids": [(6, 0, (self.joao_team | foreign_team).ids)]},
+        ):
+            with self.subTest(values=values), self.assertRaises(
+                ValidationError
+            ), self.env.cr.savepoint():
+                account.write(values)
 
     def test_invalid_owner_and_unscoped_live_route_fail_closed(self):
         non_agent = self._create_user(
@@ -766,9 +997,9 @@ class TestContactCenterAccessScope(SavepointCase):
             {"responsible_id": self.joao.id},
         )
         joao_channel.invalidate_recordset(
-            ["contact_center_team_id", "contact_center_responsible_id"]
+            ["contact_center_access_team_ids", "contact_center_responsible_id"]
         )
-        self.assertEqual(joao_channel.contact_center_team_id, self.joao_team)
+        self.assertEqual(joao_channel.contact_center_access_team_ids, self.joao_team)
         self.assertEqual(joao_channel.contact_center_responsible_id, self.joao)
         self.assertEqual(result["item"]["responsible"]["id"], self.joao.id)
         with self.assertRaises(AccessError):

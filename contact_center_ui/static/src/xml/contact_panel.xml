@@ -633,21 +633,28 @@
                         <span
                             class="cc-detail-field__value cc-detail-field__value--access"
                         >
-                            <span t-if="conversation.owner">
+                            <span
+                                t-foreach="conversation.access_users || []"
+                                t-as="accessUser"
+                                t-key="accessUser.id"
+                            >
                                 <i class="fa fa-user" aria-hidden="true" />
-                                Proprietário:
-                                <t t-esc="conversation.owner.name" />
-                            </span>
-                            <span t-if="conversation.team">
-                                <i class="fa fa-users" aria-hidden="true" />
-                                Equipe: <t t-esc="conversation.team.name" />
+                                <t t-esc="accessUser.name" />
                             </span>
                             <span
-                                t-if="!conversation.owner &amp;&amp; !conversation.team"
+                                t-foreach="conversation.access_teams || []"
+                                t-as="accessTeam"
+                                t-key="accessTeam.id"
+                            >
+                                <i class="fa fa-users" aria-hidden="true" />
+                                Equipe: <t t-esc="accessTeam.name" />
+                            </span>
+                            <span
+                                t-if="!(conversation.access_users || []).length &amp;&amp; !(conversation.access_teams || []).length"
                             >Sem acesso operacional configurado</span>
                         </span>
                         <small
-                        >Proprietário e equipe, quando informados, têm acesso cumulativo.</small>
+                        >Os usuários e membros das equipes têm acesso cumulativo.</small>
                     </div>
                     <label class="cc-detail-field">
                         <span>Responsável</span>

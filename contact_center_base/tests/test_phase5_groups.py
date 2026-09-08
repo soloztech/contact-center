@@ -132,7 +132,7 @@ class TestContactCenterGroups(SavepointCase):
                 "company_id": cls.env.company.id,
                 "platform": "whatsapp",
                 "external_ref": "group-account-%s" % uuid.uuid4(),
-                "default_team_id": cls.team.id,
+                "access_team_ids": [(6, 0, cls.team.ids)],
                 "technical_author_id": cls.agent.partner_id.id,
                 "group_inbound_enabled": True,
                 "group_outbound_enabled": True,
@@ -920,7 +920,7 @@ class TestContactCenterGroups(SavepointCase):
             account=self.account,
             conversation_type="group",
             name="Invalid owner",
-            team=self.team,
+            teams=self.team,
         )
         with self.assertRaises(IntegrityError), mute_logger(
             "odoo.sql_db"
@@ -939,7 +939,7 @@ class TestContactCenterGroups(SavepointCase):
             account=self.account,
             conversation_type="group",
             name="Duplicate",
-            team=self.team,
+            teams=self.team,
         )
         with self.assertRaises(IntegrityError), mute_logger(
             "odoo.sql_db"

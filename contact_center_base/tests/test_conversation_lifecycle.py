@@ -55,7 +55,7 @@ class TestConversationLifecycleAndPreference(SavepointCase):
                 "company_id": cls.env.company.id,
                 "platform": "telegram",
                 "external_ref": "preference-account-%s" % uuid.uuid4(),
-                "default_team_id": cls.team.id,
+                "access_team_ids": [(6, 0, cls.team.ids)],
             }
         )
         cls.connection = cls.env["contact.center.provider.connection"].create(
@@ -109,7 +109,7 @@ class TestConversationLifecycleAndPreference(SavepointCase):
             account=self.account,
             identity=identity,
             conversation_type="direct",
-            team=self.team,
+            teams=self.team,
             partner_ids=(self.agent_a | self.agent_b).partner_id.ids,
             guest_ids=guest.ids,
         )
@@ -478,7 +478,7 @@ class TestConversationPreferenceConcurrency(TransactionCase):
                     "company_id": env.company.id,
                     "platform": "telegram",
                     "external_ref": "preference-race-%s" % token,
-                    "owner_user_id": agent.id,
+                    "access_user_ids": [(6, 0, agent.ids)],
                 }
             )
             channel = env["mail.channel"]._contact_center_create_channel(

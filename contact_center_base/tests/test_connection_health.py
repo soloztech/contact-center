@@ -124,7 +124,7 @@ class TestConnectionHealth(SavepointCase):
                 "company_id": cls.env.company.id,
                 "platform": "whatsapp",
                 "external_ref": "health-account-%s" % uuid.uuid4(),
-                "default_team_id": cls.team.id,
+                "access_team_ids": [(6, 0, cls.team.ids)],
                 "mark_read_enabled": True,
             }
         )
@@ -183,7 +183,7 @@ class TestConnectionHealth(SavepointCase):
         channel = self.env["mail.channel"]._contact_center_create_channel(
             account=self.account,
             identity=identity,
-            team=self.team,
+            teams=self.team,
             partner_ids=(self.agent | self.supervisor).partner_id.ids,
             guest_ids=guest.ids,
         )
@@ -373,7 +373,7 @@ class TestConnectionHealth(SavepointCase):
                 "company_id": self.env.company.id,
                 "platform": "whatsapp",
                 "external_ref": "other-health-account-%s" % uuid.uuid4(),
-                "default_team_id": other_team.id,
+                "access_team_ids": [(6, 0, other_team.ids)],
             }
         )
         other_connection = self.env["contact.center.provider.connection"].create(

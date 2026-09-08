@@ -422,7 +422,7 @@ class TestPhase1Delivery(SavepointCase):
                 "company_id": cls.env.company.id,
                 "platform": "whatsapp",
                 "external_ref": "phase1-account-%s" % uuid.uuid4(),
-                "default_team_id": cls.team.id,
+                "access_team_ids": [(6, 0, cls.team.ids)],
                 "technical_author_id": cls.technical_author.id,
             }
         )
@@ -469,7 +469,7 @@ class TestPhase1Delivery(SavepointCase):
         channel = self.env["mail.channel"]._contact_center_create_channel(
             account=self.account,
             identity=identity,
-            team=self.team,
+            teams=self.team,
             partner_ids=self.agent.partner_id.ids,
             guest_ids=guest.ids,
         )

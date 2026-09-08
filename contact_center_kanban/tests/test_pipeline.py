@@ -43,7 +43,7 @@ class TestContactCenterPipeline(SavepointCase):
                 "company_id": cls.env.company.id,
                 "platform": "whatsapp",
                 "external_ref": str(uuid.uuid4()),
-                "default_team_id": cls.team.id,
+                "access_team_ids": [(6, 0, cls.team.ids)],
             }
         )
         cls.channel = cls._create_channel("Pipeline Customer")
@@ -163,6 +163,29 @@ class TestContactCenterPipeline(SavepointCase):
         self.assertEqual(self.channel.contact_center_state, "resolved")
         self.assertEqual(primary_case.stage_id, progress_stage)
 
+    def test_multiple_access_teams_do_not_choose_an_arbitrary_case_team(self):
+        second = self.env["contact.center.team"].create(
+            {
+                "name": "Additional access team %s" % uuid.uuid4(),
+                "company_id": self.env.company.id,
+                "agent_ids": [(6, 0, self.agent.ids)],
+            }
+        )
+        previous_case = self.channel.contact_center_case_ids.filtered("is_default")
+        self.account.write({"access_team_ids": [(4, second.id)]})
+        self.assertEqual(previous_case.team_id, self.team)
+        channel = self._create_channel("Multi-team customer")
+        case = channel.contact_center_case_ids.filtered("is_default")
+        self.assertEqual(
+            set(channel.contact_center_access_team_ids.ids), {self.team.id, second.id}
+        )
+        self.assertFalse(case.team_id)
+        self.assertFalse(case.responsible_user_id)
+        self.assertIn(self.agent.partner_id, channel.channel_member_ids.partner_id)
+        self.account.write({"access_team_ids": [(3, second.id)]})
+        self.assertEqual(case.team_id, self.team)
+        self.assertIn(self.agent.partner_id, channel.channel_member_ids.partner_id)
+
     def test_owner_only_conversation_creates_teamless_case(self):
         owner_account = self.env["contact.center.account"].create(
             {
@@ -170,16 +193,16 @@ class TestContactCenterPipeline(SavepointCase):
                 "company_id": self.env.company.id,
                 "platform": "whatsapp",
                 "external_ref": str(uuid.uuid4()),
-                "owner_user_id": self.agent.id,
-                "default_team_id": False,
+                "access_user_ids": [(6, 0, self.agent.ids)],
+                "access_team_ids": [(6, 0, [])],
             }
         )
         channel = self._create_channel("Owner-only Customer", account=owner_account)
         case = channel.contact_center_case_ids.filtered("is_default")
-        self.assertFalse(channel.contact_center_team_id)
-        self.assertEqual(channel.contact_center_owner_user_id, self.agent)
+        self.assertFalse(channel.contact_center_access_team_ids)
+        self.assertEqual(channel.contact_center_access_user_ids, self.agent)
         self.assertFalse(case.team_id)
-        self.assertEqual(case.responsible_user_id, self.agent)
+        self.assertFalse(case.responsible_user_id)
         self.assertEqual(case.pipeline_id, owner_account.default_pipeline_id)
 
         replacement = (
@@ -204,8 +227,8 @@ class TestContactCenterPipeline(SavepointCase):
                 }
             )
         )
-        owner_account.write({"owner_user_id": replacement.id})
-        self.assertEqual(channel.contact_center_owner_user_id, replacement)
+        owner_account.write({"access_user_ids": [(6, 0, replacement.ids)]})
+        self.assertEqual(channel.contact_center_access_user_ids, replacement)
         self.assertFalse(case.responsible_user_id)
         self.assertFalse(case.team_id)
 
@@ -245,13 +268,13 @@ class TestContactCenterPipeline(SavepointCase):
 
         with self.assertRaisesRegex(ValidationError, "Enable pipelines"):
             with self.env.cr.savepoint():
-                self.account.write({"default_team_id": replacement_team.id})
+                self.account.write({"access_team_ids": [(6, 0, replacement_team.ids)]})
 
-        self.account.invalidate_recordset(["default_team_id"])
-        self.channel.invalidate_recordset(["contact_center_team_id"])
+        self.account.invalidate_recordset(["access_team_ids"])
+        self.channel.invalidate_recordset(["contact_center_access_team_ids"])
         replacement_team.invalidate_recordset(["pipeline_ids"])
-        self.assertEqual(self.account.default_team_id, self.team)
-        self.assertEqual(self.channel.contact_center_team_id, self.team)
+        self.assertEqual(self.account.access_team_ids, self.team)
+        self.assertEqual(self.channel.contact_center_access_team_ids, self.team)
         self.assertNotIn(custom_pipeline, replacement_team.pipeline_ids)
 
     def test_transition_is_idempotent_revision_guarded_and_history_immutable(self):
@@ -553,7 +576,7 @@ class TestContactCenterPipeline(SavepointCase):
                 "company_id": self.env.company.id,
                 "platform": "whatsapp",
                 "external_ref": str(uuid.uuid4()),
-                "default_team_id": self.team.id,
+                "access_team_ids": [(6, 0, self.team.ids)],
                 "default_pipeline_id": original.id,
             }
         )
@@ -594,7 +617,7 @@ class TestContactCenterPipeline(SavepointCase):
                 "company_id": self.env.company.id,
                 "platform": "whatsapp",
                 "external_ref": str(uuid.uuid4()),
-                "owner_user_id": self.agent.id,
+                "access_user_ids": [(6, 0, self.agent.ids)],
                 "default_pipeline_id": alternate.id,
             }
         )
@@ -609,7 +632,7 @@ class TestContactCenterPipeline(SavepointCase):
                     "name": "Catalog Guard",
                     "channel_type": "contact_center",
                     "contact_center_company_id": self.env.company.id,
-                    "contact_center_team_id": self.team.id,
+                    "contact_center_access_team_ids": [(6, 0, self.team.ids)],
                     "contact_center_state": "open",
                 }
             )
@@ -640,3 +663,77 @@ class TestContactCenterPipeline(SavepointCase):
                             "is_initial": True,
                         }
                     )
+
+    def test_team_catalog_changes_keep_the_inbox_pipeline_in_the_access_union(self):
+        primary = self.account.default_pipeline_id
+        alternate = self.env["contact.center.pipeline"].create(
+            {
+                "name": "Other team's pipeline",
+                "code": "multi-team-catalog-%s" % uuid.uuid4().hex[:8],
+                "company_id": self.env.company.id,
+            }
+        )
+        self.env["contact.center.pipeline.stage"].create(
+            {
+                "name": "Other team's initial stage",
+                "code": "initial",
+                "pipeline_id": alternate.id,
+                "is_initial": True,
+            }
+        )
+        teams = self.env["contact.center.team"].create(
+            [
+                {
+                    "name": "Catalog team %s" % uuid.uuid4(),
+                    "company_id": self.env.company.id,
+                    "agent_ids": [(6, 0, self.agent.ids)],
+                    "pipeline_ids": [(6, 0, pipeline.ids)],
+                    "default_pipeline_id": pipeline.id,
+                }
+                for pipeline in (primary, alternate)
+            ]
+        )
+        account = self.env["contact.center.account"].create(
+            {
+                "name": "Multiple independent team catalogs",
+                "company_id": self.env.company.id,
+                "platform": "whatsapp",
+                "access_team_ids": [(6, 0, teams.ids)],
+                "default_pipeline_id": primary.id,
+            }
+        )
+        context_account = (
+            self.env["contact.center.account"]
+            .with_context(default_access_team_ids=[(6, 0, teams[1].ids)])
+            .create(
+                {
+                    "name": "Team pipeline inferred from an access default",
+                    "company_id": self.env.company.id,
+                    "platform": "whatsapp",
+                }
+            )
+        )
+        self.assertEqual(context_account.default_pipeline_id, alternate)
+
+        teams[1].write({"pipeline_ids": [(6, 0, alternate.ids)]})
+        self.assertEqual(account.default_pipeline_id, primary)
+        with self.assertRaisesRegex(
+            ValidationError, "used as the default by inbox"
+        ), self.env.cr.savepoint():
+            teams[0].write(
+                {
+                    "pipeline_ids": [(6, 0, alternate.ids)],
+                    "default_pipeline_id": alternate.id,
+                }
+            )
+
+        teams[1].write({"pipeline_ids": [(4, primary.id)]})
+        teams[0].write(
+            {
+                "pipeline_ids": [(6, 0, alternate.ids)],
+                "default_pipeline_id": alternate.id,
+            }
+        )
+        self.assertEqual(account.default_pipeline_id, primary)
+        self.assertNotIn(primary, teams[0].pipeline_ids)
+        self.assertIn(primary, teams[1].pipeline_ids)

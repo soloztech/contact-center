@@ -156,20 +156,25 @@ class MailChannel(models.Model):
     contact_center_company_id = fields.Many2one(
         "res.company", index=True, ondelete="restrict"
     )
-    contact_center_team_id = fields.Many2one(
+    contact_center_access_team_ids = fields.Many2many(
         "contact.center.team",
-        index=True,
-        ondelete="restrict",
+        "contact_center_channel_access_team_rel",
+        "channel_id",
+        "team_id",
+        context={"active_test": False},
         check_company=True,
         domain="[('company_id', '=', contact_center_company_id)]",
     )
-    contact_center_owner_user_id = fields.Many2one(
+    contact_center_access_user_ids = fields.Many2many(
         "res.users",
-        string="Contact Center Inbox Owner",
-        index=True,
-        ondelete="restrict",
+        "contact_center_channel_access_user_rel",
+        "channel_id",
+        "user_id",
+        string="Contact Center Authorized Users",
+        check_company=True,
+        context={"active_test": False},
         domain="[('share', '=', False)]",
-        help="Access projection of the logical inbox owner.",
+        help="Access projection of the logical inbox users.",
     )
     contact_center_responsible_id = fields.Many2one(
         "res.users",
@@ -250,8 +255,8 @@ class MailChannel(models.Model):
             )
         protected_fields = {
             "contact_center_company_id",
-            "contact_center_team_id",
-            "contact_center_owner_user_id",
+            "contact_center_access_team_ids",
+            "contact_center_access_user_ids",
             "contact_center_responsible_id",
             "contact_center_state",
             "contact_center_tag_ids",
@@ -369,8 +374,8 @@ class MailChannel(models.Model):
     @api.constrains(
         "channel_type",
         "contact_center_company_id",
-        "contact_center_team_id",
-        "contact_center_owner_user_id",
+        "contact_center_access_team_ids",
+        "contact_center_access_user_ids",
         "contact_center_responsible_id",
         "contact_center_state",
         "contact_center_tag_ids",
@@ -393,8 +398,8 @@ class MailChannel(models.Model):
                 )
             if channel.channel_type != "contact_center" and (
                 channel.contact_center_company_id
-                or channel.contact_center_team_id
-                or channel.contact_center_owner_user_id
+                or channel.contact_center_access_team_ids
+                or channel.contact_center_access_user_ids
                 or channel.contact_center_responsible_id
                 or channel.contact_center_state
                 or channel.contact_center_tag_ids
@@ -406,10 +411,9 @@ class MailChannel(models.Model):
                         "Contact center fields can only be used on contact center channels."
                     )
                 )
-            if (
-                channel.contact_center_team_id
-                and channel.contact_center_team_id.company_id
-                != channel.contact_center_company_id
+            if any(
+                team.company_id != channel.contact_center_company_id
+                for team in channel.contact_center_access_team_ids
             ):
                 raise ValidationError(_("The channel team belongs to another company."))
             if (
@@ -420,21 +424,21 @@ class MailChannel(models.Model):
                 raise ValidationError(
                     _("The responsible agent cannot access the channel company.")
                 )
-            if channel.contact_center_owner_user_id and (
-                not channel.contact_center_owner_user_id.active
-                or channel.contact_center_owner_user_id.share
-                or channel.contact_center_company_id
-                not in channel.contact_center_owner_user_id.company_ids
+            if any(
+                not user.active
+                or user.share
+                or channel.contact_center_company_id not in user.company_ids
+                for user in channel.contact_center_access_user_ids
             ):
                 raise ValidationError(
-                    _("The inbox owner cannot access the channel company.")
+                    _("An authorized user cannot access the channel company.")
                 )
-            allowed_users = channel.contact_center_owner_user_id
-            if channel.contact_center_team_id:
-                allowed_users |= (
-                    channel.contact_center_team_id.agent_ids
-                    | channel.contact_center_team_id.supervisor_ids
-                )
+            allowed_users = self.env[
+                "contact.center.account"
+            ]._contact_center_users_for_access_scope(
+                users=channel.contact_center_access_user_ids,
+                teams=channel.contact_center_access_team_ids,
+            )
             if (
                 channel.contact_center_responsible_id
                 and channel.contact_center_responsible_id not in allowed_users
@@ -465,7 +469,7 @@ class MailChannel(models.Model):
         identity=None,
         conversation_type="direct",
         name=None,
-        team=None,
+        teams=None,
         responsible=None,
         partner_ids=None,
         guest_ids=None,
@@ -482,12 +486,12 @@ class MailChannel(models.Model):
             identity.ensure_one()
             if identity.company_id != account.company_id:
                 raise ValidationError(_("The identity belongs to another company."))
-        if team and team != account.default_team_id:
+        if teams is not None and set(teams.ids) != set(account.access_team_ids.ids):
             raise ValidationError(
-                _("A conversation must use the access team configured on its inbox.")
+                _("A conversation must use every access team configured on its inbox.")
             )
-        team = account.default_team_id
-        owner = account.owner_user_id
+        teams = account.access_team_ids
+        users = account.access_user_ids
         responsible = (
             responsible or account.auto_assignment_user_id or self.env["res.users"]
         )
@@ -499,22 +503,17 @@ class MailChannel(models.Model):
         guests = self.env["mail.guest"].browse(list(guest_ids)).exists()
         if len(guests) != len(guest_ids):
             raise ValidationError(_("Every requested guest must exist."))
-        authorized_users = self.env["res.users"]
-        if owner:
-            owner.ensure_one()
-            authorized_users |= owner
-        if team:
-            team.ensure_one()
+        if teams:
             self.env.cr.execute(
-                "SELECT id FROM contact_center_team WHERE id = %s FOR SHARE",
-                [team.id],
+                "SELECT id FROM contact_center_team WHERE id = ANY(%s) ORDER BY id FOR SHARE",
+                [sorted(teams.ids)],
             )
-            team.invalidate_recordset(["agent_ids", "supervisor_ids", "active"])
-            if team.company_id != account.company_id:
-                raise ValidationError(_("The team belongs to another company."))
-            if not team.active:
-                raise ValidationError(_("The assigned team must be active."))
-            authorized_users |= team.agent_ids | team.supervisor_ids
+            teams.invalidate_recordset(["agent_ids", "supervisor_ids", "active"])
+            if any(team.company_id != account.company_id for team in teams):
+                raise ValidationError(_("An access team belongs to another company."))
+            if any(not team.active for team in teams):
+                raise ValidationError(_("Every access team must be active."))
+        authorized_users = account._contact_center_effective_users()
         partner_ids.update(authorized_users.partner_id.ids)
         if requested_partner_ids - partner_ids:
             raise AccessError(
@@ -554,8 +553,8 @@ class MailChannel(models.Model):
                     "name": fallback_name,
                     "channel_type": "contact_center",
                     "contact_center_company_id": account.company_id.id,
-                    "contact_center_team_id": team.id if team else False,
-                    "contact_center_owner_user_id": owner.id if owner else False,
+                    "contact_center_access_team_ids": [(6, 0, teams.ids)],
+                    "contact_center_access_user_ids": [(6, 0, users.ids)],
                     "contact_center_responsible_id": (
                         responsible.id if responsible else False
                     ),
@@ -1027,11 +1026,11 @@ class BasePartnerMergeAutomaticWizard(models.TransientModel):
             if account and account.active:
                 users = account._contact_center_effective_users()
             else:
-                users = channel.contact_center_owner_user_id
-                if channel.contact_center_team_id:
+                users = channel.contact_center_access_user_ids
+                if channel.contact_center_access_team_ids:
                     users |= (
-                        channel.contact_center_team_id.agent_ids
-                        | channel.contact_center_team_id.supervisor_ids
+                        channel.contact_center_access_team_ids.agent_ids
+                        | channel.contact_center_access_team_ids.supervisor_ids
                     )
                 users = users.filtered(
                     lambda user: user.active

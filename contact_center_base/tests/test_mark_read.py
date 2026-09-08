@@ -74,7 +74,7 @@ class TestMarkRead(SavepointCase):
                 "company_id": cls.env.company.id,
                 "platform": "whatsapp",
                 "external_ref": "read-account-%s" % uuid.uuid4(),
-                "default_team_id": cls.team.id,
+                "access_team_ids": [(6, 0, cls.team.ids)],
             }
         )
         cls.connection = cls.env["contact.center.provider.connection"].create(
@@ -115,7 +115,7 @@ class TestMarkRead(SavepointCase):
             identity=channel_identity,
             conversation_type=conversation_type,
             name="Read Group" if conversation_type == "group" else None,
-            team=self.team,
+            teams=self.team,
             partner_ids=self.agent.partner_id.ids,
             guest_ids=guest.ids,
         )

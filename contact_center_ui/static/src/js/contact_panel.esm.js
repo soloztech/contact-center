@@ -21,23 +21,26 @@ export function effectiveAgentsForConversation(conversation, teams, agents) {
     if (!Array.isArray(agents)) {
         return [];
     }
-    const allowed = new Set();
-    const ownerId = conversation && conversation.owner && conversation.owner.id;
-    if (Number.isSafeInteger(ownerId) && ownerId > 0) {
-        allowed.add(ownerId);
+    const userIds = [];
+    const accessUsers = conversation && conversation.access_users;
+    if (Array.isArray(accessUsers)) {
+        userIds.push(...accessUsers.filter((user) => user).map((user) => user.id));
     }
-    const teamId = conversation && conversation.team && conversation.team.id;
-    const team =
-        Number.isSafeInteger(teamId) &&
-        Array.isArray(teams) &&
-        teams.find((item) => item && item.id === teamId);
-    if (team && Array.isArray(team.agent_ids)) {
-        for (const agentId of team.agent_ids) {
-            if (Number.isSafeInteger(agentId) && agentId > 0) {
-                allowed.add(agentId);
-            }
+    const accessTeams = conversation && conversation.access_teams;
+    const accessTeamIds = new Set(
+        (Array.isArray(accessTeams) ? accessTeams : [])
+            .filter((team) => team)
+            .map((team) => team.id)
+    );
+    for (const team of Array.isArray(teams) ? teams : []) {
+        if (!team || !accessTeamIds.has(team.id) || !Array.isArray(team.agent_ids)) {
+            continue;
         }
+        userIds.push(...team.agent_ids);
     }
+    const allowed = new Set(
+        userIds.filter((userId) => Number.isSafeInteger(userId) && userId > 0)
+    );
     return agents.filter((agent) => agent && allowed.has(agent.id));
 }
 

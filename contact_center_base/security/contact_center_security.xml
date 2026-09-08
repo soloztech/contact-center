@@ -43,12 +43,14 @@
             >[('company_id', 'in', company_ids), '|', ('agent_ids', '=', user.id), ('supervisor_ids', '=', user.id)]</field>
         </record>
         <record id="rule_contact_center_team_owner_read" model="ir.rule">
-            <field name="name">Contact Center teams readable by inbox owner</field>
+            <field
+                name="name"
+            >Contact Center teams readable by shared inbox scope</field>
             <field name="model_id" ref="model_contact_center_team" />
             <field name="groups" eval="[(4, ref('group_contact_center_agent'))]" />
             <field
                 name="domain_force"
-            >[('company_id', 'in', company_ids), ('account_ids.owner_user_id', '=', user.id)]</field>
+            >[('company_id', 'in', company_ids), '|', '|', ('account_ids.access_user_ids', '=', user.id), ('account_ids.access_team_ids.agent_ids', '=', user.id), ('account_ids.access_team_ids.supervisor_ids', '=', user.id)]</field>
             <field name="perm_read" eval="True" />
             <field name="perm_write" eval="False" />
             <field name="perm_create" eval="False" />
@@ -74,7 +76,7 @@
             <field name="groups" eval="[(4, ref('group_contact_center_agent'))]" />
             <field
                 name="domain_force"
-            >[('company_id', 'in', company_ids), '|', '|', ('owner_user_id', '=', user.id), ('default_team_id.agent_ids', '=', user.id), ('default_team_id.supervisor_ids', '=', user.id)]</field>
+            >[('company_id', 'in', company_ids), '|', '|', ('access_user_ids', '=', user.id), ('access_team_ids.agent_ids', '=', user.id), ('access_team_ids.supervisor_ids', '=', user.id)]</field>
         </record>
         <record id="rule_contact_center_connection_company" model="ir.rule">
             <field name="name">Contact Center connections by account scope</field>
@@ -82,7 +84,7 @@
             <field name="groups" eval="[(4, ref('group_contact_center_agent'))]" />
             <field
                 name="domain_force"
-            >[('company_id', 'in', company_ids), '|', '|', ('account_id.owner_user_id', '=', user.id), ('account_id.default_team_id.agent_ids', '=', user.id), ('account_id.default_team_id.supervisor_ids', '=', user.id)]</field>
+            >[('company_id', 'in', company_ids), '|', '|', ('account_id.access_user_ids', '=', user.id), ('account_id.access_team_ids.agent_ids', '=', user.id), ('account_id.access_team_ids.supervisor_ids', '=', user.id)]</field>
         </record>
         <record id="rule_contact_center_team_admin_company" model="ir.rule">
             <field name="name">Contact Center teams by administrator company</field>
@@ -168,7 +170,7 @@
             <field name="groups" eval="[(4, ref('group_contact_center_agent'))]" />
             <field
                 name="domain_force"
-            >[('company_id', 'in', company_ids), ('identity_id.channel_binding_ids.channel_id.channel_member_ids.partner_id', '=', user.partner_id.id), '|', '|', ('account_id.owner_user_id', '=', user.id), ('account_id.default_team_id.agent_ids', '=', user.id), ('account_id.default_team_id.supervisor_ids', '=', user.id)]</field>
+            >[('company_id', 'in', company_ids), ('identity_id.channel_binding_ids.channel_id.channel_member_ids.partner_id', '=', user.partner_id.id), '|', '|', ('account_id.access_user_ids', '=', user.id), ('account_id.access_team_ids.agent_ids', '=', user.id), ('account_id.access_team_ids.supervisor_ids', '=', user.id)]</field>
         </record>
         <record id="rule_contact_center_identity_conflict_company" model="ir.rule">
             <field
@@ -178,7 +180,7 @@
             <field name="groups" eval="[(4, ref('group_contact_center_supervisor'))]" />
             <field
                 name="domain_force"
-            >[('company_id', 'in', company_ids), '|', '|', ('account_id.owner_user_id', '=', user.id), ('account_id.default_team_id.agent_ids', '=', user.id), ('account_id.default_team_id.supervisor_ids', '=', user.id)]</field>
+            >[('company_id', 'in', company_ids), '|', '|', ('account_id.access_user_ids', '=', user.id), ('account_id.access_team_ids.agent_ids', '=', user.id), ('account_id.access_team_ids.supervisor_ids', '=', user.id)]</field>
         </record>
         <record
             id="rule_contact_center_identity_conflict_admin_company"
@@ -276,7 +278,7 @@
             <field name="groups" eval="[(4, ref('group_contact_center_supervisor'))]" />
             <field
                 name="domain_force"
-            >[('company_id', 'in', company_ids), ('identity_id.channel_binding_ids.channel_id.channel_member_ids.partner_id', '=', user.partner_id.id), '|', '|', ('account_id.owner_user_id', '=', user.id), ('account_id.default_team_id.agent_ids', '=', user.id), ('account_id.default_team_id.supervisor_ids', '=', user.id)]</field>
+            >[('company_id', 'in', company_ids), ('identity_id.channel_binding_ids.channel_id.channel_member_ids.partner_id', '=', user.partner_id.id), '|', '|', ('account_id.access_user_ids', '=', user.id), ('account_id.access_team_ids.agent_ids', '=', user.id), ('account_id.access_team_ids.supervisor_ids', '=', user.id)]</field>
         </record>
         <record
             id="rule_contact_center_channel_binding_supervisor_company"
@@ -333,7 +335,7 @@
             <field name="groups" eval="[(4, ref('group_contact_center_supervisor'))]" />
             <field
                 name="domain_force"
-            >[('company_id', 'in', company_ids), '|', '|', ('account_id.owner_user_id', '=', user.id), ('account_id.default_team_id.agent_ids', '=', user.id), ('account_id.default_team_id.supervisor_ids', '=', user.id)]</field>
+            >[('company_id', 'in', company_ids), '|', '|', ('account_id.access_user_ids', '=', user.id), ('account_id.access_team_ids.agent_ids', '=', user.id), ('account_id.access_team_ids.supervisor_ids', '=', user.id)]</field>
         </record>
         <record id="rule_contact_center_outbox_company" model="ir.rule">
             <field name="name">Contact Center outbox by account scope</field>
@@ -341,7 +343,7 @@
             <field name="groups" eval="[(4, ref('group_contact_center_supervisor'))]" />
             <field
                 name="domain_force"
-            >[('company_id', 'in', company_ids), '|', '|', ('account_id.owner_user_id', '=', user.id), ('account_id.default_team_id.agent_ids', '=', user.id), ('account_id.default_team_id.supervisor_ids', '=', user.id)]</field>
+            >[('company_id', 'in', company_ids), '|', '|', ('account_id.access_user_ids', '=', user.id), ('account_id.access_team_ids.agent_ids', '=', user.id), ('account_id.access_team_ids.supervisor_ids', '=', user.id)]</field>
         </record>
         <record id="rule_contact_center_inbox_admin_company" model="ir.rule">
             <field name="name">Contact Center inbox by administrator company</field>
@@ -477,7 +479,7 @@
             <field name="groups" eval="[(4, ref('group_contact_center_agent'))]" />
             <field
                 name="domain_force"
-            >[('company_id', 'in', company_ids), ('scope', '=', 'team'), '|', ('team_id.agent_ids', '=', user.id), ('team_id.supervisor_ids', '=', user.id)]</field>
+            >[('company_id', 'in', company_ids), ('scope', '=', 'team'), '|', '|', '|', '|', ('team_id.agent_ids', '=', user.id), ('team_id.supervisor_ids', '=', user.id), ('team_id.account_ids.access_user_ids', '=', user.id), ('team_id.account_ids.access_team_ids.agent_ids', '=', user.id), ('team_id.account_ids.access_team_ids.supervisor_ids', '=', user.id)]</field>
         </record>
         <record id="rule_contact_center_quick_reply_account" model="ir.rule">
             <field name="name">Inbox quick replies by operational scope</field>
@@ -485,7 +487,7 @@
             <field name="groups" eval="[(4, ref('group_contact_center_agent'))]" />
             <field
                 name="domain_force"
-            >[('company_id', 'in', company_ids), ('scope', '=', 'account'), '|', '|', ('account_id.owner_user_id', '=', user.id), ('account_id.default_team_id.agent_ids', '=', user.id), ('account_id.default_team_id.supervisor_ids', '=', user.id)]</field>
+            >[('company_id', 'in', company_ids), ('scope', '=', 'account'), '|', '|', ('account_id.access_user_ids', '=', user.id), ('account_id.access_team_ids.agent_ids', '=', user.id), ('account_id.access_team_ids.supervisor_ids', '=', user.id)]</field>
         </record>
         <record id="rule_contact_center_quick_reply_channel" model="ir.rule">
             <field name="name">Conversation quick replies by native membership</field>

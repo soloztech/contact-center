@@ -192,8 +192,8 @@ class ContactCenterApplication(models.AbstractModel):
         account.invalidate_recordset(
             [
                 "active",
-                "owner_user_id",
-                "default_team_id",
+                "access_user_ids",
+                "access_team_ids",
                 "auto_assignment_user_id",
             ]
         )
@@ -2428,12 +2428,11 @@ class ContactCenterApplication(models.AbstractModel):
             return binding
 
         self._advance_inbound_projection_revision(account)
-        team = account.default_team_id
         channel = self.env["mail.channel"]._contact_center_create_channel(
             account=account,
             identity=identity,
             conversation_type="direct",
-            team=team,
+            teams=account.access_team_ids,
             guest_ids=[identity.mail_guest_id.id],
         )
         binding = binding_model.create(
@@ -2476,7 +2475,7 @@ class ContactCenterApplication(models.AbstractModel):
             account=account,
             conversation_type="group",
             name=group_name.strip()[:255],
-            team=account.default_team_id,
+            teams=account.access_team_ids,
         )
         binding = (
             self.env["contact.center.channel.binding"]
@@ -2928,14 +2927,7 @@ class ContactCenterApplication(models.AbstractModel):
 
         connection.ensure_one()
         account = connection.sudo().account_id
-        team = account.default_team_id
-        users = self.env["res.users"].sudo()
-        if account.owner_user_id:
-            users |= account.owner_user_id
-        if team:
-            users |= (team.agent_ids | team.supervisor_ids).filtered(
-                lambda user: user.active and not user.share
-            )
+        users = account._contact_center_effective_users()
         admin_group = self.env.ref(
             "contact_center_base.group_contact_center_admin",
             raise_if_not_found=False,

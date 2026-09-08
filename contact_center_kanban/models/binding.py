@@ -3,6 +3,8 @@ import re
 from odoo import _, api, fields, models
 from odoo.exceptions import AccessError, ValidationError
 
+from odoo.addons.contact_center_base.models.account import _relational_command_ids
+
 from ..services.tokens import CONTACT_CENTER_CASE_TRANSITION_TOKEN
 
 CRM_CATALOG_SYNC_TOKEN = object()
@@ -385,7 +387,7 @@ def lock_roster_aggregate(
         env["contact.center.account"]
         .sudo()
         .with_context(active_test=False)
-        .search([("default_team_id", "in", cc_teams.ids or [0])])
+        .search([("access_team_ids", "in", cc_teams.ids or [0])])
         | native_accounts
     )
     env["contact.center.account"]._contact_center_lock_access_topology(
@@ -980,19 +982,25 @@ class ContactCenterCrmTeamBinding(models.Model):
                 self.env["contact.center.account"]
                 .sudo()
                 .with_context(active_test=False)
-                .search_count(
+                .search(
                     [
                         ("active", "=", True),
-                        ("default_team_id", "=", contact_center_team.id),
-                        ("owner_user_id", "=", False),
+                        ("access_team_ids", "=", contact_center_team.id),
+                        ("access_user_ids", "=", False),
                     ]
                 )
             )
-            if ownerless_accounts:
+            orphaned_accounts = ownerless_accounts.filtered(
+                lambda account: not account._contact_center_users_for_access_scope(
+                    users=account.access_user_ids,
+                    teams=account.access_team_ids - contact_center_team,
+                )
+            )
+            if orphaned_accounts:
                 raise ValidationError(
                     _(
                         "The CRM roster cannot become empty while its Contact "
-                        "Center team owns active shared inboxes without an owner."
+                        "Center team is the last source of access to an active inbox."
                     )
                 )
         return True
@@ -1982,16 +1990,16 @@ class ContactCenterAccount(models.Model):
 
     def _contact_center_crm_binding_scope(self, values=None):
         values = values or {}
-        team_ids = set(self.mapped("default_team_id").ids)
+        team_ids = set(self.mapped("access_team_ids").ids)
         pipeline_ids = set(self.mapped("default_pipeline_id").ids)
-        if values.get("default_team_id"):
-            team_ids.add(int(values["default_team_id"]))
+        if values.get("access_team_ids"):
+            team_ids.update(_relational_command_ids(values["access_team_ids"]))
         if values.get("default_pipeline_id"):
             pipeline_ids.add(int(values["default_pipeline_id"]))
         return team_ids, pipeline_ids
 
     def write(self, values):
-        relevant = {"active", "default_team_id", "default_pipeline_id"} & set(values)
+        relevant = {"active", "access_team_ids", "default_pipeline_id"} & set(values)
         if relevant and not binding_graph_is_locked(self.env):
             team_ids, pipeline_ids = self._contact_center_crm_binding_scope(values)
             lock_binding_graph(

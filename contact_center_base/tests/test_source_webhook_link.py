@@ -103,7 +103,7 @@ class TestSourceWebhookLink(SavepointCase):
                 "platform": "whatsapp",
                 "external_ref": "source-webhook-account-%s-%s"
                 % (suffix.lower(), uuid.uuid4()),
-                "default_team_id": cls.team.id,
+                "access_team_ids": [(6, 0, cls.team.ids)],
                 "technical_author_id": cls.technical_author.id,
             }
         )
@@ -147,7 +147,7 @@ class TestSourceWebhookLink(SavepointCase):
         channel = self.env["mail.channel"]._contact_center_create_channel(
             account=self.account,
             identity=identity,
-            team=self.team,
+            teams=self.team,
             guest_ids=guest.ids,
         )
         binding = (

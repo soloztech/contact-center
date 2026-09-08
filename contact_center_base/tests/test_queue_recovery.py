@@ -57,7 +57,7 @@ class TestQueueRecovery(SavepointCase):
                 "company_id": cls.env.company.id,
                 "platform": "whatsapp",
                 "external_ref": "queue-account-%s" % uuid.uuid4(),
-                "default_team_id": cls.team.id,
+                "access_team_ids": [(6, 0, cls.team.ids)],
             }
         )
         cls.connection = cls.env["contact.center.provider.connection"].create(
@@ -90,7 +90,7 @@ class TestQueueRecovery(SavepointCase):
         cls.channel = cls.env["mail.channel"]._contact_center_create_channel(
             account=cls.account,
             identity=identity,
-            team=cls.team,
+            teams=cls.team,
             partner_ids=cls.agent.partner_id.ids,
             guest_ids=guest.ids,
         )
@@ -221,7 +221,7 @@ class TestQueueRecovery(SavepointCase):
                     "company_id": self.env.company.id,
                     "platform": "whatsapp",
                     "external_ref": "queue-group-account-%s" % suffix,
-                    "default_team_id": self.team.id,
+                    "access_team_ids": [(6, 0, self.team.ids)],
                 }
             )
             connection = self.env["contact.center.provider.connection"].create(
@@ -243,7 +243,7 @@ class TestQueueRecovery(SavepointCase):
             account=account,
             conversation_type="group",
             name="Queue Group %s" % suffix,
-            team=self.team,
+            teams=self.team,
             partner_ids=self.agent.partner_id.ids,
         )
         binding = (
@@ -632,7 +632,7 @@ class TestQueueRecovery(SavepointCase):
             account=merge_scope[0],
             conversation_type="group",
             name="Queue Merge Target",
-            team=self.team,
+            teams=self.team,
             partner_ids=self.agent.partner_id.ids,
         )
         merge_target = (

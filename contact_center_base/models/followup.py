@@ -143,12 +143,13 @@ class MailChannelFollowup(models.Model):
                         "the last attendant from this inbox."
                     )
                 )
-            preferred = (
-                channel.contact_center_responsible_id
-                | channel.contact_center_owner_user_id
-            ).filtered(lambda user: user in allowed)[:1]
+            preferred = channel.contact_center_responsible_id.filtered(
+                lambda user: user in allowed
+            )
             if reassigned:
-                reassigned.write({"user_id": (preferred or allowed[:1]).id})
+                reassigned.write(
+                    {"user_id": (preferred or allowed.sorted("id")[:1]).id}
+                )
         return result
 
 
@@ -338,7 +339,7 @@ class MailActivityProductivity(models.Model):
             raise ValidationError(_("The conversation has no active binding."))
         self.env["contact.center.account"]._contact_center_lock_access_topology(
             account_ids=bindings.account_id.ids,
-            team_ids=channels.contact_center_team_id.ids,
+            team_ids=channels.contact_center_access_team_ids.ids,
             user_ids=sorted(set(user_ids or []) | {self.env.user.id}),
             channel_ids=channel_ids,
         )

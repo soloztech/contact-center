@@ -1,7 +1,7 @@
 {
     "name": "Contact Center UI",
     "summary": "Standalone operational interface for Contact Center agents",
-    "version": "16.0.1.0.0",
+    "version": "16.0.1.1.0",
     "category": "Productivity/Discuss",
     "author": "Soloz Technologies",
     "website": "https://github.com/soloztech/contact-center",

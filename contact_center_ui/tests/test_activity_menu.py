@@ -43,7 +43,7 @@ class TestContactCenterActivityMenu(SavepointCase):
                 "company_id": cls.env.company.id,
                 "platform": "whatsapp",
                 "external_ref": "activity-menu-%s" % uuid.uuid4(),
-                "default_team_id": cls.team.id,
+                "access_team_ids": [(6, 0, cls.team.ids)],
             }
         )
         guest = cls.env["mail.guest"].create({"name": "Activity Menu Guest"})
@@ -59,7 +59,7 @@ class TestContactCenterActivityMenu(SavepointCase):
             identity=identity,
             conversation_type="direct",
             name="Activity Menu Conversation",
-            team=cls.team,
+            teams=cls.team,
             guest_ids=guest.ids,
         )
         cls.env["contact.center.channel.binding"].create(

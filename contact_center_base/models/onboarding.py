@@ -479,8 +479,12 @@ class ContactCenterProviderConnection(models.Model):
             "account_id": self.account_id.id,
             "connection_id": self.id,
             "inbox_name": self.account_id.name,
-            "owner_user_id": self.account_id.owner_user_id.id,
-            "default_team_id": self.account_id.default_team_id.id,
+            "access_user_ids": [
+                fields.Command.set(self.account_id.access_user_ids.ids)
+            ],
+            "access_team_ids": [
+                fields.Command.set(self.account_id.access_team_ids.ids)
+            ],
             "auto_assignment_user_id": self.account_id.auto_assignment_user_id.id,
             "enable_outbound": self.outbound_active,
             **self._contact_center_onboarding_resume_values(),
@@ -532,19 +536,27 @@ class ContactCenterAccountSetupWizard(models.TransientModel):
         default=lambda self: self.env.company,
     )
     inbox_name = fields.Char(required=True)
-    owner_user_id = fields.Many2one(
+    access_user_ids = fields.Many2many(
         "res.users",
-        string="Inbox Owner",
+        "contact_center_setup_access_user_rel",
+        "wizard_id",
+        "user_id",
+        string="Access Users",
         default=lambda self: self.env.user,
         domain=(
             "[('active', '=', True), ('share', '=', False), "
             "('company_ids', 'in', company_id)]"
         ),
-        help="Use an owner without a team for an exclusive personal inbox.",
+        help=(
+            "These users and all members of the selected teams can attend this inbox."
+        ),
     )
-    default_team_id = fields.Many2one(
+    access_team_ids = fields.Many2many(
         "contact.center.team",
-        string="Access Team",
+        "contact_center_setup_access_team_rel",
+        "wizard_id",
+        "team_id",
+        string="Access Teams",
         check_company=True,
         domain="[('company_id', '=', company_id), ('active', '=', True)]",
     )
@@ -561,7 +573,7 @@ class ContactCenterAccountSetupWizard(models.TransientModel):
         help=(
             "Leave empty to keep automatic assignment disabled. When set, new "
             "inbound conversations without a responsible agent are assigned to "
-            "this user, who must belong to the inbox owner/access-team scope."
+            "this user, who must belong to the inbox access scope."
         ),
     )
     provider_key = fields.Selection(
@@ -625,25 +637,25 @@ class ContactCenterAccountSetupWizard(models.TransientModel):
         return bool(self._contact_center_onboarding_provider_choices())
 
     @api.depends(
-        "owner_user_id",
-        "owner_user_id.active",
-        "owner_user_id.share",
-        "default_team_id",
-        "default_team_id.active",
-        "default_team_id.agent_ids",
-        "default_team_id.agent_ids.active",
-        "default_team_id.agent_ids.share",
-        "default_team_id.supervisor_ids",
-        "default_team_id.supervisor_ids.active",
-        "default_team_id.supervisor_ids.share",
+        "access_user_ids",
+        "access_user_ids.active",
+        "access_user_ids.share",
+        "access_team_ids",
+        "access_team_ids.active",
+        "access_team_ids.agent_ids",
+        "access_team_ids.agent_ids.active",
+        "access_team_ids.agent_ids.share",
+        "access_team_ids.supervisor_ids",
+        "access_team_ids.supervisor_ids.active",
+        "access_team_ids.supervisor_ids.share",
     )
     def _compute_auto_assignment_eligible_user_ids(self):
         account_model = self.env["contact.center.account"]
         for wizard in self:
             wizard.auto_assignment_eligible_user_ids = (
                 account_model._contact_center_users_for_access_scope(
-                    owner=wizard.owner_user_id,
-                    team=wizard.default_team_id,
+                    users=wizard.access_user_ids,
+                    teams=wizard.access_team_ids,
                 )
             )
 
@@ -775,36 +787,35 @@ class ContactCenterAccountSetupWizard(models.TransientModel):
         self.ensure_one()
         if not (self.inbox_name or "").strip():
             raise ValidationError(_("Enter a name for the inbox."))
-        owner = self.owner_user_id
-        team = self.default_team_id
-        if team and (not team.active or team.company_id != self.company_id):
-            raise ValidationError(_("Select an active team from the same company."))
-        if owner:
-            agent_group = self.env.ref("contact_center_base.group_contact_center_agent")
+        users = self.access_user_ids
+        teams = self.access_team_ids
+        for team in teams:
+            if not team.active or team.company_id != self.company_id:
+                raise ValidationError(_("Select active teams from the same company."))
+        agent_group = self.env.ref("contact_center_base.group_contact_center_agent")
+        for user in users:
             if (
-                not owner.active
-                or owner.share
-                or agent_group not in owner.groups_id
-                or self.company_id not in owner.company_ids
+                not user.active
+                or user.share
+                or agent_group not in user.groups_id
+                or self.company_id not in user.company_ids
             ):
                 raise ValidationError(
-                    _("Select an active internal Contact Center agent as owner.")
+                    _("Select active internal Contact Center agents from the company.")
                 )
-        if not owner and not (team and (team.agent_ids or team.supervisor_ids)):
+        eligible_users = self.env[
+            "contact.center.account"
+        ]._contact_center_users_for_access_scope(users=users, teams=teams)
+        if not eligible_users:
             raise ValidationError(
-                _("Select an inbox owner or an access team with attendants.")
+                _("Select access users or access teams with attendants.")
             )
-        if self.auto_assignment_user_id and self.auto_assignment_user_id not in (
-            self.env["contact.center.account"]._contact_center_users_for_access_scope(
-                owner=owner,
-                team=team,
-            )
+        if (
+            self.auto_assignment_user_id
+            and self.auto_assignment_user_id not in eligible_users
         ):
             raise ValidationError(
-                _(
-                    "Select an automatic assignee from the inbox owner or "
-                    "access-team scope."
-                )
+                _("Select an automatic assignee from the inbox access scope.")
             )
         return True
 
@@ -845,8 +856,8 @@ class ContactCenterAccountSetupWizard(models.TransientModel):
                     "active": True,
                     "company_id": self.company_id.id,
                     "platform": self._contact_center_onboarding_platform(),
-                    "owner_user_id": self.owner_user_id.id,
-                    "default_team_id": self.default_team_id.id,
+                    "access_user_ids": [fields.Command.set(self.access_user_ids.ids)],
+                    "access_team_ids": [fields.Command.set(self.access_team_ids.ids)],
                     "auto_assignment_user_id": self.auto_assignment_user_id.id,
                     "outbound_signature_enabled": self.outbound_signature_enabled,
                     "mark_read_enabled": self.mark_read_enabled,

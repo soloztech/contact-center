@@ -824,14 +824,14 @@ class ContactCenterUiApiProductivity(models.AbstractModel):
                 ]
             )
         target_by_scope = {
-            "company": ("company_id", channel.contact_center_company_id.id),
-            "team": ("team_id", channel.contact_center_team_id.id),
-            "account": ("account_id", channel_binding.account_id.id),
-            "channel": ("channel_id", channel.id),
+            "company": ("company_id", channel.contact_center_company_id.ids),
+            "team": ("team_id", channel.contact_center_access_team_ids.ids),
+            "account": ("account_id", channel_binding.account_id.ids),
+            "channel": ("channel_id", channel.ids),
         }
         bindings = self.env["contact.center.quick.reply.binding"]
-        for scope, (target_field, target_id) in target_by_scope.items():
-            if not target_id:
+        for scope, (target_field, target_ids) in target_by_scope.items():
+            if not target_ids:
                 continue
             bindings |= self.env["contact.center.quick.reply.binding"].search(
                 expression.AND(
@@ -839,7 +839,7 @@ class ContactCenterUiApiProductivity(models.AbstractModel):
                         [
                             ("active", "=", True),
                             ("scope", "=", scope),
-                            (target_field, "=", target_id),
+                            (target_field, "in", target_ids),
                         ],
                         query_domain,
                     ]

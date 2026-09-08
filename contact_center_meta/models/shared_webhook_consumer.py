@@ -580,9 +580,9 @@ class ContactCenterMetaWebhookDispatcher(models.AbstractModel):
             )
             accounts = candidates.mapped("account_id")
             accounts.invalidate_recordset(
-                ["active", "owner_user_id", "default_team_id"]
+                ["active", "access_user_ids", "access_team_ids"]
             )
-            accounts.mapped("default_team_id").invalidate_recordset(
+            accounts.mapped("access_team_ids").invalidate_recordset(
                 ["active", "agent_ids", "supervisor_ids"]
             )
         canonical = candidates.filtered(

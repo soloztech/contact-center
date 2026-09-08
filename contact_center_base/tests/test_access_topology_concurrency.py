@@ -52,8 +52,8 @@ class TestAccessTopologyConcurrency(TransactionCase):
                     "company_id": company.id,
                     "platform": "whatsapp",
                     "external_ref": "access-topology-%s" % token,
-                    "owner_user_id": owner.id,
-                    "default_team_id": team.id,
+                    "access_user_ids": [(6, 0, [owner.id])],
+                    "access_team_ids": [(6, 0, [team.id])],
                 }
             )
             connection = env["contact.center.provider.connection"].create(
@@ -85,7 +85,7 @@ class TestAccessTopologyConcurrency(TransactionCase):
             try:
                 if mutation == "owner":
                     env["contact.center.account"].browse(fixture["account_id"]).write(
-                        {"owner_user_id": False}
+                        {"access_user_ids": [(5, 0, 0)]}
                     )
                 else:
                     env["contact.center.team"].browse(fixture["team_id"]).write(
@@ -106,12 +106,12 @@ class TestAccessTopologyConcurrency(TransactionCase):
             account = env["contact.center.account"].browse(fixture["account_id"])
             team = env["contact.center.team"].browse(fixture["team_id"])
             # Establish the same pre-change REPEATABLE READ snapshot in both workers.
-            self.assertTrue(account.owner_user_id)
+            self.assertTrue(account.access_user_ids)
             self.assertTrue(team.agent_ids)
             barrier.wait(timeout=self.WORKER_TIMEOUT_SECONDS)
             try:
                 if mutation == "owner":
-                    account.write({"owner_user_id": False})
+                    account.write({"access_user_ids": [(5, 0, 0)]})
                 else:
                     team.write({"agent_ids": [(5, 0, 0)]})
                 cr.commit()  # pylint: disable=invalid-commit
@@ -186,6 +186,10 @@ class TestAccessTopologyConcurrency(TransactionCase):
                     env["contact.center.team"].browse(fixture["team_id"]).write(
                         {"agent_ids": [(4, fixture["candidate_id"])]}
                     )
+                elif mutation == "direct_add":
+                    env["contact.center.account"].browse(fixture["account_id"]).write(
+                        {"access_user_ids": [(4, fixture["candidate_id"])]}
+                    )
                 else:
                     env["res.users"].browse(fixture["candidate_id"]).write(
                         {"active": False}
@@ -211,6 +215,10 @@ class TestAccessTopologyConcurrency(TransactionCase):
             try:
                 if mutation == "roster_add":
                     team.write({"agent_ids": [(4, candidate.id)]})
+                elif mutation == "direct_add":
+                    env["contact.center.account"].browse(fixture["account_id"]).write(
+                        {"access_user_ids": [(4, candidate.id)]}
+                    )
                 else:
                     candidate.write({"active": False})
                 cr.commit()  # pylint: disable=invalid-commit
@@ -255,5 +263,39 @@ class TestAccessTopologyConcurrency(TransactionCase):
                 )
                 self.assertFalse(candidate.active and candidate not in team.agent_ids)
                 self.assertFalse(not candidate.active and candidate in team.agent_ids)
+        finally:
+            self._cleanup_committed_fixture(fixture)
+
+    def test_direct_access_add_and_user_archive_converge_to_valid_authorization(self):
+        fixture = self._setup_committed_fixture(uuid.uuid4().hex)
+        barrier = threading.Barrier(2)
+        results = []
+        workers = [
+            threading.Thread(
+                target=self._concurrent_candidate_mutation,
+                args=(fixture, mutation, barrier, results),
+            )
+            for mutation in ("direct_add", "user_archive")
+        ]
+        try:
+            for worker in workers:
+                worker.start()
+            for worker in workers:
+                worker.join(self.WORKER_TIMEOUT_SECONDS)
+            self.assertTrue(all(not worker.is_alive() for worker in workers))
+            self.assertEqual(
+                sorted(state for _mutation, state in results),
+                ["committed", "validation"],
+            )
+            with self.registry.cursor() as cr:
+                env = api.Environment(cr, SUPERUSER_ID, {})
+                account = env["contact.center.account"].browse(fixture["account_id"])
+                candidate = (
+                    env["res.users"]
+                    .with_context(active_test=False)
+                    .browse(fixture["candidate_id"])
+                )
+                self.assertEqual(candidate.active, candidate in account.access_user_ids)
+                self.assertTrue(account._contact_center_access_is_ready())
         finally:
             self._cleanup_committed_fixture(fixture)

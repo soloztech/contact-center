@@ -74,7 +74,7 @@ class TestContactCenterHttpEndpoints(HttpCase):
                 "company_id": cls.env.company.id,
                 "platform": "whatsapp",
                 "external_ref": "cc-http-account-%s" % uuid.uuid4(),
-                "default_team_id": cls.team.id,
+                "access_team_ids": [(6, 0, cls.team.ids)],
             }
         )
         cls.connection = cls.env["contact.center.provider.connection"].create(
@@ -116,7 +116,7 @@ class TestContactCenterHttpEndpoints(HttpCase):
         cls.channel = cls.env["mail.channel"]._contact_center_create_channel(
             account=cls.account,
             identity=identity,
-            team=cls.team,
+            teams=cls.team,
             partner_ids=cls.agent.partner_id.ids,
             guest_ids=guest.ids,
         )
@@ -164,7 +164,7 @@ class TestContactCenterHttpEndpoints(HttpCase):
             account=cls.account,
             conversation_type="group",
             name="HTTP Group",
-            team=cls.team,
+            teams=cls.team,
             partner_ids=cls.agent.partner_id.ids,
         )
         cls.group_binding = (

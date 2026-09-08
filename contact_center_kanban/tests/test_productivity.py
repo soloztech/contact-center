@@ -93,7 +93,7 @@ class TestContactCenterProductivity(SavepointCase):
                 "company_id": cls.env.company.id,
                 "platform": "whatsapp",
                 "external_ref": "productivity-account-%s" % uuid.uuid4(),
-                "default_team_id": cls.team.id,
+                "access_team_ids": [(6, 0, cls.team.ids)],
             }
         )
         cls.connection = cls.env["contact.center.provider.connection"].create(
@@ -142,7 +142,7 @@ class TestContactCenterProductivity(SavepointCase):
             identity=identity if conversation_type == "direct" else None,
             conversation_type=conversation_type,
             name="Productivity %s %s" % (conversation_type, token[:8]),
-            team=cls.team,
+            teams=cls.team,
             guest_ids=guest.ids,
         )
         binding = (
@@ -255,7 +255,7 @@ class TestContactCenterProductivity(SavepointCase):
                 "company_id": self.env.company.id,
                 "platform": "whatsapp",
                 "external_ref": "quick-reply-other-%s" % uuid.uuid4(),
-                "default_team_id": self.team.id,
+                "access_team_ids": [(6, 0, self.team.ids)],
             }
         )
         company_binding = self.env["contact.center.quick.reply.binding"].create(
@@ -1002,7 +1002,7 @@ class TestProductivityCompletionConcurrency(TransactionCase):
                     "company_id": company.id,
                     "platform": "whatsapp",
                     "external_ref": "productivity-concurrency-%s" % token,
-                    "default_team_id": team.id,
+                    "access_team_ids": [(6, 0, team.ids)],
                 }
             )
             connection = env["contact.center.provider.connection"].create(
@@ -1043,7 +1043,7 @@ class TestProductivityCompletionConcurrency(TransactionCase):
                 identity=identity,
                 conversation_type="direct",
                 name="Productivity concurrency %s" % token,
-                team=team,
+                teams=team,
                 guest_ids=guest.ids,
             )
             binding = (

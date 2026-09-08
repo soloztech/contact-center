@@ -870,7 +870,7 @@ class TestWuzapiConfig(WuzapiCase):
                 "agent_ids": [(6, 0, agent.ids)],
             }
         )
-        self.account.write({"default_team_id": team.id})
+        self.account.write({"access_team_ids": [(6, 0, team.ids)]})
 
         endpoint = self.connection.with_user(agent).read(["wuzapi_base_url"])
         self.assertEqual(endpoint[0]["wuzapi_base_url"], "https://wuzapi.invalid")

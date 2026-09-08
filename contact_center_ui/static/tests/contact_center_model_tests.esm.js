@@ -479,46 +479,93 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             ];
 
             assert.deepEqual(
-                effectiveAgentsForConversation({team: {id: 3}}, teams, agents),
+                effectiveAgentsForConversation(
+                    {access_teams: [{id: 3}]},
+                    teams,
+                    agents
+                ),
                 [agents[0], agents[2]],
                 "only agents from the inbox team can be selected"
             );
             assert.deepEqual(
-                effectiveAgentsForConversation({team: {id: 99}}, teams, agents),
+                effectiveAgentsForConversation(
+                    {access_teams: [{id: 99}]},
+                    teams,
+                    agents
+                ),
                 [],
                 "an unknown team fails closed"
             );
             assert.deepEqual(
-                effectiveAgentsForConversation({team: false}, teams, agents),
+                effectiveAgentsForConversation({access_teams: []}, teams, agents),
                 [],
                 "a missing team never exposes the global agent roster"
             );
             assert.deepEqual(
                 effectiveAgentsForConversation(
-                    {owner: {id: 8}, team: false},
+                    {access_users: [{id: 8}], access_teams: []},
                     teams,
                     agents
                 ),
                 [agents[1]],
-                "an owner-only inbox exposes only its owner"
+                "a user-only inbox exposes only its access user"
             );
             assert.deepEqual(
                 effectiveAgentsForConversation(
-                    {owner: {id: 8}, team: {id: 3}},
+                    {access_users: [{id: 8}], access_teams: [{id: 3}]},
                     teams,
                     agents
                 ),
                 agents,
-                "owner and team are combined into one effective roster"
+                "direct access and team membership are combined into one roster"
             );
             assert.deepEqual(
                 effectiveAgentsForConversation(
-                    {owner: {id: 7}, team: {id: 3}},
+                    {access_users: [{id: 7}], access_teams: [{id: 3}]},
                     teams,
                     agents
                 ),
                 [agents[0], agents[2]],
-                "an owner already in the team is not duplicated"
+                "a directly allowed user already in the team is not duplicated"
+            );
+            assert.deepEqual(
+                effectiveAgentsForConversation(
+                    {access_users: [{id: 7}, {id: 8}], access_teams: []},
+                    teams,
+                    agents
+                ),
+                [agents[0], agents[1]],
+                "multiple direct access users can be assigned without a team"
+            );
+            assert.deepEqual(
+                effectiveAgentsForConversation(
+                    {
+                        access_users: [{id: 7}, {id: 8}],
+                        access_teams: [{id: 3}, {id: 4}],
+                    },
+                    teams,
+                    agents
+                ),
+                agents,
+                "multiple users and teams grant the union without duplicate agents"
+            );
+            assert.deepEqual(
+                effectiveAgentsForConversation(
+                    {access_users: [{id: 8}], access_teams: [{id: 99}]},
+                    teams,
+                    agents
+                ),
+                [agents[1]],
+                "an unknown team does not suppress an independent direct grant"
+            );
+            assert.deepEqual(
+                effectiveAgentsForConversation(
+                    {access_users: [{id: 7}], access_teams: [{id: 4}]},
+                    teams,
+                    agents
+                ),
+                [agents[0], agents[1]],
+                "removing one team retains the remaining direct and team grants"
             );
 
             const patches = [];

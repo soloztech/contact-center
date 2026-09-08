@@ -6,6 +6,7 @@ from unittest import mock
 import requests
 from psycopg2 import IntegrityError
 
+from odoo import fields
 from odoo.exceptions import ValidationError
 from odoo.tests.common import Form, SavepointCase
 
@@ -92,7 +93,7 @@ class TestWuzapiOnboarding(SavepointCase):
         )
         with Form(wizard_model) as form:
             form.inbox_name = "WhatsApp Guided"
-            form.default_team_id = self.team
+            form.access_team_ids.add(self.team)
             form.provider_key = "wuzapi"
             wizard = form.save()
         wizard.action_next_provider()
@@ -113,7 +114,7 @@ class TestWuzapiOnboarding(SavepointCase):
                 "setup_ref": "attacker",
                 "inbox_name": "Forged Guided State",
                 "company_id": self.env.company.id,
-                "default_team_id": self.team.id,
+                "access_team_ids": [fields.Command.set(self.team.ids)],
                 "provider_key": "wuzapi",
             }
         )
@@ -129,7 +130,7 @@ class TestWuzapiOnboarding(SavepointCase):
         )
         with Form(wizard_model) as form:
             form.inbox_name = "Guided Back Navigation"
-            form.default_team_id = self.team
+            form.access_team_ids.add(self.team)
             form.provider_key = "wuzapi"
             wizard = form.save()
         wizard.action_next_provider()
@@ -140,7 +141,7 @@ class TestWuzapiOnboarding(SavepointCase):
 
         self.assertEqual(wizard.step, "inbox")
 
-    def test_guided_setup_defaults_owner_and_allows_owner_only_inbox(self):
+    def test_guided_setup_defaults_access_user_and_allows_user_only_inbox(self):
         wizard_model = self.env["contact.center.account.setup.wizard"].with_user(
             self.admin
         )
@@ -149,8 +150,8 @@ class TestWuzapiOnboarding(SavepointCase):
             form.provider_key = "wuzapi"
             wizard = form.save()
 
-        self.assertEqual(wizard.owner_user_id, self.admin)
-        self.assertFalse(wizard.default_team_id)
+        self.assertEqual(wizard.access_user_ids, self.admin)
+        self.assertFalse(wizard.access_team_ids)
         wizard.action_next_provider()
         wizard.write(
             {
@@ -162,8 +163,8 @@ class TestWuzapiOnboarding(SavepointCase):
         )
         wizard.action_prepare()
 
-        self.assertEqual(wizard.account_id.owner_user_id, self.admin)
-        self.assertFalse(wizard.account_id.default_team_id)
+        self.assertEqual(wizard.account_id.access_user_ids, self.admin)
+        self.assertFalse(wizard.account_id.access_team_ids)
         self.assertTrue(wizard.account_id._contact_center_access_is_ready())
 
     def test_guided_setup_propagates_optional_auto_assignment(self):
@@ -174,17 +175,61 @@ class TestWuzapiOnboarding(SavepointCase):
 
         self.assertEqual(wizard.account_id.auto_assignment_user_id, self.agent)
 
-    def test_guided_setup_rejects_inbox_without_owner_or_team(self):
+    def test_guided_setup_preserves_multiple_users_and_teams_on_resume(self):
+        second_team = self.env["contact.center.team"].create(
+            {
+                "name": "Guided setup supervisors",
+                "company_id": self.env.company.id,
+                "supervisor_ids": [fields.Command.set(self.admin.ids)],
+            }
+        )
+        users = self.admin | self.agent
+        teams = self.team | second_team
+        wizard = self._new_wizard()
+        wizard.write(
+            {
+                "access_user_ids": [fields.Command.set(users.ids)],
+                "access_team_ids": [fields.Command.set(teams.ids)],
+                "auto_assignment_user_id": self.agent.id,
+            }
+        )
+        wizard.action_prepare()
+
+        self.assertEqual(set(wizard.account_id.access_user_ids.ids), set(users.ids))
+        self.assertEqual(set(wizard.account_id.access_team_ids.ids), set(teams.ids))
+        self.assertEqual(
+            set(wizard.account_id._contact_center_effective_users().ids), set(users.ids)
+        )
+        wizard.write(
+            {
+                "access_user_ids": [fields.Command.clear()],
+                "access_team_ids": [fields.Command.clear()],
+            }
+        )
+        action = wizard.connection_id.action_resume_onboarding()
+        resumed = self.env["contact.center.account.setup.wizard"].browse(
+            action["res_id"]
+        )
+
+        self.assertEqual(resumed, wizard)
+        self.assertEqual(set(resumed.access_user_ids.ids), set(users.ids))
+        self.assertEqual(set(resumed.access_team_ids.ids), set(teams.ids))
+        self.assertEqual(
+            set(resumed.auto_assignment_eligible_user_ids.ids), set(users.ids)
+        )
+        self.assertEqual(resumed.auto_assignment_user_id, self.agent)
+
+    def test_guided_setup_rejects_inbox_without_access_users_or_teams(self):
         wizard_model = self.env["contact.center.account.setup.wizard"].with_user(
             self.admin
         )
         with Form(wizard_model) as form:
             form.inbox_name = "Unscoped WhatsApp"
-            form.owner_user_id = self.env["res.users"]
+            form.access_user_ids.clear()
             form.provider_key = "wuzapi"
             wizard = form.save()
 
-        with self.assertRaisesRegex(ValidationError, "owner or an access team"):
+        with self.assertRaisesRegex(ValidationError, "access users or access teams"):
             wizard.action_next_provider()
 
     def test_form_lists_wuzapi_and_stages_fail_closed_idempotently(self):
@@ -198,8 +243,8 @@ class TestWuzapiOnboarding(SavepointCase):
         self.assertFalse(connection.inbound_active)
         self.assertFalse(connection.outbound_active)
         self.assertEqual(connection.account_id.platform, "whatsapp")
-        self.assertEqual(connection.account_id.owner_user_id, self.admin)
-        self.assertEqual(connection.account_id.default_team_id, self.team)
+        self.assertEqual(connection.account_id.access_user_ids, self.admin)
+        self.assertEqual(connection.account_id.access_team_ids, self.team)
         self.assertEqual(connection.wuzapi_server_id, self.server)
         self.assertEqual(connection.wuzapi_api_token, EXISTING_INSTANCE_TOKEN)
         self.assertFalse(wizard.wuzapi_existing_token)
@@ -810,7 +855,7 @@ class TestWuzapiOnboarding(SavepointCase):
                 "name": "Duplicate instance account",
                 "company_id": self.env.company.id,
                 "platform": "whatsapp",
-                "default_team_id": self.team.id,
+                "access_team_ids": [fields.Command.set(self.team.ids)],
             }
         )
         duplicate = self.env["contact.center.provider.connection"].create(

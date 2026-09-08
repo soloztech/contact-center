@@ -370,23 +370,27 @@ class ContactCenterCrmMappingInventory(models.TransientModel):
                     revised_case_count_by_stage.get(stage_id, 0) + 1
                 )
 
-        shared_inbox_team_ids = (
-            set(
-                self.env["contact.center.account"]
-                .sudo()
-                .search(
-                    [
-                        ("active", "=", True),
-                        ("default_team_id", "in", team_sources.ids),
-                        ("owner_user_id", "=", False),
-                    ]
-                )
-                .mapped("default_team_id")
-                .ids
+        shared_inbox_team_ids = set()
+        accounts = (
+            self.env["contact.center.account"]
+            .sudo()
+            .search(
+                [
+                    ("active", "=", True),
+                    ("access_team_ids", "in", team_sources.ids),
+                    ("access_user_ids", "=", False),
+                ]
             )
             if team_sources
-            else set()
+            else self.env["contact.center.account"]
         )
+        for account in accounts:
+            for team in account.access_team_ids & team_sources:
+                if not account._contact_center_users_for_access_scope(
+                    users=account.access_user_ids,
+                    teams=account.access_team_ids - team,
+                ):
+                    shared_inbox_team_ids.add(team.id)
 
         active_team_binding_targets_by_source = {}
         for binding in team_bindings.filtered("active"):
@@ -525,16 +529,23 @@ class ContactCenterCrmMappingInventory(models.TransientModel):
                 )
             )
         if has_shared_inbox is None:
-            has_shared_inbox = bool(
+            accounts = (
                 self.env["contact.center.account"]
                 .sudo()
-                .search_count(
+                .search(
                     [
                         ("active", "=", True),
-                        ("default_team_id", "=", team.id),
-                        ("owner_user_id", "=", False),
+                        ("access_team_ids", "=", team.id),
+                        ("access_user_ids", "=", False),
                     ]
                 )
+            )
+            has_shared_inbox = any(
+                not account._contact_center_users_for_access_scope(
+                    users=account.access_user_ids,
+                    teams=account.access_team_ids - team,
+                )
+                for account in accounts
             )
         if not desired_users and has_shared_inbox:
             blockers.append(

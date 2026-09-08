@@ -59,7 +59,7 @@ class TestWuzapiWebhook(HttpCase):
                 "name": "WuzAPI webhook account",
                 "company_id": cls.env.company.id,
                 "platform": "whatsapp",
-                "default_team_id": cls.team.id,
+                "access_team_ids": [(6, 0, cls.team.ids)],
             }
         )
         cls.connection = cls.env["contact.center.provider.connection"].create(
@@ -81,7 +81,7 @@ class TestWuzapiWebhook(HttpCase):
                 "name": "Archived WuzAPI webhook account",
                 "company_id": cls.env.company.id,
                 "platform": "whatsapp",
-                "default_team_id": cls.team.id,
+                "access_team_ids": [(6, 0, cls.team.ids)],
                 "active": False,
             }
         )
@@ -545,7 +545,12 @@ class TestWuzapiWebhook(HttpCase):
         self.assertEqual(len(message_bindings.channel_binding_id.group_profile_ids), 1)
 
     def test_webhook_accepts_owner_only_inbox(self):
-        self.account.write({"owner_user_id": self.agent.id, "default_team_id": False})
+        self.account.write(
+            {
+                "access_user_ids": [(6, 0, self.agent.ids)],
+                "access_team_ids": [(6, 0, [])],
+            }
+        )
         body = json.dumps(
             {
                 "type": "Message",
@@ -572,7 +577,7 @@ class TestWuzapiWebhook(HttpCase):
         # standby transition, then simulate a corrupt primary row so the
         # public ingress boundary keeps its defense-in-depth coverage.
         self.connection.action_set_standby()
-        self.account.default_team_id = False
+        self.account.access_team_ids = [(5, 0, 0)]
         self.connection.flush_recordset(["role", "inbound_active", "outbound_active"])
         self.env.cr.execute(
             """
@@ -615,7 +620,7 @@ class TestWuzapiWebhook(HttpCase):
         self.assertFalse(inbox.queue_job_uuid)
         self.assertEqual(self._inbox_job_count(), initial_job_count)
 
-        self.account.default_team_id = self.team
+        self.account.access_team_ids = self.team
         self.assertTrue(inbox.with_user(self.agent).action_requeue())
         inbox.invalidate_recordset(["state", "queue_job_uuid"])
         self.assertEqual(inbox.state, "pending")
@@ -709,7 +714,7 @@ class TestWuzapiWebhook(HttpCase):
                 "name": "Guided WuzAPI webhook account",
                 "company_id": self.env.company.id,
                 "platform": "whatsapp",
-                "default_team_id": self.team.id,
+                "access_team_ids": [(6, 0, self.team.ids)],
             }
         )
         staged = self.env["contact.center.provider.connection"].create(
