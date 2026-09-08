@@ -308,8 +308,32 @@ def registry_phase(env, phase, source, candidate, output):
         .with_user(users[2])
         .get_conversation(channel.id)["item"]
     )
-    assert {row["id"] for row in item["access_users"]} == set(users[:2].ids)
-    assert {row["id"] for row in item["access_teams"]} == set(teams.ids)
+    # Both verification phases use the same shell entry point. Select the
+    # expected contract from the source already verified by get_module_path,
+    # never by whether the response happens to contain the new capability.
+    restricted_access_projection = source.resolve() == candidate.resolve()
+    if restricted_access_projection:
+        assert item["capabilities"]["view_inbox_access"] is False
+        assert item["access_users"] == item["access_teams"] == []
+        assert item["responsible"]["id"] == users[0].id
+        for group_name in ("supervisor", "admin"):
+            group = env.ref("contact_center_base.group_contact_center_" + group_name)
+            users[0].write({"groups_id": [(4, group.id)]})
+            manager_item = (
+                env["contact.center.ui.api"]
+                .with_user(users[0])
+                .get_conversation(channel.id)["item"]
+            )
+            assert manager_item["capabilities"]["view_inbox_access"] is True
+            assert {row["id"] for row in manager_item["access_users"]} == set(
+                users[:2].ids
+            )
+            assert {row["id"] for row in manager_item["access_teams"]} == set(teams.ids)
+            assert manager_item["responsible"]["id"] == users[0].id
+    else:
+        assert "view_inbox_access" not in item["capabilities"]
+        assert {row["id"] for row in item["access_users"]} == set(users[:2].ids)
+        assert {row["id"] for row in item["access_teams"]} == set(teams.ids)
     account.write({"access_user_ids": [(3, users[1].id)]})
     assert users[1].partner_id in channel.channel_member_ids.partner_id
     account.write({"access_team_ids": [(3, teams[0].id)]})
@@ -322,14 +346,33 @@ def registry_phase(env, phase, source, candidate, output):
     # The rehearsal records the proof, then rolls the extra grants back. The
     # upgraded database still represents an exact migration of the old fixtures.
     env.cr.rollback()
+    env.invalidate_all()
+    env["res.users"].clear_caches()
+    assert _fixture_evidence(env, fixture) == _read(output / "fixture-before.json")
+    assert not users[0].has_group("contact_center_base.group_contact_center_supervisor")
+    assert {
+        model: env[model].search_count([]) for model in business_models
+    } == side_effect_counts
     _write(
-        output / "after.json",
+        output
+        / ("after.json" if restricted_access_projection else "after-installed.json"),
         dict(
             result,
             state="done",
             rules_verified=len(plan),
             idempotent=True,
             multiple_grants_verified=True,
+            grants_rollback_verified=True,
+            access_visibility_contract=(
+                "role_restricted"
+                if restricted_access_projection
+                else "legacy_operator_projection"
+            ),
+            access_visibility_roles_verified=(
+                ["operator", "supervisor", "administrator"]
+                if restricted_access_projection
+                else ["operator"]
+            ),
         ),
     )
 
@@ -501,6 +544,7 @@ def main():
         summary.update(
             state="passed",
             evidence=_read(output / "after.json"),
+            installed_evidence=_read(output / "after-installed.json"),
             prepare_rollback=_read(output / "prepare-dry.json")["rollback_verified"],
         )
     except Exception as caught:
