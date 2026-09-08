@@ -983,6 +983,9 @@ export class ContactCenterStore {
         this.timelineContiguousCursor = false;
         this.seenRetryTimer = null;
         this.seenRetryToken = 0;
+        this.pendingSeenRequests = new Map();
+        this.suspendedSeenChannels = new Set();
+        this.deletedConversationIds = new Set();
         this.attributionRequest = 0;
         this.searchTimer = null;
         this.contactSearchTimer = null;
@@ -1030,7 +1033,9 @@ export class ContactCenterStore {
         return (
             this.state.conversations.find(
                 (item) =>
-                    isRenderableConversation(item) && item.channel_id === channelId
+                    isRenderableConversation(item) &&
+                    item.channel_id === channelId &&
+                    !this.deletedConversationIds.has(channelId)
             ) || false
         );
     }
@@ -1682,7 +1687,9 @@ export class ContactCenterStore {
     }
 
     applyConversationPage(payload, {reset, silent, previousConversation}) {
-        const items = normalizedConversationItems(payload.items);
+        const items = normalizedConversationItems(payload.items).filter(
+            (item) => !this.deletedConversationIds.has(item.channel_id)
+        );
         if (reset) {
             this.state.conversations = items;
             this.preservedConversationChannelId = false;
@@ -1694,6 +1701,7 @@ export class ContactCenterStore {
             if (
                 silent &&
                 previousIsMissing &&
+                !this.deletedConversationIds.has(previousConversation.channel_id) &&
                 this.state.filters.responsibility === "all"
             ) {
                 this.state.conversations.push(previousConversation);
@@ -1956,6 +1964,9 @@ export class ContactCenterStore {
     }
 
     async selectConversation(channelId, {preservePane = false} = {}) {
+        if (this.deletedConversationIds.has(channelId)) {
+            return false;
+        }
         if (
             this.state.selectedChannelId === channelId &&
             this.state.timelineChannelId === channelId &&
@@ -3023,8 +3034,21 @@ export class ContactCenterStore {
     }
 
     async persistSeenPointer(channelId, messageId, token, attempt) {
+        if (
+            this.destroyed ||
+            this.suspendedSeenChannels.has(channelId) ||
+            this.deletedConversationIds.has(channelId)
+        ) {
+            return false;
+        }
+        const request = Promise.resolve().then(() =>
+            this.call("mark_seen", [channelId, messageId])
+        );
+        const pending = this.pendingSeenRequests.get(channelId) || new Set();
+        pending.add(request);
+        this.pendingSeenRequests.set(channelId, pending);
         try {
-            await this.call("mark_seen", [channelId, messageId]);
+            await request;
             if (
                 this.destroyed ||
                 token !== this.seenRetryToken ||
@@ -3053,6 +3077,11 @@ export class ContactCenterStore {
         } catch (_error) {
             this.scheduleSeenRetry(channelId, messageId, token, attempt);
             return false;
+        } finally {
+            pending.delete(request);
+            if (!pending.size) {
+                this.pendingSeenRequests.delete(channelId);
+            }
         }
     }
 
@@ -3062,6 +3091,8 @@ export class ContactCenterStore {
             !channelId ||
             !Number.isSafeInteger(messageId) ||
             messageId <= 0 ||
+            this.suspendedSeenChannels.has(channelId) ||
+            this.deletedConversationIds.has(channelId) ||
             this.destroyed
         ) {
             return Promise.resolve(false);
@@ -3448,7 +3479,10 @@ export class ContactCenterStore {
 
     replaceConversation(item) {
         const normalizedItem = normalizeConversationGroup(item);
-        if (!isRenderableConversation(normalizedItem)) {
+        if (
+            !isRenderableConversation(normalizedItem) ||
+            this.deletedConversationIds.has(normalizedItem.channel_id)
+        ) {
             return false;
         }
         const stateFilter = this.state.filters.state;
@@ -3524,6 +3558,151 @@ export class ContactCenterStore {
 
     async setConversationState(state, channelId = this.state.selectedChannelId) {
         return this.updateConversation({state}, channelId);
+    }
+
+    canManageConversation(channelId, capability) {
+        const conversation = this.loadedConversation(channelId);
+        return Boolean(
+            conversation &&
+                conversation.capabilities &&
+                conversation.capabilities[capability] === true
+        );
+    }
+
+    forgetDeletedConversation(channelId) {
+        if (!Number.isSafeInteger(channelId) || channelId <= 0) {
+            return false;
+        }
+        const wasLoaded = Boolean(this.loadedConversation(channelId));
+        this.deletedConversationIds.add(channelId);
+        this.listRequest += 1;
+        this.state.conversations = this.state.conversations.filter(
+            (item) => item.channel_id !== channelId
+        );
+        if (wasLoaded) {
+            this.state.conversationTotal = Math.max(
+                0,
+                this.state.conversationTotal - 1
+            );
+        }
+        if (this.preservedConversationChannelId === channelId) {
+            this.preservedConversationChannelId = false;
+        }
+        if (this.state.selectedChannelId === channelId) {
+            this.clearConversationSelection({closePanes: true});
+        }
+        this.state.listPhase = "ready";
+        return true;
+    }
+
+    async deleteConversation(channelId) {
+        if (!this.canManageConversation(channelId, "delete_conversation")) {
+            return false;
+        }
+        try {
+            const payload = await this.call("delete_conversation", [channelId]);
+            validateEnvelope(payload);
+            if (
+                payload.channel_id !== channelId ||
+                payload.removed_from_conversation !== true
+            ) {
+                throw new TypeError("O servidor não confirmou a exclusão da conversa.");
+            }
+            this.forgetDeletedConversation(channelId);
+            this.scheduleSynchronization(false, false);
+            return true;
+        } catch (error) {
+            this.notify(errorMessage(error), {
+                type: "danger",
+                title: "Conversa não excluída",
+            });
+            return false;
+        }
+    }
+
+    async setConversationIgnored(ignored, channelId) {
+        if (
+            typeof ignored !== "boolean" ||
+            !this.canManageConversation(channelId, "ignore_conversation")
+        ) {
+            return false;
+        }
+        try {
+            const payload = await this.call("set_conversation_ignored", [
+                channelId,
+                ignored,
+            ]);
+            validateEnvelope(payload);
+            if (this.deletedConversationIds.has(channelId)) {
+                return false;
+            }
+            if (
+                !payload.item ||
+                payload.item.channel_id !== channelId ||
+                payload.item.ignored !== ignored ||
+                !this.replaceConversation(payload.item)
+            ) {
+                throw new TypeError("O servidor não confirmou a opção de ignorar.");
+            }
+            this.listRequest += 1;
+            this.state.listPhase = "ready";
+            return true;
+        } catch (error) {
+            this.notify(errorMessage(error), {
+                type: "danger",
+                title: "Conversa não atualizada",
+            });
+            return false;
+        }
+    }
+
+    async markConversationUnread(channelId) {
+        if (
+            !this.loadedConversation(channelId) ||
+            this.suspendedSeenChannels.has(channelId)
+        ) {
+            return false;
+        }
+        this.suspendedSeenChannels.add(channelId);
+        if (channelId === this.state.selectedChannelId) {
+            this.cancelSeenRetry();
+        }
+        try {
+            // Cancelling the UI token cannot undo a mark_seen already at the
+            // server. Drain those writes before moving the personal pointer.
+            await Promise.allSettled([
+                ...(this.pendingSeenRequests.get(channelId) || []),
+            ]);
+            if (this.destroyed || this.deletedConversationIds.has(channelId)) {
+                return false;
+            }
+            const payload = await this.call("mark_conversation_unread", [channelId]);
+            validateEnvelope(payload);
+            if (this.deletedConversationIds.has(channelId)) {
+                return false;
+            }
+            if (
+                !payload.item ||
+                payload.item.channel_id !== channelId ||
+                !this.replaceConversation(payload.item)
+            ) {
+                throw new TypeError("O servidor não confirmou a conversa não lida.");
+            }
+            this.listRequest += 1;
+            this.state.listPhase = "ready";
+            if (channelId === this.state.selectedChannelId) {
+                this.clearConversationSelection({closePanes: true});
+            }
+            return true;
+        } catch (error) {
+            this.notify(errorMessage(error), {
+                type: "danger",
+                title: "Conversa não marcada como não lida",
+            });
+            return false;
+        } finally {
+            this.suspendedSeenChannels.delete(channelId);
+        }
     }
 
     async setConversationPreference(patch, channelId = this.state.selectedChannelId) {
@@ -4574,6 +4753,14 @@ export class ContactCenterStore {
             return;
         }
         for (const payload of notifications) {
+            if (payload.event_type === "conversation_deleted") {
+                this.forgetDeletedConversation(payload.channel_id);
+                this.scheduleSynchronization(false, false);
+                continue;
+            }
+            if (this.deletedConversationIds.has(payload.channel_id)) {
+                continue;
+            }
             this.handleAttentionNotification(payload);
             if (this.handleConnectionHealthNotification(payload)) {
                 continue;

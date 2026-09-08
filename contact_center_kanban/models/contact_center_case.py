@@ -3,6 +3,10 @@ from psycopg2.errors import UniqueViolation
 from odoo import _, api, fields, models
 from odoo.exceptions import AccessError, ValidationError
 
+from odoo.addons.contact_center_base.services.tokens import (
+    CONTACT_CENTER_DELETION_TOKEN,
+)
+
 from ..services.tokens import CONTACT_CENTER_CASE_TRANSITION_TOKEN
 from .binding import (
     CRM_BINDING_GRAPH_LOCK_TOKEN,
@@ -438,7 +442,10 @@ class ContactCenterCrmCaseLink(models.Model):
         return True
 
     def unlink(self):
-        if physical_unlink_is_allowed(self.env):
+        if physical_unlink_is_allowed(self.env) or (
+            self.env.context.get("contact_center_deletion_token")
+            is CONTACT_CENTER_DELETION_TOKEN
+        ):
             return super().unlink()
         raise AccessError(
             _("CRM case-link evidence is immutable; use the explicit unlink action.")

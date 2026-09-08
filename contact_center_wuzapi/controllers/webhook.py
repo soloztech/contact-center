@@ -496,6 +496,17 @@ def _inbox_ledger_values(
     return values
 
 
+def _conversation_ingress_response(connection, adapter, headers, body, envelope):
+    response, block_reason = _locked_ingress_response(
+        connection, adapter, headers, body
+    )
+    if response is None and request.env[
+        "contact.center.conversation.ignore"
+    ]._ignored_envelope(connection, envelope):
+        response = _json_response({"accepted": True, "ignored": True}, 200)
+    return response, block_reason
+
+
 class WuzapiWebhookController(http.Controller):
     @http.route(
         "/contact-center/webhook/wuzapi/<string:webhook_key>",
@@ -555,8 +566,8 @@ class WuzapiWebhookController(http.Controller):
         # caller cannot take the topology lock. Once acquired, a callback is
         # unambiguously before or after the cutover and never slips through the
         # retired transport on stale ORM cache state.
-        ingress_response, ingress_block_reason = _locked_ingress_response(
-            connection, adapter, headers, body
+        ingress_response, ingress_block_reason = _conversation_ingress_response(
+            connection, adapter, headers, body, envelope
         )
         if ingress_response is not None:
             return ingress_response

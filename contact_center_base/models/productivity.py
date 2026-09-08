@@ -14,7 +14,10 @@ from odoo.tools.mail import plaintext2html
 from odoo.addons.queue_job.exception import RetryableJobError
 
 from ..services.dto import SCHEMA_VERSION
-from ..services.tokens import CONTACT_CENTER_PRODUCTIVITY_TOKEN
+from ..services.tokens import (
+    CONTACT_CENTER_DELETION_TOKEN,
+    CONTACT_CENTER_PRODUCTIVITY_TOKEN,
+)
 
 # Productivity projections are a bounded concern shared by three Odoo core
 # models.  Keeping them together avoids growing the message/channel aggregate
@@ -239,6 +242,8 @@ class ContactCenterInternalNoteRequest(models.Model):
         if (
             self.env.context.get("contact_center_productivity_service_token")
             is not _PRODUCTIVITY_SERVICE_TOKEN
+            and self.env.context.get("contact_center_deletion_token")
+            is not CONTACT_CENTER_DELETION_TOKEN
         ):
             raise AccessError(_("Internal note request history is immutable."))
         return super().unlink()
@@ -521,8 +526,13 @@ class ContactCenterScheduledMessage(models.Model):
             raise AccessError(_("Scheduled message intent fields are immutable."))
         return super().write(values)
 
-    def unlink(self):  # pylint: disable=method-required-super
-        raise AccessError(_("Scheduled message history is immutable."))
+    def unlink(self):
+        if (
+            self.env.context.get("contact_center_deletion_token")
+            is not CONTACT_CENTER_DELETION_TOKEN
+        ):
+            raise AccessError(_("Scheduled message history is immutable."))
+        return super().unlink()
 
     def _service_write(self, values):
         return (
@@ -887,10 +897,22 @@ class ContactCenterUiApiProductivity(models.AbstractModel):
         parsed_channel_id = self._positive_id(channel_id, _("conversation ID"))
         request_id = _canonical_uuid(client_request_id, _("client request ID"))
         clean_body = _plain_text(body, _("internal note"), _MAX_NOTE_CHARS)
-        body_sha256 = hashlib.sha256(clean_body.encode("utf-8")).hexdigest()
         channel, _member = self._authorized_channel(parsed_channel_id)
         self._productivity_fence_channel(channel)
         channel, _member = self._authorized_channel(channel.id)
+        message = self._persist_internal_note(channel, clean_body, request_id)
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "channel_id": channel.id,
+            "client_request_id": request_id,
+            "message": self._serialize_message(message),
+        }
+
+    def _persist_internal_note(self, channel, clean_body, request_id):
+        """Persist a timeline-only note after the caller authorizes and locks it."""
+
+        channel.ensure_one()
+        body_sha256 = hashlib.sha256(clean_body.encode("utf-8")).hexdigest()
         ledger_model = self.env["contact.center.internal.note.request"].sudo()
         existing = ledger_model.search(
             [("channel_id", "=", channel.id), ("ui_request_id", "=", request_id)],
@@ -901,13 +923,7 @@ class ContactCenterUiApiProductivity(models.AbstractModel):
                 raise ValidationError(
                     _("The client request ID belongs to another internal note.")
                 )
-            message = self._internal_note_message(channel, existing)
-            return {
-                "schema_version": SCHEMA_VERSION,
-                "channel_id": channel.id,
-                "client_request_id": request_id,
-                "message": self._serialize_message(message),
-            }
+            return self._internal_note_message(channel, existing)
         message = channel.message_post(
             body=plaintext2html(clean_body),
             message_type="comment",
@@ -942,12 +958,41 @@ class ContactCenterUiApiProductivity(models.AbstractModel):
             "message_updated",
             {"message_id": message.id, "reason": "internal_note_created"},
         )
-        return {
-            "schema_version": SCHEMA_VERSION,
-            "channel_id": channel.id,
-            "client_request_id": request_id,
-            "message": self._serialize_message(message),
-        }
+        return message
+
+    def _post_conversation_transition_note(
+        self, channel, *, previous_state, previous_responsible, claimed=False
+    ):
+        """Describe committed manual changes without creating customer traffic."""
+
+        channel.ensure_one()
+        actor = self.env.user.display_name
+        lines = []
+        if channel.contact_center_state != previous_state:
+            if channel.contact_center_state == "resolved":
+                lines.append(_("%s resolveu a conversa.", actor))
+            elif channel.contact_center_state == "open":
+                lines.append(_("%s reabriu a conversa.", actor))
+        responsible = channel.contact_center_responsible_id
+        if responsible != previous_responsible:
+            if claimed:
+                lines.append(_("%s assumiu a conversa.", actor))
+            elif responsible:
+                lines.append(
+                    _(
+                        "%(actor)s atribuiu a conversa a %(responsible)s.",
+                        actor=actor,
+                        responsible=responsible.display_name,
+                    )
+                )
+            else:
+                lines.append(_("%s removeu o responsável pela conversa.", actor))
+        if not lines:
+            return self.env["mail.message"]
+        # The lifecycle mutation and its note share one transaction and channel
+        # lock. An identical action sees no transition; a rolled-back request
+        # leaves neither the change nor a duplicate note behind.
+        return self._persist_internal_note(channel, "\n".join(lines), str(uuid.uuid4()))
 
     def _serialize_scheduled_productivity(self, scheduled):
         can_cancel = bool(

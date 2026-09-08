@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="rule_contact_center_conversation_ignore_company" model="ir.rule">
+        <field name="name">Ignored conversations within active companies</field>
+        <field name="model_id" ref="model_contact_center_conversation_ignore" />
+        <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+    </record>
+    <record id="rule_contact_center_conversation_ignore_scope" model="ir.rule">
+        <field name="name">Ignored conversations within inbox access</field>
+        <field name="model_id" ref="model_contact_center_conversation_ignore" />
+        <field name="groups" eval="[(4, ref('group_contact_center_agent'))]" />
+        <field
+            name="domain_force"
+        >['|', '|', ('account_id.access_user_ids', '=', user.id), ('account_id.access_team_ids.agent_ids', '=', user.id), ('account_id.access_team_ids.supervisor_ids', '=', user.id)]</field>
+    </record>
+    <record id="rule_contact_center_conversation_ignore_admin" model="ir.rule">
+        <field name="name">Administrators read ignored conversations</field>
+        <field name="model_id" ref="model_contact_center_conversation_ignore" />
+        <field name="groups" eval="[(4, ref('group_contact_center_admin'))]" />
+        <field name="domain_force">[(1, '=', 1)]</field>
+    </record>
+</odoo>

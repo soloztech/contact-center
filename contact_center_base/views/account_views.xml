@@ -86,7 +86,21 @@
                             />
                             <field name="group_inbound_enabled" />
                             <field name="group_outbound_enabled" />
-                            <field name="attribution_ui_enabled" />
+                            <field
+                                name="attribution_ui_enabled"
+                                string="Mostrar origem aos agentes"
+                                help="Permite que os agentes vejam a origem da conversa. Administradores sempre têm acesso, independentemente desta opção."
+                            />
+                            <field
+                                name="conversation_delete_enabled"
+                                string="Permitir excluir conversas aos agentes"
+                                help="Permite excluir a conversa e todas as suas mensagens da Central de Atendimento. Oportunidades e documentos do cliente são preservados. Administradores sempre têm acesso, independentemente desta opção."
+                            />
+                            <field
+                                name="conversation_ignore_enabled"
+                                string="Permitir ignorar contatos e grupos aos agentes"
+                                help="Novas mensagens do contato ou grupo ignorado não serão persistidas pela Central de Atendimento nesta caixa. O histórico existente será mantido. Administradores sempre têm acesso, independentemente desta opção."
+                            />
                         </group>
                         <group>
                             <field name="external_ref" readonly="1" />

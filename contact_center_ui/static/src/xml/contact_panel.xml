@@ -628,6 +628,16 @@
 
                 <section class="cc-detail-section">
                     <div class="cc-detail-section__heading"><h3>Operação</h3></div>
+                    <div
+                        t-if="conversation.ignored === true"
+                        class="alert alert-warning"
+                        role="status"
+                    >
+                        <strong>Conversa ignorada nesta caixa</strong>
+                        <p
+                            class="mb-0"
+                        >Novas mensagens não serão registradas. O histórico existente será mantido.</p>
+                    </div>
                     <div class="cc-detail-field">
                         <span>Acesso da caixa</span>
                         <span

@@ -1398,8 +1398,14 @@ class ContactCenterUiApi(models.AbstractModel):
         # This policy belongs to the logical inbox, never to provider-advertised
         # capabilities. Always overwrite a same-named adapter value.
         effective_capabilities["view_attribution"] = bool(
-            account and account.sudo().attribution_ui_enabled
+            account and account._contact_center_user_can_view_attribution()
         )
+        for operation in ("delete", "ignore"):
+            effective_capabilities[operation + "_conversation"] = bool(
+                account
+                and (operation != "ignore" or conversation_type in ("direct", "group"))
+                and account._contact_center_user_can_manage_conversation(operation)
+            )
         identity_payload = (
             self._serialize_identity(
                 identity,
@@ -1435,6 +1441,11 @@ class ContactCenterUiApi(models.AbstractModel):
                 )
             ),
             "state": channel.contact_center_state,
+            "ignored": (
+                prefetched["ignored"]
+                if "ignored" in prefetched
+                else bool(binding and binding._contact_center_is_ignored())
+            ),
             "unread_count": member.message_unread_counter or 0,
             "first_unread_message_id": first_unread_message_id,
             "preference": self._serialize_conversation_preference(preference),
@@ -1953,6 +1964,9 @@ class ContactCenterUiApi(models.AbstractModel):
             group_profile_by_binding.setdefault(profile.channel_binding_id.id, profile)
         return {
             "binding_by_channel": binding_by_channel,
+            "ignored_by_binding": self.env[
+                "contact.center.conversation.ignore"
+            ]._ignored_by_binding(bindings),
             "member_by_channel": member_by_channel,
             "preference_by_channel": preference_by_channel,
             "first_unread_by_channel": first_unread_by_channel,
@@ -1997,6 +2011,11 @@ class ContactCenterUiApi(models.AbstractModel):
                     member=member,
                     binding=binding,
                     prefetched={
+                        "ignored": prefetched["ignored_by_binding"].get(
+                            binding.id, False
+                        )
+                        if binding
+                        else False,
                         "last_message": last_message,
                         "last_binding": last_binding,
                         "last_outbox": (
@@ -2460,6 +2479,71 @@ class ContactCenterUiApi(models.AbstractModel):
     def mark_seen(self, channel_id, message_id=None):
         return self._mark_member_pointer(channel_id, message_id, seen=True)
 
+    @api.model
+    def mark_conversation_unread(self, channel_id):
+        """Reopen the personal unread boundary without undoing provider receipts."""
+
+        channel, member = self._authorized_channel(channel_id)
+        # Keep the parent-first order used by read receipts and membership
+        # reconciliation. No provider topology is needed for this local action.
+        self.env.cr.execute(
+            "SELECT id FROM mail_channel WHERE id = %s FOR UPDATE", [channel.id]
+        )
+        if not self.env.cr.fetchone():
+            raise ValidationError(_("The conversation no longer exists."))
+        self.env.cr.execute(
+            "SELECT id FROM mail_channel_member WHERE id = %s FOR UPDATE",
+            [member.id],
+        )
+        if not self.env.cr.fetchone():
+            raise AccessError(_("You are no longer a member of this conversation."))
+        member.invalidate_recordset(["seen_message_id", "message_unread_counter"])
+        if not self._first_unread_message_id(channel, member):
+            # The same operational message predicate drives the unread counter
+            # and scroll anchor. Internal notes alone cannot create unread work.
+            self.env.cr.execute(
+                """
+                SELECT message.id
+                  FROM mail_message AS message
+                 WHERE message.model = 'mail.channel'
+                   AND message.res_id = %s
+                   AND message.message_type NOT IN (
+                       'notification', 'user_notification'
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1
+                         FROM contact_center_internal_note_request AS note_request
+                        WHERE note_request.message_id = message.id
+                   )
+              ORDER BY COALESCE(message.date, '9999-12-31 23:59:59'::timestamp) DESC,
+                       message.id DESC
+                 LIMIT 2
+                """,
+                [channel.id],
+            )
+            message_ids = [row[0] for row in self.env.cr.fetchall()]
+            if message_ids:
+                member.sudo().with_context(
+                    contact_center_membership_token=CONTACT_CENTER_MEMBERSHIP_TOKEN
+                ).write(
+                    {
+                        "seen_message_id": (
+                            message_ids[1] if len(message_ids) > 1 else False
+                        )
+                    }
+                )
+                member.invalidate_recordset(["message_unread_counter"])
+                self._application()._notify_ui(
+                    channel,
+                    "conversation_updated",
+                    {"changed_fields": ["unread_count", "first_unread_message_id"]},
+                    partner_ids=[self.env.user.partner_id.id],
+                )
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "item": self._serialize_conversation(channel, member=member),
+        }
+
     def _mark_member_pointer(self, channel_id, message_id=None, seen=False):
         channel, member = self._authorized_channel(channel_id)
         message_domain = [
@@ -2598,6 +2682,8 @@ class ContactCenterUiApi(models.AbstractModel):
     def _persist_conversation_update(
         self, channel, patch, assignment_fields, values, access_users
     ):
+        previous_state = channel.contact_center_state
+        previous_responsible = channel.contact_center_responsible_id
         old_partner_ids = channel.sudo().channel_member_ids.partner_id.ids
         channel.sudo().with_context(
             contact_center_membership_token=CONTACT_CENTER_MEMBERSHIP_TOKEN
@@ -2608,6 +2694,11 @@ class ContactCenterUiApi(models.AbstractModel):
                 guest_ids=channel.sudo().channel_member_ids.guest_id.ids,
             )
         new_partner_ids = channel.sudo().channel_member_ids.partner_id.ids
+        self._post_conversation_transition_note(
+            channel,
+            previous_state=previous_state,
+            previous_responsible=previous_responsible,
+        )
         self._application()._notify_ui(
             channel,
             "conversation_updated",
@@ -2688,9 +2779,16 @@ class ContactCenterUiApi(models.AbstractModel):
             binding.account_id._contact_center_effective_users()
         ):
             raise AccessError(_("You do not belong to this inbox access scope."))
+        previous_responsible = channel.contact_center_responsible_id
         channel.sudo().with_context(
             contact_center_membership_token=CONTACT_CENTER_MEMBERSHIP_TOKEN
         ).write({"contact_center_responsible_id": self.env.user.id})
+        self._post_conversation_transition_note(
+            channel,
+            previous_state=channel.contact_center_state,
+            previous_responsible=previous_responsible,
+            claimed=True,
+        )
         self._application()._notify_ui(
             channel,
             "conversation_updated",

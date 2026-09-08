@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="view_contact_center_conversation_ignore_tree" model="ir.ui.view">
+        <field name="name">contact.center.conversation.ignore.tree</field>
+        <field name="model">contact.center.conversation.ignore</field>
+        <field name="arch" type="xml">
+            <tree create="0" edit="0" delete="0">
+                <field name="name" />
+                <field name="account_id" />
+                <field name="conversation_type" />
+                <button
+                    name="action_stop_ignoring"
+                    type="object"
+                    string="Deixar de ignorar"
+                    icon="fa-undo"
+                />
+            </tree>
+        </field>
+    </record>
+    <record
+        id="action_contact_center_conversation_ignore"
+        model="ir.actions.act_window"
+    >
+        <field name="name">Conversas ignoradas</field>
+        <field name="res_model">contact.center.conversation.ignore</field>
+        <field name="view_mode">tree</field>
+        <field name="help" type="html">
+            <p
+            >Novas mensagens desses contatos e grupos são descartadas somente nas caixas indicadas. O histórico existente é preservado.</p>
+        </field>
+    </record>
+    <menuitem
+        id="menu_contact_center_conversation_ignore"
+        name="Conversas ignoradas"
+        parent="menu_contact_center_root"
+        action="action_contact_center_conversation_ignore"
+        sequence="75"
+        groups="contact_center_base.group_contact_center_agent"
+    />
+</odoo>

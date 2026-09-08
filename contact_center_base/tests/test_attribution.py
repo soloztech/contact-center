@@ -714,6 +714,52 @@ class TestContactCenterAttribution(SavepointCase):
         ):
             self.assertNotIn(secret, serialized)
 
+    def test_admin_can_view_attribution_when_agent_flag_is_disabled(self):
+        self.account.write({"access_user_ids": [(4, self.admin.id)]})
+        inbox = self._process_job(self._event())
+        touchpoint = (
+            self.env["contact.center.attribution.touchpoint"]
+            .sudo()
+            .search([("inbox_event_id", "=", inbox.id)])
+        )
+        channel_id = touchpoint.channel_binding_id.channel_id.id
+        self.assertFalse(self.account.attribution_ui_enabled)
+        admin_api = self.env["contact.center.ui.api"].with_user(self.admin)
+        self.assertTrue(admin_api.get_attribution(channel_id)["enabled"])
+        agent_api = self.env["contact.center.ui.api"].with_user(self.agent)
+        self.assertFalse(agent_api.get_attribution(channel_id)["enabled"])
+        # Projection code uses sudo to read technical flags, but the original
+        # actor must still determine whether the administrator bypass applies.
+        self.assertFalse(
+            self.account.with_user(self.agent)
+            .sudo()
+            ._contact_center_user_can_view_attribution()
+        )
+
+    def test_conversation_action_policies_are_admin_or_explicit_agent_opt_in(self):
+        account = self.account.with_user(self.agent)
+        for action in ("delete", "ignore"):
+            self.assertFalse(
+                account._contact_center_user_can_manage_conversation(action)
+            )
+            self.assertFalse(
+                account.sudo()._contact_center_user_can_manage_conversation(action)
+            )
+            self.assertTrue(
+                self.account.with_user(
+                    self.admin
+                )._contact_center_user_can_manage_conversation(action)
+            )
+        self.account.write({"conversation_delete_enabled": True})
+        self.assertTrue(account._contact_center_user_can_manage_conversation("delete"))
+        self.assertFalse(account._contact_center_user_can_manage_conversation("ignore"))
+        self.account.write({"conversation_ignore_enabled": True})
+        self.assertTrue(account._contact_center_user_can_manage_conversation("ignore"))
+        with self.assertRaises(AccessError):
+            account.write({"conversation_delete_enabled": False})
+        with self.assertRaises(ValidationError):
+            account._contact_center_user_can_manage_conversation("unknown")
+
     def test_ledger_is_admin_read_only_and_hidden_from_agents(self):
         inbox = self._process_job(self._event())
         touchpoint = (

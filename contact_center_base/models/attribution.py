@@ -9,7 +9,10 @@ from odoo.exceptions import AccessError, ValidationError
 from odoo.addons.queue_job.exception import RetryableJobError
 
 from ..services.dto import AttributionDTO, DTOValidationError, EventDTO
-from ..services.tokens import CONTACT_CENTER_ATTRIBUTION_TOKEN
+from ..services.tokens import (
+    CONTACT_CENTER_ATTRIBUTION_TOKEN,
+    CONTACT_CENTER_DELETION_TOKEN,
+)
 
 _TOUCHPOINT_TYPES = [
     ("paid_ad_click", "Paid ad click"),
@@ -315,6 +318,34 @@ class ContactCenterAttributionTouchpoint(models.Model):
         """Keep attribution evidence append-only, including for administrators."""
 
         raise AccessError(_("Attribution touchpoints cannot be deleted."))
+
+    @api.model
+    def _contact_center_prepare_conversation_deletion(
+        self, channel, bindings, messages, inbox_events
+    ):
+        """Keep acquisition evidence while releasing deleted chat projections."""
+        if (
+            self.env.context.get("contact_center_deletion_token")
+            is not CONTACT_CENTER_DELETION_TOKEN
+        ):
+            raise AccessError(
+                _("Conversation deletion requires the application service.")
+            )
+        touchpoints = self.sudo().search(
+            [
+                ("account_id", "in", bindings.account_id.ids),
+                "|",
+                ("channel_binding_id", "in", bindings.ids),
+                ("message_binding_id.message_id", "in", messages.ids),
+            ]
+        )
+        # These optional projection links are not attribution evidence. Avoid a
+        # new Marketing revision merely because an operator removed chat history.
+        touchpoints.with_context(
+            contact_center_attribution_token=CONTACT_CENTER_ATTRIBUTION_TOKEN,
+            marketing_contact_center_skip_enqueue=True,
+        ).write({"channel_binding_id": False, "message_binding_id": False})
+        return True
 
     @api.constrains(
         "company_id",
@@ -909,7 +940,7 @@ class ContactCenterAttributionTouchpoint(models.Model):
     def _safe_projection_for_binding(self, binding, limit=3, before_public_ref=None):
         binding.ensure_one()
         account = binding.account_id.sudo()
-        if not account.attribution_ui_enabled:
+        if not account._contact_center_user_can_view_attribution():
             return {
                 "enabled": False,
                 "items": [],

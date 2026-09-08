@@ -16,7 +16,8 @@ from odoo.addons.meta_api_base.services.signature import verify_signature
 from .api import graph_debug_token, resolve_graph_runtime
 from .contracts import META_PROVIDER_SCHEMA_VERSION
 from .media import download_private_media, finalize_private_media
-from .normalizer import normalize_meta_event
+from .messaging import routing_values
+from .normalizer import _PLATFORM_CONTRACTS, normalize_meta_event
 from .outbound import execute_send_request, prepare_send_request
 from .outbound_media import media_capabilities
 from .profile import fetch_identity_profile
@@ -120,6 +121,31 @@ class MetaAdapter(ProviderAdapter):
         except MetaCredentialResolutionError:
             return False
         return verify_signature(runtime.app_secret, headers, body)
+
+    def conversation_route(self, connection, envelope):
+        if not isinstance(envelope, dict):
+            return None
+        route = routing_values(envelope)
+        if not route or route["asset_id"] != connection.meta_target_asset_id:
+            return None
+        item = envelope.get("messaging") or {}
+        sender = (item.get("sender") or {}).get("id")
+        recipient = (item.get("recipient") or {}).get("id")
+        own = connection.meta_target_asset_id
+        remote = recipient if sender == own else sender if recipient == own else None
+        contract = _PLATFORM_CONTRACTS.get(connection.account_id.platform)
+        if (
+            not remote
+            or remote == own
+            or not contract
+            or route["platform"] != connection.account_id.platform
+        ):
+            return None
+        return {
+            "conversation_type": "direct",
+            "conversation_ref": remote,
+            "addresses": [(contract["remote_namespace"], remote)],
+        }
 
     def normalize_event(self, connection, envelope):
         return normalize_meta_event(_connection(connection), envelope)

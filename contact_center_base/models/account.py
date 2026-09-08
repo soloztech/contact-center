@@ -907,8 +907,30 @@ class ContactCenterAccount(models.Model):
         groups="contact_center_base.group_contact_center_admin",
         help=(
             "Show the bounded attribution projection in the operator interface. "
+            "Administrators can always view it, regardless of this setting. "
             "Technical identifiers, source URLs and provider evidence remain "
             "restricted to administrators."
+        ),
+    )
+    conversation_delete_enabled = fields.Boolean(
+        string="Allow Agents to Delete Conversations",
+        default=False,
+        groups="contact_center_base.group_contact_center_admin",
+        help=(
+            "Allow agents with access to this inbox to delete a conversation and "
+            "all its messages from Contact Center. CRM opportunities and customer "
+            "documents are preserved. Administrators can always delete conversations."
+        ),
+    )
+    conversation_ignore_enabled = fields.Boolean(
+        string="Allow Agents to Ignore Conversations",
+        default=False,
+        groups="contact_center_base.group_contact_center_admin",
+        help=(
+            "Allow agents with access to this inbox to ignore a contact or group. "
+            "New messages from that contact or group will be ignored and will not "
+            "be persisted by Contact Center in this inbox. Existing history is kept. "
+            "Administrators can always ignore conversations."
         ),
     )
     connection_ids = fields.One2many(
@@ -1475,7 +1497,42 @@ class ContactCenterAccount(models.Model):
             for account in self
         ):
             changed_fields.append("deleted_message_policy")
+        for field_name in (
+            "conversation_delete_enabled",
+            "conversation_ignore_enabled",
+        ):
+            if field_name in values and any(
+                bool(values[field_name]) != account[field_name] for account in self
+            ):
+                changed_fields.append("conversation_actions")
+                break
         return changed_fields
+
+    def _contact_center_user_can_view_attribution(self):
+        """Return UI policy for the actual actor, even in a sudo projection."""
+        self.ensure_one()
+        return self.env.user.has_group(
+            "contact_center_base.group_contact_center_agent"
+        ) and (
+            self.env.user.has_group("contact_center_base.group_contact_center_admin")
+            or self.sudo().attribution_ui_enabled
+        )
+
+    def _contact_center_user_can_manage_conversation(self, action):
+        """Flags grant inbox actions, never company or conversation access."""
+        self.ensure_one()
+        policy_fields = {
+            "delete": "conversation_delete_enabled",
+            "ignore": "conversation_ignore_enabled",
+        }
+        if action not in policy_fields:
+            raise ValidationError(_("Unsupported conversation action."))
+        return self.env.user.has_group(
+            "contact_center_base.group_contact_center_agent"
+        ) and (
+            self.env.user.has_group("contact_center_base.group_contact_center_admin")
+            or self.sudo()[policy_fields[action]]
+        )
 
     def write(self, values):
         if {

@@ -47,7 +47,7 @@ jobs:
     container: ${{ matrix.container }}
     name: ${{ matrix.name }}
     env:
-      PEER_REF: ${{ inputs.peer_ref || '605d1e670f821e1e3ffc8e9c51fec7c4942ca040' }}
+      PEER_REF: ${{ inputs.peer_ref || '3591efab46c3f7a4f02ab6c35ca21a9997e48b06' }}
     strategy:
       fail-fast: false
       matrix:
@@ -107,6 +107,19 @@ jobs:
           old_parent="$(mktemp -d "${RUNNER_TEMP}/contact-center-upgrade-old.XXXXXX")"
           mv "${GITHUB_WORKSPACE}/.ci-old-contact-center" "${old_parent}/contact-center"
           printf 'CC_ACCESS_OLD_ROOT=%s\n' "${old_parent}/contact-center" >> "$GITHUB_ENV"
+      - name: Checkout current production version for additive upgrade rehearsal
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 9660986fb530c07de7fd3c44b1007b6a3a12b56f
+          path: .ci-installed-contact-center
+          persist-credentials: false
+      - name: Isolate current production source from candidate discovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          installed_parent="$(mktemp -d "${RUNNER_TEMP}/contact-center-upgrade-installed.XXXXXX")"
+          mv "${GITHUB_WORKSPACE}/.ci-installed-contact-center" "${installed_parent}/contact-center"
+          printf 'CC_INSTALLED_ROOT=%s\n' "${installed_parent}/contact-center" >> "$GITHUB_ENV"
       - name: Install addons and dependencies
         run: oca_install_addons
       - name: Test cumulative inbox access migration guards
@@ -117,6 +130,7 @@ jobs:
         run: |
           python release_migrations/native_access_upgrade_rehearsal.py \
             --old-root "$CC_ACCESS_OLD_ROOT" \
+            --installed-root "$CC_INSTALLED_ROOT" \
             --candidate-root "$GITHUB_WORKSPACE" \
             --output "$GITHUB_WORKSPACE/.ci-access-upgrade"
       - name: Upload native access upgrade evidence

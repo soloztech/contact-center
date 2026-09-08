@@ -4,6 +4,10 @@ import uuid
 from odoo import _, api, fields, models
 from odoo.exceptions import AccessError, ValidationError
 
+from odoo.addons.contact_center_base.services.tokens import (
+    CONTACT_CENTER_DELETION_TOKEN,
+)
+
 from ..services.tokens import CONTACT_CENTER_CASE_TRANSITION_TOKEN
 
 _CASE_SERVICE_TOKEN = object()
@@ -1900,7 +1904,12 @@ class ContactCenterCase(models.Model):
         case._contact_center_after_transition(transition)
         return transition._contact_center_result(idempotent=False)
 
-    def unlink(self):  # pylint: disable=method-required-super
+    def unlink(self):
+        if (
+            self.env.context.get("contact_center_deletion_token")
+            is CONTACT_CENTER_DELETION_TOKEN
+        ):
+            return super().unlink()
         raise AccessError(_("Cases cannot be deleted; archive them instead."))
 
 

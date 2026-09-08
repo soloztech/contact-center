@@ -465,6 +465,10 @@ class ContactCenterInboxEvent(models.Model):
                 raise ValidationError(
                     _("Resolve the identity conflict before replaying this event.")
                 )
+            if (event.metadata_json or {}).get("content_erased"):
+                raise ValidationError(
+                    _("Erased conversation content cannot be replayed.")
+                )
             metadata = dict(event.metadata_json or {})
             if (
                 event.state == "blocked"
@@ -1075,6 +1079,8 @@ class ContactCenterInboxEvent(models.Model):
             self.env["contact.center.application"]._lock_inbound_account_scope(
                 self.account_id.sudo()
             )
+            if self._conversation_content_is_blocked():
+                return False
             self.write({"state": "processing", "attempts": attempt})
             with self.env.cr.savepoint():
                 event_dto = self._normalize_one()
@@ -1264,6 +1270,8 @@ class ContactCenterInboxEvent(models.Model):
 
     def _normalize_one(self):
         self.ensure_one()
+        if (self.metadata_json or {}).get("content_erased"):
+            raise ValidationError(_("Erased conversation content cannot be replayed."))
         adapter = self.provider_connection_id.get_adapter()
         event_dto = adapter.normalize_event(
             self.provider_connection_id, self.raw_envelope_json

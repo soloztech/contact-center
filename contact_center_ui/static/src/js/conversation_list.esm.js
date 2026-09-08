@@ -14,11 +14,13 @@ import {
     messageStatusMeta,
     realtimeStatusMeta,
 } from "./contact_center_model.esm";
+import {ConfirmationDialog} from "@web/core/confirmation_dialog/confirmation_dialog";
 import {ConnectionHealth} from "./connection_health.esm";
 import {DeferredImage} from "./deferred_image.esm";
 import {Dropdown} from "@web/core/dropdown/dropdown";
 import {DropdownItem} from "@web/core/dropdown/dropdown_item";
 import {deserializeDateTime} from "@web/core/l10n/dates";
+import {useOwnedDialogs} from "@web/core/utils/hooks";
 
 const {DateTime} = luxon;
 const LIST_VIEWS = new Set(["grouped", "flat"]);
@@ -195,6 +197,20 @@ export class ConversationMenu extends Component {
         return conversationPreference(this.props.conversation);
     }
 
+    can(action) {
+        const capabilities = this.props.conversation.capabilities || {};
+        return capabilities[action] === true;
+    }
+
+    get ignoreLabel() {
+        if (this.props.conversation.ignored === true) {
+            return "Deixar de ignorar";
+        }
+        return isGroupConversation(this.props.conversation)
+            ? "Ignorar grupo"
+            : "Ignorar contato";
+    }
+
     selectAction(action) {
         return this.props.onAction(this.props.conversation.channel_id, action);
     }
@@ -207,6 +223,7 @@ ConversationMenu.template = "contact_center_ui.ConversationMenu";
 export class ConversationList extends Component {
     setup() {
         this.searchRef = useRef("search");
+        this.addDialog = useOwnedDialogs();
         this.ui = useState({
             pendingConversationIds: {},
             view: "grouped",
@@ -519,9 +536,14 @@ export class ConversationList extends Component {
         if (
             !conversation ||
             this.ui.pendingConversationIds[channelId] ||
-            !["pinned", "muted", "archived"].includes(action)
+            !["pinned", "muted", "archived", "unread", "ignored", "delete"].includes(
+                action
+            )
         ) {
             return false;
+        }
+        if (action === "delete" || action === "ignored") {
+            return this.confirmConversationAction(conversation, action);
         }
         this.ui.pendingConversationIds[channelId] = true;
         try {
@@ -531,6 +553,9 @@ export class ConversationList extends Component {
             if (action === "muted") {
                 return await this.store.toggleConversationMuted(channelId);
             }
+            if (action === "unread") {
+                return await this.store.markConversationUnread(channelId);
+            }
             return await this.store.setConversationState(
                 conversation.state === "archived" ? "open" : "archived",
                 channelId
@@ -538,6 +563,63 @@ export class ConversationList extends Component {
         } finally {
             delete this.ui.pendingConversationIds[channelId];
         }
+    }
+
+    confirmConversationAction(conversation, action) {
+        const capability =
+            action === "delete" ? "delete_conversation" : "ignore_conversation";
+        if (
+            !conversation.capabilities ||
+            conversation.capabilities[capability] !== true
+        ) {
+            return false;
+        }
+        const channelId = conversation.channel_id;
+        const ignored = conversation.ignored !== true;
+        const target = isGroupConversation(conversation) ? "grupo" : "contato";
+        let title = "Excluir conversa?";
+        let body =
+            "A conversa e todas as suas mensagens serão excluídas da Central de Atendimento. " +
+            "Esta ação não pode ser desfeita. Mensagens já enviadas no canal externo permanecerão lá.";
+        let confirmLabel = "Excluir conversa";
+        if (action === "ignored") {
+            title = ignored
+                ? `Ignorar este ${target}?`
+                : `Deixar de ignorar este ${target}?`;
+            body = ignored
+                ? `Novas mensagens deste ${target} não serão registradas nesta caixa, para nenhum atendente. ` +
+                  "O histórico existente será mantido. Você poderá deixar de ignorar pelo mesmo menu."
+                : `As próximas mensagens deste ${target} voltarão a ser registradas nesta caixa. ` +
+                  "As mensagens recebidas enquanto estava ignorado não serão recuperadas.";
+            confirmLabel = ignored ? "Ignorar" : "Deixar de ignorar";
+        }
+        this.ui.pendingConversationIds[channelId] = true;
+        const release = () => delete this.ui.pendingConversationIds[channelId];
+        this.addDialog(
+            ConfirmationDialog,
+            {
+                title,
+                body: `${conversationDisplayName(conversation)} — ${body}`,
+                confirmLabel,
+                cancelLabel: "Cancelar",
+                confirm: async () => {
+                    try {
+                        if (action === "delete") {
+                            return await this.store.deleteConversation(channelId);
+                        }
+                        return await this.store.setConversationIgnored(
+                            ignored,
+                            channelId
+                        );
+                    } finally {
+                        release();
+                    }
+                },
+                cancel: release,
+            },
+            {onClose: release}
+        );
+        return true;
     }
 }
 

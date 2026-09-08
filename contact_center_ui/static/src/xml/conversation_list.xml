@@ -416,6 +416,12 @@
                     <strong t-esc="displayName(conversation)" />
                     <span class="cc-conversation-item__signals">
                         <i
+                                t-if="conversation.ignored === true"
+                                class="fa fa-ban"
+                                title="Novas mensagens ignoradas nesta caixa"
+                                aria-label="Conversa ignorada nesta caixa"
+                            />
+                        <i
                                 t-if="preference(conversation).pinned"
                                 class="fa fa-thumb-tack"
                                 title="Conversa fixada"
@@ -515,6 +521,26 @@
                         <i class="fa fa-thumb-tack" aria-hidden="true" />
                         <t t-if="preference.pinned">Desafixar conversa</t>
                         <t t-else="">Fixar conversa</t>
+                    </DropdownItem>
+                    <DropdownItem onSelected="() => this.selectAction('unread')">
+                        <i class="fa fa-envelope" aria-hidden="true" />
+                        Marcar como não lida
+                    </DropdownItem>
+                    <DropdownItem
+                    t-if="can('ignore_conversation')"
+                    onSelected="() => this.selectAction('ignored')"
+                >
+                        <i class="fa fa-ban" aria-hidden="true" />
+                        <t t-esc="ignoreLabel" />
+                    </DropdownItem>
+                    <DropdownItem
+                    t-if="can('delete_conversation')"
+                    onSelected="() => this.selectAction('delete')"
+                >
+                        <span class="text-danger">
+                            <i class="fa fa-trash" aria-hidden="true" />
+                            Excluir conversa
+                        </span>
                     </DropdownItem>
                 </t>
             </Dropdown>

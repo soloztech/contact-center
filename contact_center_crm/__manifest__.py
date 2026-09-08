@@ -1,7 +1,7 @@
 {
     "name": "Contact Center CRM",
     "summary": "Customer opportunities, quotations, orders and invoices in the inbox",
-    "version": "16.0.1.1.0",
+    "version": "16.0.1.2.0",
     "category": "Sales/CRM",
     "author": "Soloz Technologies",
     "website": "https://github.com/soloztech/contact-center",

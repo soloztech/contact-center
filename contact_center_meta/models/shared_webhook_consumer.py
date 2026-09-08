@@ -391,6 +391,9 @@ class ContactCenterMetaWebhookDispatcher(models.AbstractModel):
         eligible_item_keys = self._contact_center_meta_subscribed_item_keys(
             endpoint, probe_specs
         )
+        eligible_item_keys = self._contact_center_meta_admitted_item_keys(
+            endpoint, probe_specs, eligible_item_keys
+        )
         if not eligible_item_keys:
             return tuple(specs)
         candidates, references, rejections = shared_private_media(
@@ -417,6 +420,41 @@ class ContactCenterMetaWebhookDispatcher(models.AbstractModel):
             )
         )
         return tuple(specs)
+
+    @api.model
+    def _contact_center_meta_admitted_item_keys(self, endpoint, specs, eligible):
+        """Filter before private URLs and shared message content are persisted."""
+        admitted = set(eligible)
+        policy = self.env["contact.center.conversation.ignore"]
+        connections = (
+            self.env["contact.center.provider.connection"]
+            .sudo()
+            .search(
+                [
+                    ("adapter_key", "=", "meta"),
+                    ("role", "=", "primary"),
+                    ("meta_webhook_asset_id.endpoint_id", "=", endpoint.id),
+                ]
+            )
+        )
+        if connections:
+            connections._contact_center_lock_ingress_admission()
+        for spec in specs:
+            if spec["item_key"] not in admitted:
+                continue
+            route = route_contract(spec["payload_json"])
+            routes = connections.filtered(
+                lambda row: route
+                and row.meta_target_asset_id == route["target_asset_id"]
+                and row.meta_transport_mode == route["transport_mode"]
+                and row.company_id == endpoint.company_id
+            )
+            # An ambiguous route cannot justify suppressing another inbox's data.
+            if len(routes) == 1 and policy._ignored_envelope(
+                routes, spec["payload_json"]
+            ):
+                admitted.discard(spec["item_key"])
+        return frozenset(admitted)
 
     @api.model
     def _contact_center_meta_subscribed_item_keys(self, endpoint, item_specs):
@@ -477,6 +515,10 @@ class ContactCenterMetaWebhookDispatcher(models.AbstractModel):
         result = super()._dispatch_consumer(dispatch)
         if result is not None or dispatch.consumer_key != META_MESSAGING_CONSUMER_KEY:
             return result
+        if (dispatch.item_id.payload_json or {}).get(
+            "reason"
+        ) == "consumer_content_erased":
+            return {"handled": True, "result_ref": "contact.center.content_erased"}
         inbox = self._contact_center_meta_project_inbox(dispatch)
         if not inbox:
             return None
@@ -685,3 +727,61 @@ class ContactCenterMetaWebhookDispatcher(models.AbstractModel):
             )
             ._bind_item(item, connection, inbox)
         )
+
+
+class ContactCenterMetaConversationDeletion(models.AbstractModel):
+    _inherit = "contact.center.ui.api"
+
+    def _prepare_conversation_deletion_dependencies(
+        self, channel, bindings, messages, inbox_events
+    ):
+        result = super()._prepare_conversation_deletion_dependencies(
+            channel, bindings, messages, inbox_events
+        )
+        policy = self.env["contact.center.conversation.ignore"]
+        connections = bindings.account_id.connection_ids.filtered(
+            lambda row: row.adapter_key == "meta"
+        )
+        if not connections:
+            return result
+        refs = set(bindings.mapped("conversation_ref"))
+        item_model = self.env["meta.webhook.item"].sudo()
+        domain = [
+            ("company_id", "=", channel.contact_center_company_id.id),
+            ("kind", "=", "messaging"),
+            ("target_asset_id", "in", connections.mapped("meta_target_asset_id")),
+        ]
+        selected = item_model.browse()
+        last_id = 0
+        while True:
+            batch = item_model.search(
+                domain + [("id", ">", last_id)], order="id", limit=500
+            )
+            if not batch:
+                break
+            for item in batch:
+                for connection in connections:
+                    route = policy._route(connection, item.payload_json)
+                    if route and route["conversation_ref"] in refs:
+                        selected |= item
+                        break
+            last_id = batch[-1].id
+            batch.invalidate_recordset(["payload_json"])
+        erased = selected.with_context(
+            meta_webhook_internal=META_WEBHOOK_INTERNAL_TOKEN
+        )._erase_consumer_message_content(META_MESSAGING_CONSUMER_KEY)
+        for item in erased:
+            locators = (
+                self.env["contact.center.meta.media.locator"]
+                .sudo()
+                .search(
+                    [
+                        ("meta_delivery_id", "=", item.delivery_id.id),
+                        ("meta_item_key", "=", item.item_key),
+                    ]
+                )
+            )
+            locators.with_context(
+                contact_center_meta_internal=CONTACT_CENTER_META_INTERNAL_TOKEN
+            ).write({"download_url": False, "state": "discarded"})
+        return result

@@ -7,6 +7,7 @@ from odoo.addons.meta_webhook_base.services.tokens import META_WEBHOOK_INTERNAL_
 from odoo.addons.queue_job.exception import RetryableJobError
 from odoo.addons.queue_job.tests.common import trap_jobs
 
+from ..models import shared_webhook_consumer
 from ..services.contracts import META_TRANSPORT_CONTRACTS
 from ..services.shared_webhook import (
     META_MESSAGING_CONSUMER_KEY,
@@ -67,6 +68,155 @@ class TestMetaWebhookConsumer(MetaCase):
         self.assertTrue(result and result["handled"])
         inbox_id = int(result["result_ref"].rsplit(":", 1)[1])
         return dispatch, self.env["contact.center.inbox.event"].browse(inbox_id)
+
+    def _ignored_conversation(self, remote_id="900000000000001"):
+        self.account.write({"conversation_ignore_enabled": True})
+        guest = self.env["mail.guest"].sudo().create({"name": "Ignored Meta guest"})
+        identity = (
+            self.env["contact.center.identity"]
+            .sudo()
+            .create(
+                {
+                    "name": "Ignored Meta guest",
+                    "company_id": self.env.company.id,
+                    "mail_guest_id": guest.id,
+                }
+            )
+        )
+        channel = self.env["mail.channel"]._contact_center_create_channel(
+            account=self.account, identity=identity, guest_ids=guest.ids
+        )
+        self.env["contact.center.channel.binding"].sudo().create(
+            {
+                "channel_id": channel.id,
+                "account_id": self.account.id,
+                "identity_id": identity.id,
+                "conversation_type": "direct",
+                "conversation_ref": remote_id,
+            }
+        )
+        self.env["contact.center.ui.api"].with_user(
+            self.agent
+        ).set_conversation_ignored(channel.id, True)
+        return channel
+
+    def test_ignored_sender_creates_no_private_locator_or_message_content(self):
+        self._ignored_conversation()
+        signed_url = "https://lookaside.fbsbx.com/media?token=synthetic-ignored"
+        with mock.patch.object(
+            shared_webhook_consumer,
+            "shared_private_media",
+            side_effect=AssertionError(
+                "Ignored media must not reach the private vault"
+            ),
+        ):
+            delivery = self.create_delivery(
+                self._envelope(mid="m_meta_ignored", attachment_url=signed_url)
+            )
+        item = delivery.item_ids.ensure_one()
+        self.assertEqual(item.kind, "unknown")
+        self.assertNotIn("messaging", item.payload_json)
+        self.assertNotIn(signed_url, str(item.payload_json))
+        self.assertNotIn(signed_url, str(delivery.sanitized_envelope_json))
+        self.assertFalse(
+            self.env["contact.center.meta.media.locator"]
+            .sudo()
+            .search_count([("meta_delivery_id", "=", delivery.id)])
+        )
+        dispatch = self._fanout(delivery)
+        self.assertIsNone(
+            self.env["meta.webhook.dispatcher"]._dispatch_consumer(dispatch)
+        )
+        self.assertFalse(
+            self.env["contact.center.inbox.event"]
+            .sudo()
+            .search_count([("provider_connection_id", "=", self.connection.id)])
+        )
+
+    def test_ignored_item_does_not_remove_another_sender_in_same_delivery(self):
+        self._ignored_conversation()
+        ignored_url = "https://lookaside.fbsbx.com/media?token=synthetic-ignored"
+        retained_url = "https://lookaside.fbsbx.com/media?token=synthetic-retained"
+        envelope = self._envelope(mid="m_ignored_batch", attachment_url=ignored_url)
+        other = self._envelope(mid="m_retained_batch", attachment_url=retained_url)[
+            "entry"
+        ][0]["messaging"][0]
+        other["sender"]["id"] = "900000000000002"
+        envelope["entry"][0]["messaging"].append(other)
+
+        delivery = self.create_delivery(envelope)
+
+        items = delivery.item_ids.sorted("sequence")
+        self.assertEqual(len(items), 2)
+        self.assertEqual(items[0].kind, "unknown")
+        self.assertNotIn("messaging", items[0].payload_json)
+        self.assertEqual(items[1].kind, "messaging")
+        self.assertEqual(
+            items[1].payload_json["messaging"]["message"]["mid"], "m_retained_batch"
+        )
+        locators = (
+            self.env["contact.center.meta.media.locator"]
+            .sudo()
+            .search([("meta_delivery_id", "=", delivery.id)])
+        )
+        self.assertEqual(len(locators), 1)
+        self.assertEqual(locators.meta_item_key, items[1].item_key)
+        self.assertEqual(locators.download_url, retained_url)
+
+    def test_ignored_sender_is_scoped_to_inbox_and_can_be_resumed(self):
+        channel = self._ignored_conversation()
+        instagram_account = self._create_account(
+            "instagram", self.INSTAGRAM_ID, team=self.team
+        )
+        self._create_connection(instagram_account, self.instagram_asset)
+        instagram = self.create_delivery(
+            self._envelope(mid="m_ig_other_inbox", object_type="instagram")
+        )
+        self.assertEqual(instagram.item_ids.kind, "messaging")
+
+        self.env["contact.center.ui.api"].with_user(
+            self.agent
+        ).set_conversation_ignored(channel.id, False)
+        resumed = self.create_delivery(self._envelope(mid="m_meta_resumed"))
+        _dispatch, inbox = self._dispatch(resumed)
+        self.assertEqual(resumed.item_ids.kind, "messaging")
+        self.assertEqual(inbox.provider_connection_id, self.connection)
+
+    def test_erased_shared_item_replay_finishes_without_recreating_inbox(self):
+        delivery = self.create_delivery(self._envelope(mid="m_meta_erased_replay"))
+        dispatch = self._fanout(delivery)
+        item = dispatch.item_id
+        original_digest = item.event_sha256
+        erased = (
+            item.sudo()
+            .with_context(
+                allowed_company_ids=self.env.company.ids,
+                meta_webhook_internal=META_WEBHOOK_INTERNAL_TOKEN,
+            )
+            ._erase_consumer_message_content(META_MESSAGING_CONSUMER_KEY)
+        )
+        self.assertEqual(erased, item)
+        dispatcher_class = type(self.env["meta.webhook.dispatcher"])
+        with mock.patch.object(
+            dispatcher_class,
+            "_contact_center_meta_project_inbox",
+            side_effect=AssertionError("Erased content must not recreate an inbox"),
+        ):
+            self.assertTrue(
+                dispatch.with_context(job_uuid=dispatch.queue_job_uuid)._job_process()
+            )
+            self.assertFalse(
+                dispatch.with_context(job_uuid=dispatch.queue_job_uuid)._job_process()
+            )
+        dispatch.invalidate_recordset(["state", "result_ref"])
+        self.assertEqual(dispatch.state, "done")
+        self.assertEqual(dispatch.result_ref, "contact.center.content_erased")
+        self.assertEqual(item.event_sha256, original_digest)
+        self.assertFalse(
+            self.env["contact.center.inbox.event"]
+            .sudo()
+            .search_count([("provider_connection_id", "=", self.connection.id)])
+        )
 
     def test_messaging_item_is_claimed_only_by_the_registered_consumer(self):
         delivery = self.create_delivery(self._envelope())

@@ -7,6 +7,7 @@ from . import (
     test_connection_roles,
     test_contact_center,
     test_control_events,
+    test_conversation_actions,
     test_conversation_lifecycle,
     test_cross_account_identity,
     test_dto_adapter,
@@ -31,3 +32,5 @@ from . import (
 )
 from . import test_followup
 from . import test_multi_access_ui
+
+from . import test_conversation_privacy

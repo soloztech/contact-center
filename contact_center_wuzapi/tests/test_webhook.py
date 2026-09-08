@@ -150,6 +150,167 @@ class TestWuzapiWebhook(HttpCase):
             .search_count([("model_name", "=", "contact.center.inbox.event")])
         )
 
+    def _ignored_conversation(
+        self, reference, *, aliases=(), conversation_type="direct"
+    ):
+        guest = self.env["mail.guest"].sudo().create({"name": "Ignored webhook guest"})
+        identity = self.env["contact.center.identity"]
+        if conversation_type == "direct":
+            identity = identity.sudo().create(
+                {
+                    "name": "Ignored webhook guest",
+                    "company_id": self.env.company.id,
+                    "mail_guest_id": guest.id,
+                }
+            )
+            self.env["contact.center.identity.alias"].sudo().create(
+                [
+                    {
+                        "identity_id": identity.id,
+                        "account_id": self.account.id,
+                        "namespace": namespace,
+                        "value_raw": value,
+                        "value_normalized": value,
+                        "confidence": "protocol",
+                    }
+                    for namespace, value in aliases
+                ]
+            )
+        channel = self.env["mail.channel"]._contact_center_create_channel(
+            account=self.account,
+            identity=identity,
+            conversation_type=conversation_type,
+            name="Ignored webhook conversation",
+            guest_ids=guest.ids,
+        )
+        self.env["contact.center.channel.binding"].sudo().create(
+            {
+                "channel_id": channel.id,
+                "account_id": self.account.id,
+                "identity_id": identity.id,
+                "conversation_type": conversation_type,
+                "conversation_ref": reference,
+            }
+        )
+        self.env["contact.center.ui.api"].with_user(
+            self.agent
+        ).set_conversation_ignored(channel.id, True)
+        return channel
+
+    def test_ignored_unsupported_message_is_dropped_before_sanitization_or_ledger(self):
+        self._ignored_conversation("5511999999999@s.whatsapp.net")
+        envelope = self._load_fixture("message_text_lid.json")
+        envelope["event"]["Info"]["Chat"] = "5511999999999@s.whatsapp.net"
+        envelope["event"]["Message"] = {
+            "futureUnsupportedMessage": {
+                "text": "Synthetic ignored private content",
+                "mediaKey": "synthetic-ignored-media-key",
+            }
+        }
+        body = json.dumps(envelope).encode()
+        jobs_before = self._inbox_job_count()
+        media_before = self.env["contact.center.media.binding"].sudo().search_count([])
+        with mock.patch.object(
+            webhook_controller,
+            "sanitize_webhook_envelope",
+            side_effect=AssertionError("Ignored content must not reach sanitization"),
+        ):
+            response = self._post(body)
+            replay = self._post(body)
+        for result in (response, replay):
+            self.assertEqual(result.status_code, 200, result.text)
+            self.assertTrue(result.json()["ignored"])
+            self.assertNotIn("event_id", result.json())
+        self.assertFalse(self._connection_inboxes())
+        self.assertEqual(self._inbox_job_count(), jobs_before)
+        self.assertEqual(
+            self.env["contact.center.media.binding"].sudo().search_count([]),
+            media_before,
+        )
+
+    def test_ignored_identity_covers_lid_alias_and_direct_control_events(self):
+        self._ignored_conversation(
+            "5511999999999@s.whatsapp.net",
+            aliases=[
+                ("whatsapp.pn", "5511999999999@s.whatsapp.net"),
+                ("whatsapp.lid", "100000000000001@lid"),
+            ],
+        )
+        envelope = self._load_fixture("message_text_lid.json")
+        envelope["event"]["Info"].pop("SenderAlt")
+        envelopes = [envelope]
+        for fixture in ("read_receipt.json", "identity_change.json", "call_offer.json"):
+            envelopes.append(self._load_fixture(fixture))
+        picture = self._load_fixture("picture_direct_webhook.json")
+        picture["event"].update(
+            JID="5511999999999@s.whatsapp.net", Author="5511999999999@s.whatsapp.net"
+        )
+        envelopes.append(picture)
+        for payload in envelopes:
+            with self.subTest(event_type=payload["type"]):
+                response = self._post(json.dumps(payload).encode())
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertTrue(response.json()["ignored"])
+        self.assertFalse(self._connection_inboxes())
+
+    def test_ignored_group_drops_messages_and_group_metadata(self):
+        group_ref = "120363000000901@g.us"
+        self._ignored_conversation(group_ref, conversation_type="group")
+        for fixture in (
+            "message_group_text_lid.json",
+            "group_info_webhook.json",
+            "joined_group_webhook.json",
+            "picture_group_webhook.json",
+        ):
+            envelope = self._load_fixture(fixture)
+            if envelope["type"] == "Message":
+                envelope["event"]["Info"]["Chat"] = group_ref
+            with self.subTest(event_type=envelope["type"]):
+                response = self._post(json.dumps(envelope).encode())
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertTrue(response.json()["ignored"])
+        self.assertFalse(self._connection_inboxes())
+
+    def test_ignored_group_does_not_suppress_direct_contact_or_connection_lifecycle(
+        self,
+    ):
+        self._ignored_conversation("120363000000001@g.us", conversation_type="group")
+        direct = self._load_fixture("message_group_text_lid.json")
+        direct["event"]["Info"].update(
+            Chat="5511900000001@s.whatsapp.net", IsGroup=False
+        )
+        lifecycle = {"type": "Connected", "event": {"JID": "120363000000001@g.us"}}
+        for envelope in (direct, lifecycle):
+            response = self._post(json.dumps(envelope).encode())
+            self.assertEqual(response.status_code, 202, response.text)
+            self.assertNotIn("ignored", response.json())
+        self.assertEqual(len(self._connection_inboxes()), 2)
+
+    def test_ignore_admission_conflict_retries_with_no_persisted_payload(self):
+        class ConcurrentUpdate(SerializationFailure):
+            pgcode = errorcodes.SERIALIZATION_FAILURE
+
+        self._ignored_conversation("5511999999999@s.whatsapp.net")
+        envelope = self._load_fixture("message_text_lid.json")
+        envelope["event"]["Info"]["Chat"] = "5511999999999@s.whatsapp.net"
+        body = json.dumps(envelope).encode()
+        policy_class = type(self.env["contact.center.conversation.ignore"])
+        original = policy_class._ignored_envelope
+        attempts = []
+
+        def fail_once(policy, connection, payload):
+            attempts.append(payload)
+            if len(attempts) == 1:
+                raise ConcurrentUpdate("synthetic ignore admission conflict")
+            return original(policy, connection, payload)
+
+        with mock.patch.object(policy_class, "_ignored_envelope", new=fail_once):
+            response = self._post(body)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(response.json()["ignored"])
+        self.assertEqual(attempts, [envelope, envelope])
+        self.assertFalse(self._connection_inboxes())
+
     def test_bounded_body_reader_supports_odoo16_werkzeug(self):
         class FakeRequest:
             content_length = None

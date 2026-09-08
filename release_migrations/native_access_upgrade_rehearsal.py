@@ -7,6 +7,7 @@ No business rows are written through SQL and no HTTP or cron worker is started.
 """
 
 import argparse
+import ast
 import configparser
 import datetime
 import json
@@ -20,6 +21,7 @@ import uuid
 from pathlib import Path
 
 OLD_COMMIT = "33e662b1d95ba34a879c5f652719911c8902969f"
+INSTALLED_COMMIT = "9660986fb530c07de7fd3c44b1007b6a3a12b56f"
 MODULES = (
     "contact_center_base",
     "contact_center_ui",
@@ -230,7 +232,9 @@ def registry_phase(env, phase, source, candidate, output):
     assert not config["http_enable"] and not config["test_enable"]
     assert config["workers"] == config["max_cron_threads"] == 0
     modules = env["ir.module.module"].search([("name", "in", list(MODULES))])
-    expected = "16.0.1.1.0" if phase == "verify_new" else "16.0.1.0.0"
+    expected = ast.literal_eval(
+        (source / "contact_center_base/__manifest__.py").read_text()
+    )["version"]
     assert len(modules) == len(MODULES)
     versions = {row.name: (row.state, row.latest_version) for row in modules}
     assert all(
@@ -371,6 +375,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--old-root", type=Path, required=True)
     parser.add_argument("--candidate-root", type=Path, required=True)
+    parser.add_argument("--installed-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if (
@@ -387,6 +392,15 @@ def main():
     candidate_commit = subprocess.check_output(
         ["git", "-C", str(candidate), "rev-parse", "HEAD"], text=True
     ).strip()
+    installed = args.installed_root.resolve()
+    installed_commit = subprocess.check_output(
+        ["git", "-C", str(installed), "rev-parse", "HEAD"], text=True
+    ).strip()
+    if installed_commit != INSTALLED_COMMIT or any(
+        installed == root or installed in root.parents or root in installed.parents
+        for root in (old, candidate)
+    ):
+        parser.error("The installed 1.1 checkout must be pinned and isolated.")
     if (
         old_commit != OLD_COMMIT
         or old == candidate
@@ -433,6 +447,7 @@ def main():
         "state": "running",
         "old_commit": old_commit,
         "candidate_commit": candidate_commit,
+        "installed_commit": installed_commit,
         "modules": list(MODULES),
         "database": database,
         "http_enabled": False,
@@ -443,13 +458,19 @@ def main():
     created = False
     error = None
 
-    def phase(name, source, mode="shell", expected_failure=False):
+    def phase(name, source, mode="shell", expected_failure=False, shell_phase=None):
         _logger.info("Native access upgrade rehearsal: %s", name)
         body = None
         if mode == "shell":
             body = (
                 "import runpy\nrunpy.run_path(%r)['registry_phase'](env, %r, %r, %r, %r)\n"
-                % (script, name, str(source), str(candidate), str(output))
+                % (
+                    script,
+                    shell_phase or name,
+                    str(source),
+                    str(candidate),
+                    str(output),
+                )
             )
         log_path = output / (name + ".log")
         started = time.monotonic()
@@ -473,6 +494,8 @@ def main():
         phase("seed_old", old)
         phase("reject_unprepared", candidate, "-u", expected_failure=True)
         phase("prepare_old", old)
+        phase("upgrade_installed", installed, "-u")
+        phase("verify_installed", installed, shell_phase="verify_new")
         phase("upgrade_new", candidate, "-u")
         phase("verify_new", candidate)
         summary.update(

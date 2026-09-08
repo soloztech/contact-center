@@ -211,6 +211,290 @@ function activityConversationCursor(channelId, lastActivityAt) {
     };
 }
 
+QUnit.module("contact_center_ui > conversation lifecycle", () => {
+    function lifecycleStore() {
+        const store = new ContactCenterStore({
+            orm: {},
+            busService: new EventTarget(),
+            notification: false,
+        });
+        store.state.conversations = [
+            openConversation({
+                channel_id: 10,
+                name: "Cliente",
+                ignored: false,
+                capabilities: {delete_conversation: true, ignore_conversation: true},
+            }),
+            openConversation({channel_id: 20}),
+        ];
+        store.state.selectedChannelId = 10;
+        store.state.timelineChannelId = 10;
+        store.state.messages = [{message_id: 100}];
+        store.state.conversationTotal = 2;
+        store.scheduleSynchronization = () => undefined;
+        return store;
+    }
+
+    QUnit.test(
+        "destructive conversation actions require effective server capabilities",
+        async (assert) => {
+            const store = lifecycleStore();
+            store.state.bootstrap = {capabilities: {is_admin: true}};
+            store.selectedConversation.capabilities = {
+                delete_conversation: "true",
+                ignore_conversation: false,
+            };
+            let calls = 0;
+            store.call = async () => {
+                calls++;
+            };
+            assert.notOk(await store.deleteConversation(10));
+            assert.notOk(await store.setConversationIgnored(true, 10));
+            assert.notOk(await store.deleteConversation(999));
+            assert.strictEqual(
+                calls,
+                0,
+                "no request without a true conversation capability"
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "deletion tombstones defeat delayed lists and conversation responses",
+        async (assert) => {
+            const store = lifecycleStore();
+            const oldConversation = {...store.selectedConversation};
+            let finishList = null;
+            store.call = (method) =>
+                method === "list_conversations"
+                    ? new Promise((resolve) => {
+                          finishList = resolve;
+                      })
+                    : Promise.resolve({
+                          schema_version: 1,
+                          channel_id: 10,
+                          removed_from_conversation: true,
+                      });
+            const listing = store.loadConversations({reset: true});
+            assert.ok(await store.deleteConversation(10));
+            assert.notOk(store.state.selectedChannelId);
+            assert.deepEqual(store.state.messages, []);
+            finishList({schema_version: 1, items: [oldConversation], total: 1});
+            assert.notOk(
+                await listing,
+                "a list started before deletion is invalidated"
+            );
+            assert.notOk(
+                store.replaceConversation(oldConversation),
+                "a late mutation response cannot resurrect the row"
+            );
+            store.applyConversationPage(
+                {items: [oldConversation]},
+                {reset: true, silent: true, previousConversation: oldConversation}
+            );
+            assert.deepEqual(
+                store.state.conversations,
+                [],
+                "a deleted previous selection is never preserved"
+            );
+            assert.notOk(await store.selectConversation(10));
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "deletion notifications remove another session's selection without reselecting",
+        (assert) => {
+            const store = lifecycleStore();
+            store.onNotification({
+                detail: [
+                    {
+                        type: CONTACT_CENTER_NOTIFICATION_TYPE,
+                        payload: {
+                            schema_version: 1,
+                            event_type: "conversation_deleted",
+                            channel_id: 10,
+                        },
+                    },
+                ],
+            });
+            assert.notOk(store.state.selectedChannelId);
+            assert.deepEqual(
+                store.state.conversations.map((item) => item.channel_id),
+                [20]
+            );
+            assert.strictEqual(store.state.conversationTotal, 1);
+            assert.notOk(store.replaceConversation(openConversation({channel_id: 10})));
+            store.destroy();
+        }
+    );
+
+    QUnit.test("deletion requires an exact confirmed tombstone", async (assert) => {
+        const store = lifecycleStore();
+        store.call = async () => ({
+            schema_version: 1,
+            channel_id: 20,
+            removed_from_conversation: true,
+        });
+        assert.notOk(await store.deleteConversation(10));
+        assert.strictEqual(store.state.selectedChannelId, 10);
+        assert.strictEqual(store.state.messages.length, 1);
+        assert.notOk(store.deletedConversationIds.has(10));
+        store.destroy();
+    });
+
+    QUnit.test(
+        "ignoring and resuming preserve the existing history and selected row",
+        async (assert) => {
+            const store = lifecycleStore();
+            const calls = [];
+            store.call = async (method, [channelId, ignored]) => {
+                calls.push([method, channelId, ignored]);
+                return {
+                    schema_version: 1,
+                    item: {...store.loadedConversation(channelId), ignored},
+                };
+            };
+            assert.ok(await store.setConversationIgnored(true, 10));
+            assert.ok(store.selectedConversation.ignored);
+            assert.deepEqual(store.state.messages, [{message_id: 100}]);
+            assert.ok(await store.setConversationIgnored(false, 10));
+            assert.notOk(store.selectedConversation.ignored);
+            assert.deepEqual(calls, [
+                ["set_conversation_ignored", 10, true],
+                ["set_conversation_ignored", 10, false],
+            ]);
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "mark unread drains in-flight seen writes and closes only its own selection",
+        async (assert) => {
+            const store = lifecycleStore();
+            let finishSeen = null;
+            const calls = [];
+            store.call = (method) => {
+                calls.push(method);
+                if (method === "mark_seen") {
+                    return new Promise((resolve) => {
+                        finishSeen = resolve;
+                    });
+                }
+                return Promise.resolve({
+                    schema_version: 1,
+                    item: {
+                        ...store.loadedConversation(10),
+                        unread_count: 1,
+                        first_unread_message_id: 100,
+                    },
+                });
+            };
+            const seen = store.markSeen(100);
+            const unread = store.markConversationUnread(10);
+            await Promise.resolve();
+            assert.deepEqual(
+                calls,
+                ["mark_seen"],
+                "unread waits for the write already in flight"
+            );
+            assert.notOk(
+                await store.markSeen(100),
+                "viewport updates cannot start another seen request"
+            );
+            assert.notOk(
+                await store.markConversationUnread(10),
+                "repeated actions are ignored"
+            );
+            finishSeen({channel_id: 10, message_id: 100});
+            await seen;
+            assert.ok(await unread);
+            assert.deepEqual(calls, ["mark_seen", "mark_conversation_unread"]);
+            assert.notOk(store.state.selectedChannelId);
+            assert.strictEqual(store.loadedConversation(10).unread_count, 1);
+            assert.strictEqual(store.pendingSeenRequests.size, 0);
+            assert.strictEqual(store.suspendedSeenChannels.size, 0);
+
+            store.state.selectedChannelId = 20;
+            assert.ok(await store.markConversationUnread(10));
+            assert.strictEqual(
+                store.state.selectedChannelId,
+                20,
+                "an unrelated conversation stays open"
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "failed unread requests release the seen barrier without losing the chat",
+        async (assert) => {
+            const store = lifecycleStore();
+            store.call = async () => {
+                throw new Error("Temporary failure");
+            };
+            assert.notOk(await store.markConversationUnread(10));
+            assert.strictEqual(store.state.selectedChannelId, 10);
+            assert.strictEqual(store.suspendedSeenChannels.size, 0);
+            store.call = async () => ({channel_id: 10, message_id: 100});
+            assert.ok(await store.markSeen(100));
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "conversation confirmations cancel safely and recheck permissions on confirm",
+        async (assert) => {
+            const store = lifecycleStore();
+            let dialog = null;
+            let calls = 0;
+            store.call = async () => {
+                calls++;
+                return {
+                    schema_version: 1,
+                    channel_id: 10,
+                    removed_from_conversation: true,
+                };
+            };
+            const list = {
+                store,
+                ui: {pendingConversationIds: {}},
+                addDialog: (_Component, props) => {
+                    dialog = props;
+                },
+            };
+            const confirm = (action) =>
+                ConversationList.prototype.confirmConversationAction.call(
+                    list,
+                    store.selectedConversation,
+                    action
+                );
+            assert.ok(confirm("delete"));
+            assert.strictEqual(calls, 0, "opening a dialog cannot delete");
+            assert.ok(dialog.body.includes("todas as suas mensagens"));
+            dialog.cancel();
+            assert.deepEqual(list.ui.pendingConversationIds, {});
+            assert.ok(confirm("ignored"));
+            assert.ok(
+                dialog.body.includes(
+                    "não serão registradas nesta caixa, para nenhum atendente"
+                )
+            );
+            dialog.cancel();
+            assert.ok(confirm("delete"));
+            store.selectedConversation.capabilities.delete_conversation = false;
+            assert.notOk(
+                await dialog.confirm(),
+                "revoked capabilities are checked again by the store"
+            );
+            assert.strictEqual(calls, 0);
+            assert.deepEqual(list.ui.pendingConversationIds, {});
+            store.destroy();
+        }
+    );
+});
+
 QUnit.module("contact_center_ui > model", (hooks) => {
     QUnit.test(
         "activity menu targets the inbox without changing native model groups",
@@ -4888,6 +5172,9 @@ QUnit.module("contact_center_ui > model", (hooks) => {
         async (assert) => {
             registry.category("services").add("hotkey", hotkeyService);
             registry.category("services").add("ui", uiService);
+            registry.category("services").add("dialog", {
+                start: () => ({add: () => () => undefined}),
+            });
             makeFakeLocalizationService();
             const env = await makeTestEnv();
             const target = getFixture();
@@ -4915,6 +5202,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             store.selectConversation = (id) => calls.push(["select", id]);
             store.toggleConversationPinned = async (id) => calls.push(["pinned", id]);
             store.toggleConversationMuted = async (id) => calls.push(["muted", id]);
+            store.markConversationUnread = async (id) => calls.push(["unread", id]);
             store.setConversationState = async (state, id) => calls.push([state, id]);
             try {
                 const list = await mount(ConversationList, target, {
@@ -4932,6 +5220,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                                 "Arquivar conversa",
                                 "Silenciar conversa",
                                 "Fixar conversa",
+                                "Marcar como não lida",
                             ],
                         ],
                         [
@@ -4941,6 +5230,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                                 "Desarquivar conversa",
                                 "Ativar notificações",
                                 "Desafixar conversa",
+                                "Marcar como não lida",
                             ],
                         ],
                     ]) {
@@ -4968,9 +5258,11 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                     ["archived", 10],
                     ["muted", 10],
                     ["pinned", 10],
+                    ["unread", 10],
                     ["open", 20],
                     ["muted", 20],
                     ["pinned", 20],
+                    ["unread", 20],
                 ];
                 assert.deepEqual(calls, [...expected, ...expected]);
                 assert.notOk(

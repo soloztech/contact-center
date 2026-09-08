@@ -2353,6 +2353,53 @@ class WuzapiAdapter(WuzapiGroupMetadataMixin, ProviderAdapter):
             authenticated |= hmac.compare_digest(expected, signature.lower())
         return authenticated
 
+    def conversation_route(self, connection, envelope):
+        """Classify only routing headers, including unsupported message bodies."""
+        if not isinstance(envelope, dict):
+            return None
+        event_type = _lookup(envelope, "type")
+        raw = _lookup(envelope, "event")
+        if not isinstance(raw, dict) or event_type in WUZAPI_LIFECYCLE_EVENT_STATES:
+            return None
+        # Control event normalizers read routing headers without persistence.
+        # Account lifecycle events above deliberately remain admitted.
+        if event_type in _CALL_EVENT_STATES or event_type in (
+            "IdentityChange",
+            "GroupInfo",
+            "JoinedGroup",
+            "Picture",
+        ):
+            try:
+                event = self.normalize_event(connection, envelope)
+            except AdapterError:
+                return None
+            return {
+                "conversation_type": event.conversation.conversation_type,
+                "conversation_ref": event.conversation_ref,
+                "addresses": [
+                    (address.namespace, address.value_normalized)
+                    for address in event.conversation.addresses
+                ],
+            }
+        if event_type not in ("Message", "ReadReceipt"):
+            return None
+        source = _lookup(raw, "Info") if event_type == "Message" else raw
+        if not isinstance(source, dict):
+            return None
+        try:
+            addresses, reference, kind = _conversation_values(
+                source, "event.Info", _source_value(source, "IsFromMe") is True
+            )
+        except AdapterError:
+            return None
+        return {
+            "conversation_type": kind,
+            "conversation_ref": reference,
+            "addresses": [
+                (address.namespace, address.value_normalized) for address in addresses
+            ],
+        }
+
     def normalize_event(self, connection, envelope):
         if not isinstance(envelope, dict):
             raise AdapterError("WuzAPI webhook envelope must be a JSON object")
