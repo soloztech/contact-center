@@ -306,14 +306,27 @@ class TestMarkRead(SavepointCase):
 
         self._mark_seen(channel, older[0])
         self._mark_seen(channel, newer[0])
-        repeated = self._mark_seen(channel, older[0])
+        self._mark_seen(channel, older[0])
 
         outboxes = (
             self.env["contact.center.outbox.command"]
             .sudo()
             .search([("channel_binding_id", "=", binding.id)], order="id")
         )
-        self.assertEqual(repeated["message_id"], newer[0].id)
+        member = (
+            self.env["mail.channel.member"]
+            .sudo()
+            .search(
+                [
+                    ("channel_id", "=", channel.id),
+                    ("partner_id", "=", self.agent.partner_id.id),
+                ]
+            )
+        )
+        # The response echoes the requested message. Monotonicity belongs to
+        # the persisted pointers, including a stale request with a higher ID.
+        self.assertEqual(member.seen_message_id, newer[0])
+        self.assertEqual(member.fetched_message_id, newer[0])
         self.assertEqual(
             [row.command_json["options"]["external_message_ids"] for row in outboxes],
             [["chronology-older"], ["chronology-newer"]],

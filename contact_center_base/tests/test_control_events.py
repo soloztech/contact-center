@@ -234,8 +234,9 @@ class TestControlEvents(SavepointCase):
             .search([("message_id", "=", message.id)], limit=1)
         )
 
-    def _real_inbound(self, channel, binding, external_id):
+    def _real_inbound(self, channel, binding, external_id, *, date=None):
         guest = binding.identity_id.mail_guest_id
+        message_values = {"date": date} if date else {}
         message = channel._contact_center_post(
             origin="inbound",
             body="Mensagem humana",
@@ -243,6 +244,7 @@ class TestControlEvents(SavepointCase):
             subtype_xmlid="mail.mt_comment",
             author_guest_id=guest.id,
             partner_ids=[],
+            **message_values,
         )
         target = (
             self.env["contact.center.message.binding"]
@@ -509,12 +511,13 @@ class TestControlEvents(SavepointCase):
     def test_mark_read_skips_a_later_control_card(self):
         jid = "5511900004107@s.whatsapp.net"
         _identity, channel, binding = self._direct_conversation(jid)
-        _human_message, human_target = self._real_inbound(
-            channel, binding, "human-before-call"
+        human_message, human_target = self._real_inbound(
+            channel, binding, "human-before-call", date="2026-08-29 11:59:59"
         )
         control_message = self.application._process_event(
             self.connection, self._call_event(jid, "offered")
         )
+        self.assertLess(human_message.date, control_message.date)
 
         outbox = self.application._queue_direct_mark_read(channel, control_message)
 

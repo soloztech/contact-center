@@ -135,13 +135,17 @@ class ContactCenterApplication(models.AbstractModel):
             message
         ) > message_chronology_key(current_message)
         if advances_cursor:
+            # Inbox cursors use Odoo's second-precision datetime format. Store
+            # the same precision so seeking a page cannot skip fractional dates.
+            activity_date = (message.date or fields.Datetime.now()).replace(
+                microsecond=0
+            )
             channel.sudo().with_context(
                 contact_center_membership_token=CONTACT_CENTER_MEMBERSHIP_TOKEN
             ).write(
                 {
                     "contact_center_last_message_id": message.id,
-                    "contact_center_last_message_at": message.date
-                    or fields.Datetime.now(),
+                    "contact_center_last_message_at": activity_date,
                 }
             )
         payload = {"message_id": message.id}

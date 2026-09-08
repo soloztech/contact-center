@@ -3454,6 +3454,16 @@ class TestContactCenter(SavepointCase):
             application._publish_message_created(channel, message)
             channels.append(channel)
 
+        channel_records = self.env["mail.channel"].browse(
+            [channel.id for channel in channels]
+        )
+        channel_records.flush_recordset(["contact_center_last_message_at"])
+        channel_records.invalidate_recordset(["contact_center_last_message_at"])
+        self.assertEqual(
+            channel_records.mapped("contact_center_last_message_at"),
+            [fields.Datetime.to_datetime("2026-08-21 12:00:00")] * 3,
+        )
+
         found = []
         cursor = False
         for _index in range(3):
