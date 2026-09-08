@@ -301,7 +301,9 @@ class ContactCenterInboxPrivacy(models.Model):
             )
         self.sudo().write(
             {
-                "raw_envelope_json": {},
+                # Odoo Json converts an empty object to SQL NULL; this field
+                # is required. Keep an explicit, content-free receipt marker.
+                "raw_envelope_json": {"content_erased": True},
                 "normalized_dto_json": False,
                 "metadata_json": {"content_erased": True, "reason": reason},
                 "state": "blocked",

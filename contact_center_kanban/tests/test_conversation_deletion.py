@@ -17,6 +17,7 @@ class TestKanbanConversationDeletion(SavepointCase):
                 {
                     "name": "Conversation deletion administrator",
                     "login": "cc-kanban-deletion-%s" % uuid.uuid4(),
+                    "email": "cc-kanban-deletion@example.invalid",
                     "company_id": cls.env.company.id,
                     "company_ids": [(6, 0, cls.env.company.ids)],
                     "groups_id": [(6, 0, groups.ids)],

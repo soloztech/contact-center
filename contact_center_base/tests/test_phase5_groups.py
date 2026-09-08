@@ -4150,6 +4150,8 @@ class TestContactCenterGroups(SavepointCase):
                 "delete_message": True,
                 "delivery_receipts": True,
                 "view_attribution": False,
+                "delete_conversation": False,
+                "ignore_conversation": False,
             },
         )
         self.assertEqual(

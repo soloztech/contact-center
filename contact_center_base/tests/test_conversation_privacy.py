@@ -410,7 +410,13 @@ class TestConversationPrivacy(SavepointCase):
         self.assertTrue(other_message.exists())
         self.assertEqual(inbox.inbox_dedupe_key, original_key)
         for erased in (inbox, pending):
-            self.assertEqual(erased.raw_envelope_json, {})
+            erased.flush_recordset(
+                ["raw_envelope_json", "normalized_dto_json", "metadata_json"]
+            )
+            erased.invalidate_recordset(
+                ["raw_envelope_json", "normalized_dto_json", "metadata_json"]
+            )
+            self.assertEqual(erased.raw_envelope_json, {"content_erased": True})
             self.assertFalse(erased.normalized_dto_json)
             self.assertTrue(erased.metadata_json["content_erased"])
             self.assertEqual(erased.state, "blocked")
@@ -427,7 +433,13 @@ class TestConversationPrivacy(SavepointCase):
         job_uuid = str(uuid.uuid4())
         event.write({"queue_job_uuid": job_uuid})
         self.assertFalse(event.with_context(job_uuid=job_uuid)._job_process())
-        self.assertEqual(event.raw_envelope_json, {})
+        event.flush_recordset(
+            ["raw_envelope_json", "normalized_dto_json", "metadata_json"]
+        )
+        event.invalidate_recordset(
+            ["raw_envelope_json", "normalized_dto_json", "metadata_json"]
+        )
+        self.assertEqual(event.raw_envelope_json, {"content_erased": True})
         self.assertEqual(event.state, "blocked")
         fresh = self._inbox(binding)
         fresh.write({"queue_job_uuid": job_uuid})
