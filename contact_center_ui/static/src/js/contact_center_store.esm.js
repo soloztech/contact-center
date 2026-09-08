@@ -2733,6 +2733,12 @@ export class ContactCenterStore {
         const visibleItems = oldest
             ? items.filter((item) => compareTimelineItems(item, oldest) >= 0)
             : items;
+        if (visibleItems.length < items.length && !this.state.timelineHasMore) {
+            // A previously complete window can gain older history. Keep that
+            // history reachable even when a live head refresh overlaps fully.
+            this.state.timelineHasMore = true;
+            this.state.nextBeforeMessageId = oldest.message_id;
+        }
         this.state.messages = mergeTimelineItems(this.state.messages, visibleItems, {
             prepend: false,
         });

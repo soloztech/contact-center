@@ -8220,6 +8220,15 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             );
             assert.strictEqual(store.timelineContiguousCursor, 300);
             assert.ok(
+                store.state.timelineHasMore,
+                "older arrivals reopen pagination after the complete history was loaded"
+            );
+            assert.strictEqual(
+                store.state.nextBeforeMessageId,
+                100,
+                "older pagination starts before the first retained chronological message"
+            );
+            assert.ok(
                 store.timelineNeedsForwardRecovery(
                     {
                         items: [store.state.messages[1]],

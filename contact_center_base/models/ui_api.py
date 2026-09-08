@@ -1906,7 +1906,8 @@ class ContactCenterUiApi(models.AbstractModel):
                  LEFT JOIN mail_message AS seen ON seen.id = scoped.seen_message_id
                      WHERE message.model = 'mail.channel'
                        AND (seen.id IS NULL OR
-                           (COALESCE(message.date, '9999-12-31 23:59:59'::timestamp), message.id)
+                           (COALESCE(message.date, '9999-12-31 23:59:59'::timestamp),
+                            message.id)
                            > (COALESCE(seen.date, '9999-12-31 23:59:59'::timestamp), seen.id))
                        AND message.message_type NOT IN (
                            'notification', 'user_notification'
