@@ -124,10 +124,16 @@ class TestKanbanConversationDeletion(SavepointCase):
         transitions = self.env["contact.center.case.transition"].search(
             [("case_id", "=", case.id)]
         )
+        case.with_user(self.admin).message_subscribe(
+            partner_ids=self.admin.partner_id.ids
+        )
+        case.invalidate_recordset(["message_follower_ids"])
         case_followers = case.message_follower_ids
         lead_snapshot = lead.read(["name", "stage_id", "team_id", "partner_id"])
         self.assertTrue(case_links)
         self.assertTrue(canonical_links)
+        self.assertTrue(other_case_links)
+        self.assertTrue(other_canonical_links)
         self.assertTrue(transitions)
         self.assertTrue(case_followers)
 
