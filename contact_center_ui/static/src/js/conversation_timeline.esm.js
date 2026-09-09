@@ -209,6 +209,7 @@ export class ConversationTimeline extends Component {
     setup() {
         this.action = useService("action");
         this.viewportRef = useRef("viewport");
+        this.tailRef = useRef("tail");
         this.editInputRef = useRef("editInput");
         this.reactionPickerRef = useRef("reactionPicker");
         this.deleteConfirmationRef = useRef("deleteConfirmation");
@@ -228,6 +229,12 @@ export class ConversationTimeline extends Component {
         this.lastScrollTop = 0;
         this.positioningScroll = false;
         this.destroyed = false;
+        this.tailObserver = false;
+        this.tailObserverChannelId = false;
+        this.tailVisible = false;
+        this.onReadVisibilityChange = () => this.markVisibleTailSeen();
+        document.addEventListener("visibilitychange", this.onReadVisibilityChange);
+        window.addEventListener("focus", this.onReadVisibilityChange);
         this.followLatest = true;
         this.observedChannelId = false;
         this.observedLastMessageId = 0;
@@ -236,7 +243,16 @@ export class ConversationTimeline extends Component {
         onWillDestroy(() => {
             this.destroyed = true;
             this.cancelPagination();
+            document.removeEventListener(
+                "visibilitychange",
+                this.onReadVisibilityChange
+            );
+            window.removeEventListener("focus", this.onReadVisibilityChange);
         });
+        useEffect(
+            () => this.observeVisibleTail(),
+            () => [this.tailRef.el, this.state.selectedChannelId]
+        );
         useEffect(
             () => this.synchronizeScroll(),
             () => [
@@ -251,6 +267,23 @@ export class ConversationTimeline extends Component {
         useEffect(
             () => this.resetInteraction(),
             () => [this.state.selectedChannelId]
+        );
+        useEffect(
+            () => {
+                this.markVisibleTailSeen();
+            },
+            () => [
+                this.state.timelineChannelId,
+                this.state.timelinePhase,
+                this.latestMessageId,
+                this.state.timelineHasMoreForward,
+                this.state.mobilePane,
+                this.store.selectedConversation,
+                this.store.selectedConversation &&
+                    this.store.selectedConversation.unread_count,
+                this.store.selectedConversation &&
+                    this.store.selectedConversation.first_unread_message_id,
+            ]
         );
         useEffect(
             () => this.reconcileInteractionPolicy(),
@@ -595,7 +628,7 @@ export class ConversationTimeline extends Component {
             this.observedLastMessage = lastMessage;
         }
         if (decision === "follow") {
-            this.scrollToBottom({markSeen: !this.state.timelineHasMoreForward});
+            this.scrollToBottom();
         } else if (decision === "notify") {
             const added = this.state.messages.filter(
                 (message) =>
@@ -653,16 +686,82 @@ export class ConversationTimeline extends Component {
         this.markVisibleTailSeen();
     }
 
-    markVisibleTailSeen() {
-        if (this.followLatest && !this.state.timelineHasMoreForward) {
-            const shouldMarkSeen = Boolean(
-                this.ui.unseenMessages || this.state.timelineFirstUnreadMessageId
-            );
-            this.ui.unseenMessages = 0;
-            if (shouldMarkSeen && this.latestMessageId) {
-                this.store.markSeen(this.latestMessageId);
-            }
+    observeVisibleTail() {
+        const tail = this.tailRef.el;
+        const channelId = this.state.selectedChannelId;
+        this.tailVisible = false;
+        this.tailObserverChannelId = channelId;
+        if (!tail || !channelId) {
+            return;
         }
+        // The document viewport also accounts for scrolling ancestors and the
+        // mobile conversation pane being translated outside the window.
+        const observer = new IntersectionObserver(
+            (entries) => {
+                if (this.destroyed || this.tailObserver !== observer) {
+                    return;
+                }
+                const entry = entries.find((item) => item.target === tail);
+                if (entry) {
+                    this.tailVisible =
+                        entry.isIntersecting && entry.intersectionRatio === 1;
+                    this.markVisibleTailSeen();
+                }
+            },
+            {root: null, threshold: 1}
+        );
+        this.tailObserver = observer;
+        observer.observe(tail);
+        return () => {
+            observer.disconnect();
+            if (this.tailObserver === observer) {
+                this.tailObserver = false;
+                this.tailObserverChannelId = false;
+                this.tailVisible = false;
+            }
+        };
+    }
+
+    visibleTailReady() {
+        const channelId = this.state.selectedChannelId;
+        return Boolean(
+            !this.destroyed &&
+                !document.hidden &&
+                document.hasFocus() &&
+                channelId &&
+                this.state.timelineChannelId === channelId &&
+                this.tailObserverChannelId === channelId &&
+                this.state.timelinePhase === "ready" &&
+                !this.state.timelineHasMoreForward &&
+                !this.positioningScroll &&
+                !this.preserveScroll &&
+                this.tailVisible &&
+                this.latestMessageId
+        );
+    }
+
+    markVisibleTailSeen() {
+        const viewport = this.viewportRef.el;
+        const tail = this.tailRef.el;
+        if (!this.visibleTailReady() || !viewport || !tail || !viewport.clientHeight) {
+            return false;
+        }
+        // Observer delivery is asynchronous. Recheck the current geometry so a
+        // newly rendered message cannot reuse the previous tail's visibility.
+        const bounds = viewport.getBoundingClientRect();
+        const end = tail.getBoundingClientRect();
+        if (
+            !end.width ||
+            !end.height ||
+            end.top < Math.max(0, bounds.top) ||
+            end.bottom > Math.min(window.innerHeight, bounds.bottom) ||
+            end.left < Math.max(0, bounds.left) ||
+            end.right > Math.min(window.innerWidth, bounds.right)
+        ) {
+            return false;
+        }
+        this.ui.unseenMessages = 0;
+        return this.store.markSeen(this.latestMessageId);
     }
 
     toggleMenu(message) {
@@ -711,7 +810,7 @@ export class ConversationTimeline extends Component {
         items[next].focus();
     }
 
-    scrollToBottom({markSeen = false} = {}) {
+    scrollToBottom() {
         const channelId = this.state.selectedChannelId;
         this.followLatest = true;
         this.ui.unseenMessages = 0;
@@ -727,9 +826,7 @@ export class ConversationTimeline extends Component {
                 this.lastScrollTop = viewport.scrollTop;
             }
             this.positioningScroll = false;
-            if (markSeen && this.latestMessageId) {
-                this.store.markSeen(this.latestMessageId);
-            }
+            this.markVisibleTailSeen();
         });
     }
 
@@ -768,6 +865,7 @@ export class ConversationTimeline extends Component {
                 timelineViewportNearBottom(viewport) &&
                 !this.state.timelineHasMoreForward;
             this.ui.awayFromLatest = !this.followLatest;
+            this.markVisibleTailSeen();
         });
     }
 
@@ -780,7 +878,7 @@ export class ConversationTimeline extends Component {
             await this.store.jumpToLatest();
             return;
         }
-        this.scrollToBottom({markSeen: true});
+        this.scrollToBottom();
     }
 
     cancelPagination() {
@@ -868,7 +966,7 @@ export class ConversationTimeline extends Component {
                     this.ui.awayFromLatest = !this.followLatest;
                     this.paginationRequest = false;
                     this.preserveScroll = false;
-                    if (loaded && direction === "newer") {
+                    if (loaded) {
                         this.markVisibleTailSeen();
                     }
                 });

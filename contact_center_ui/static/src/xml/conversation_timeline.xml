@@ -287,6 +287,12 @@
                         <t t-else="">Ver mensagens mais recentes</t>
                     </button>
                 </t>
+                <span
+                        t-if="state.messages.length"
+                        t-ref="tail"
+                        class="cc-timeline__end"
+                        aria-hidden="true"
+                    />
                 </div>
             </section>
             <span class="sr-only" role="status" aria-live="polite" aria-atomic="true">

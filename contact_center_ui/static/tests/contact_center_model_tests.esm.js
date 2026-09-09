@@ -6215,6 +6215,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                     preserveScroll: false,
                     positioningScroll: false,
                     destroyed: false,
+                    markVisibleTailSeen: () => false,
                 }
             );
             const older = timeline.onViewportScroll();
@@ -6276,8 +6277,6 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             assert.strictEqual(pending[1].kwargs.after_chronological_message_id, 103);
             timeline.onViewportScroll();
             assert.strictEqual(pending.length, 2);
-            const seen = [];
-            store.markSeen = (messageId) => seen.push(messageId);
             viewport.scrollTop = viewport.scrollHeight;
             timeline.onViewportScroll();
             viewport.insertAdjacentHTML(
@@ -6294,11 +6293,6 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             });
             assert.ok(await newer);
             await new Promise((resolve) => requestAnimationFrame(resolve));
-            assert.deepEqual(
-                seen,
-                [104],
-                "a short final page visible at the end is marked seen without a later scroll event"
-            );
             assert.notOk(timeline.ui.awayFromLatest);
 
             viewport.scrollTop = 100;
@@ -6423,6 +6417,220 @@ QUnit.module("contact_center_ui > model", (hooks) => {
         }
     );
 
+    async function mountedUnreadTimeline({focused = true, hidden = false} = {}) {
+        registry.category("services").add("action", {
+            start: () => ({doAction: async () => undefined}),
+        });
+        registry.category("services").add("dialog", {
+            start: () => ({add: () => () => undefined}),
+        });
+        makeFakeLocalizationService();
+        const env = await makeTestEnv();
+        const target = getFixture();
+        const originalStyle = target.style.cssText;
+        target.style.cssText =
+            "position:fixed;top:16px;left:16px;width:600px;height:260px;overflow:hidden;z-index:10000";
+        const focusDescriptor = Object.getOwnPropertyDescriptor(document, "hasFocus");
+        const hiddenDescriptor = Object.getOwnPropertyDescriptor(document, "hidden");
+        const visibility = {focused, hidden};
+        Object.defineProperty(document, "hasFocus", {
+            configurable: true,
+            value: () => visibility.focused,
+        });
+        Object.defineProperty(document, "hidden", {
+            configurable: true,
+            get: () => visibility.hidden,
+        });
+        const store = new ContactCenterStore({
+            orm: {},
+            busService: new EventTarget(),
+            notification: false,
+            stateFactory: reactive,
+        });
+        const message = {
+            message_id: 100,
+            date: "2026-09-09 12:00:00",
+            body_text: "Resposta enviada pelo celular",
+            direction: "outbound",
+            origin: "external_device",
+            content_type: "text",
+            author: {id: 17, type: "partner", name: "Agente"},
+            platform: "whatsapp",
+            media: [],
+            reactions: [],
+            actions: {},
+        };
+        Object.assign(store.state, {
+            selectedChannelId: 10,
+            timelineChannelId: 10,
+            timelinePhase: "ready",
+            timelineFirstUnreadMessageId: 100,
+            conversations: [
+                openConversation({
+                    channel_id: 10,
+                    unread_count: 1,
+                    first_unread_message_id: 100,
+                    last_message: message,
+                }),
+            ],
+            messages: [message],
+        });
+        const calls = [];
+        store.call = async (method, args) => {
+            calls.push({method, args});
+            return {channel_id: args[0], message_id: args[1]};
+        };
+        const timeline = await mount(ConversationTimeline, target, {
+            env,
+            props: {state: store.state, store},
+        });
+        timeline.viewportRef.el.parentElement.style.height = "240px";
+        async function settle() {
+            await nextTick();
+            await new Promise((resolve) => requestAnimationFrame(resolve));
+            await new Promise((resolve) => requestAnimationFrame(resolve));
+            await nextTick();
+        }
+        function close() {
+            timeline.__owl__.app.destroy();
+            store.destroy();
+            target.style.cssText = originalStyle;
+            for (const [key, descriptor] of [
+                ["hasFocus", focusDescriptor],
+                ["hidden", hiddenDescriptor],
+            ]) {
+                if (descriptor) {
+                    Object.defineProperty(document, key, descriptor);
+                } else {
+                    delete document[key];
+                }
+            }
+        }
+        return {store, timeline, target, calls, visibility, settle, close};
+    }
+
+    QUnit.test(
+        "a mounted short external-device conversation is read without a scroll event",
+        async (assert) => {
+            const fixture = await mountedUnreadTimeline();
+            const {store, timeline, target, calls, settle, close} = fixture;
+            try {
+                await settle();
+                assert.strictEqual(timeline.viewportRef.el.scrollTop, 0);
+                assert.deepEqual(calls, [{method: "mark_seen", args: [10, 100]}]);
+                assert.strictEqual(store.selectedConversation.unread_count, 0);
+                assert.notOk(target.querySelector(".cc-unread-divider"));
+                const next = {
+                    ...store.state.messages[0],
+                    message_id: 101,
+                    date: "2026-09-09 12:01:00",
+                };
+                store.selectedConversation.last_message = next;
+                store.state.messages = [...store.state.messages, next];
+                await settle();
+                assert.deepEqual(
+                    calls.map((call) => call.args[1]),
+                    [100, 101],
+                    "a newly visible tail is acknowledged even before its unread counter arrives"
+                );
+            } finally {
+                close();
+            }
+        }
+    );
+
+    QUnit.test(
+        "visible-tail observation respects unread history gaps and reacts to layout changes",
+        async (assert) => {
+            const fixture = await mountedUnreadTimeline({focused: false});
+            const {store, timeline, target, calls, visibility, settle, close} = fixture;
+            try {
+                store.state.timelineHasMoreForward = true;
+                await settle();
+                visibility.focused = true;
+                window.dispatchEvent(new Event("focus"));
+                await settle();
+                assert.strictEqual(
+                    calls.length,
+                    0,
+                    "an unloaded unread tail cannot be acknowledged"
+                );
+                const spacer = document.createElement("div");
+                spacer.style.cssText = "height:500px;min-height:500px;flex-shrink:0";
+                timeline.tailRef.el.before(spacer);
+                store.state.timelineHasMoreForward = false;
+                timeline.viewportRef.el.scrollTop = 0;
+                await settle();
+                assert.strictEqual(
+                    calls.length,
+                    0,
+                    "a long visible history still has unread content below the viewport"
+                );
+                assert.ok(target.querySelector(".cc-unread-divider"));
+                spacer.remove();
+                await settle();
+                assert.strictEqual(
+                    calls.length,
+                    1,
+                    "layout contraction exposes the tail without requiring scroll or a new message"
+                );
+                assert.strictEqual(store.selectedConversation.unread_count, 0);
+            } finally {
+                close();
+            }
+        }
+    );
+
+    QUnit.test(
+        "a mounted timeline waits for a visible focused conversation and cleans up its observer",
+        async (assert) => {
+            const fixture = await mountedUnreadTimeline({focused: false, hidden: true});
+            const {store, timeline, target, calls, visibility, settle, close} = fixture;
+            try {
+                await settle();
+                assert.strictEqual(
+                    calls.length,
+                    0,
+                    "hidden documents do not acknowledge"
+                );
+                visibility.hidden = false;
+                document.dispatchEvent(new Event("visibilitychange"));
+                await settle();
+                assert.strictEqual(
+                    calls.length,
+                    0,
+                    "a visible but unfocused window does not acknowledge"
+                );
+                target.style.transform = "translateX(200vw)";
+                await settle();
+                visibility.focused = true;
+                window.dispatchEvent(new Event("focus"));
+                await settle();
+                assert.strictEqual(
+                    calls.length,
+                    0,
+                    "the off-window mobile pane is not a visible conversation"
+                );
+                target.style.transform = "none";
+                await settle();
+                assert.deepEqual(calls, [{method: "mark_seen", args: [10, 100]}]);
+                assert.strictEqual(store.selectedConversation.unread_count, 0);
+                timeline.__owl__.app.destroy();
+                assert.notOk(timeline.tailObserver);
+                window.dispatchEvent(new Event("focus"));
+                document.dispatchEvent(new Event("visibilitychange"));
+                await settle();
+                assert.strictEqual(
+                    calls.length,
+                    1,
+                    "destroyed components cannot acknowledge again"
+                );
+            } finally {
+                close();
+            }
+        }
+    );
+
     QUnit.test(
         "opening at the first unread reconciles a clamped viewport without a scroll event",
         async (assert) => {
@@ -6459,6 +6667,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                     ui: {unseenMessages: 0, awayFromLatest: false},
                     viewportRef: {el: viewport},
                     followLatest: true,
+                    markVisibleTailSeen: () => false,
                     scrollToBottom: () =>
                         assert.ok(false, "the unread anchor remains present"),
                 };
@@ -9157,12 +9366,173 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 {message_id: 100, date: "2026-09-08 12:00:00"},
             ];
             store.state.conversations = [
-                {channel_id: 10, unread_count: 1, first_unread_message_id: 100},
+                {
+                    channel_id: 10,
+                    unread_count: 1,
+                    first_unread_message_id: 100,
+                    last_activity_at: "2026-09-08 12:00:00",
+                    last_message: {message_id: 100},
+                },
             ];
             store.call = async () => ({channel_id: 10, message_id: 100});
             assert.ok(await store.markSeen(100));
             assert.strictEqual(store.selectedConversation.unread_count, 0);
             store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "seen requests deduplicate the current selection but never reuse an obsolete selection token",
+        async (assert) => {
+            const store = new ContactCenterStore({
+                orm: {},
+                busService: new EventTarget(),
+                notification: false,
+            });
+            Object.assign(store.state, {
+                selectedChannelId: 10,
+                timelineChannelId: 10,
+                timelineFirstUnreadMessageId: 100,
+                messages: [{message_id: 100}],
+                conversations: [
+                    openConversation({
+                        channel_id: 10,
+                        unread_count: 1,
+                        first_unread_message_id: 100,
+                    }),
+                ],
+            });
+            const pending = [];
+            store.call = (method, args) =>
+                new Promise((resolve) => pending.push({method, args, resolve}));
+            try {
+                const first = store.markSeen(100);
+                const repeated = store.markSeen(100);
+                assert.strictEqual(
+                    first,
+                    repeated,
+                    "simultaneous visibility signals share one acknowledgement"
+                );
+                assert.strictEqual(pending.length, 1);
+                pending[0].resolve({channel_id: 10, message_id: 100});
+                assert.ok(await first);
+                assert.ok(await repeated);
+                assert.strictEqual(store.selectedConversation.unread_count, 0);
+                assert.ok(await store.markSeen(100));
+                assert.strictEqual(
+                    pending.length,
+                    1,
+                    "a confirmed tail does not generate repeated writes"
+                );
+
+                store.selectedConversation.unread_count = 1;
+                store.selectedConversation.first_unread_message_id = 100;
+                store.state.timelineFirstUnreadMessageId = 100;
+                const obsolete = store.markSeen(100);
+                assert.strictEqual(
+                    pending.length,
+                    2,
+                    "marking unread again allows a fresh acknowledgement of the same tail"
+                );
+                store.cancelSeenRetry();
+                store.state.selectedChannelId = 20;
+                store.cancelSeenRetry();
+                store.state.selectedChannelId = 10;
+                const current = store.markSeen(100);
+                assert.notStrictEqual(obsolete, current);
+                assert.strictEqual(pending.length, 3);
+                pending[1].resolve({channel_id: 10, message_id: 100});
+                assert.notOk(await obsolete);
+                assert.strictEqual(
+                    store.selectedConversation.unread_count,
+                    1,
+                    "an obsolete response cannot clear the current selection"
+                );
+                pending[2].resolve({channel_id: 10, message_id: 100});
+                assert.ok(await current);
+                assert.strictEqual(store.selectedConversation.unread_count, 0);
+                assert.strictEqual(store.pendingSeenRequests.size, 0);
+            } finally {
+                store.destroy();
+            }
+        }
+    );
+
+    QUnit.test(
+        "invalid read confirmations and newer known messages preserve unread state",
+        async (assert) => {
+            const retries = [];
+            const store = new ContactCenterStore({
+                orm: {},
+                busService: new EventTarget(),
+                notification: false,
+                realtimeTimer: {
+                    setTimeout: (callback) => {
+                        retries.push(callback);
+                        return retries.length;
+                    },
+                    clearTimeout: () => undefined,
+                },
+            });
+            Object.assign(store.state, {
+                selectedChannelId: 10,
+                timelineChannelId: 10,
+                timelineFirstUnreadMessageId: 100,
+                messages: [{message_id: 100}],
+                conversations: [
+                    openConversation({
+                        channel_id: 10,
+                        unread_count: 1,
+                        first_unread_message_id: 100,
+                        last_activity_at: "2026-09-09 12:00:00",
+                        last_message: {message_id: 100},
+                    }),
+                ],
+            });
+            store.state.messages[0].date = "2026-09-09 12:00:00";
+            try {
+                for (const response of [
+                    true,
+                    undefined,
+                    {channel_id: 20, message_id: 100},
+                    {channel_id: 10, message_id: 99},
+                ]) {
+                    store.call = async () => response;
+                    assert.notOk(await store.markSeen(100));
+                    assert.strictEqual(store.selectedConversation.unread_count, 1);
+                    assert.strictEqual(store.state.timelineFirstUnreadMessageId, 100);
+                }
+                assert.strictEqual(
+                    retries.length,
+                    4,
+                    "invalid acknowledgements retain the retry policy"
+                );
+                let resolveSeen = null;
+                store.call = () =>
+                    new Promise((resolve) => {
+                        resolveSeen = resolve;
+                    });
+                const synchronizations = [];
+                store.scheduleSynchronization = (reconnect, refreshTimeline) =>
+                    synchronizations.push({reconnect, refreshTimeline});
+                const seen = store.markSeen(100);
+                store.selectedConversation.last_message = {message_id: 99};
+                store.selectedConversation.last_activity_at = "2026-09-09 12:01:00";
+                store.selectedConversation.unread_count = 2;
+                resolveSeen({channel_id: 10, message_id: 100});
+                assert.ok(await seen);
+                assert.strictEqual(
+                    store.selectedConversation.unread_count,
+                    2,
+                    "a valid acknowledgement of an older loaded tail cannot clear a newer known arrival"
+                );
+                assert.strictEqual(store.state.timelineFirstUnreadMessageId, 100);
+                assert.deepEqual(synchronizations, [
+                    {reconnect: false, refreshTimeline: true},
+                ]);
+            } finally {
+                store.destroy();
+            }
         }
     );
 
@@ -9330,10 +9700,11 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                     {message_id: 200, body_text: "Current"},
                 ]
             );
-            assert.deepEqual(seen, [
-                [20, 200],
-                [20, 200],
-            ]);
+            assert.deepEqual(
+                seen,
+                [],
+                "fetching messages does not prove they were visible"
+            );
             assert.strictEqual(store.state.timelinePhase, "ready");
         }
     );

@@ -983,6 +983,7 @@ export class ContactCenterStore {
         this.timelineContiguousCursor = false;
         this.seenRetryTimer = null;
         this.seenRetryToken = 0;
+        this.confirmedSeenPointer = false;
         this.pendingSeenRequests = new Map();
         this.suspendedSeenChannels = new Set();
         this.deletedConversationIds = new Set();
@@ -2641,7 +2642,7 @@ export class ContactCenterStore {
                 : false;
     }
 
-    applyTimelinePage(payload, mode, channelId, {markSeen = true} = {}) {
+    applyTimelinePage(payload, mode, channelId) {
         const incoming = Array.isArray(payload.items) ? payload.items : [];
         const incomingPage = mergeTimelineItems([], incoming, {prepend: false});
         const ownsTimeline = this.state.timelineChannelId === channelId;
@@ -2698,15 +2699,6 @@ export class ContactCenterStore {
         this.applyTimelineCursors(payload, mode, hadMessages, reanchorLatest);
         this.state.timelinePhase = "ready";
         this.reconcileReplySelection();
-        const latest = this.state.messages[this.state.messages.length - 1];
-        if (
-            latest &&
-            mode !== "refresh_latest" &&
-            markSeen &&
-            !this.state.timelineFirstUnreadMessageId
-        ) {
-            this.markSeen(latest.message_id);
-        }
     }
 
     timelineNeedsForwardRecovery(payload, channelId) {
@@ -2822,7 +2814,7 @@ export class ContactCenterStore {
             return false;
         }
         this.resetTimelineForwardRecovery();
-        this.applyTimelinePage(payload, "reset", channelId, {markSeen: false});
+        this.applyTimelinePage(payload, "reset", channelId);
         this.notify(
             "A conversa recebeu um volume alto durante a ausência. O histórico foi recentralizado e continua disponível ao carregar mensagens anteriores.",
             {type: "warning", title: "Histórico recentralizado"}
@@ -3012,6 +3004,7 @@ export class ContactCenterStore {
 
     cancelSeenRetry() {
         this.seenRetryToken += 1;
+        this.confirmedSeenPointer = false;
         if (this.seenRetryTimer !== null) {
             this.realtimeTimer.clearTimeout(this.seenRetryTimer);
             this.seenRetryTimer = null;
@@ -3037,22 +3030,44 @@ export class ContactCenterStore {
         return true;
     }
 
-    async persistSeenPointer(channelId, messageId, token, attempt) {
+    persistSeenPointer(channelId, messageId, token, attempt) {
         if (
             this.destroyed ||
+            token !== this.seenRetryToken ||
+            channelId !== this.state.selectedChannelId ||
             this.suspendedSeenChannels.has(channelId) ||
             this.deletedConversationIds.has(channelId)
         ) {
-            return false;
+            return Promise.resolve(false);
         }
-        const request = Promise.resolve().then(() =>
-            this.call("mark_seen", [channelId, messageId])
-        );
         const pending = this.pendingSeenRequests.get(channelId) || new Set();
+        const request = {
+            messageId,
+            token,
+            promise: this.writeSeenPointer(channelId, messageId, token, attempt),
+        };
         pending.add(request);
         this.pendingSeenRequests.set(channelId, pending);
+        const settled = () => {
+            pending.delete(request);
+            if (!pending.size) {
+                this.pendingSeenRequests.delete(channelId);
+            }
+        };
+        request.promise.then(settled, settled);
+        return request.promise;
+    }
+
+    async writeSeenPointer(channelId, messageId, token, attempt) {
         try {
-            await request;
+            const payload = await this.call("mark_seen", [channelId, messageId]);
+            if (
+                !payload ||
+                payload.channel_id !== channelId ||
+                payload.message_id !== messageId
+            ) {
+                throw new TypeError("O servidor não confirmou a leitura da mensagem.");
+            }
             if (
                 this.destroyed ||
                 token !== this.seenRetryToken ||
@@ -3064,28 +3079,40 @@ export class ContactCenterStore {
             const seen = this.state.messages.find(
                 (item) => item.message_id === messageId
             );
+            const conversation = this.selectedConversation;
+            const knownLatest = conversation && conversation.last_message;
+            const lastActivityAt = conversation && conversation.last_activity_at;
+            this.confirmedSeenPointer = {channelId, messageId};
             if (
                 !this.state.timelineHasMoreForward &&
-                (!latest || (seen && compareTimelineItems(latest, seen) <= 0))
+                seen &&
+                [latest, knownLatest].every(
+                    (item) =>
+                        !item ||
+                        item.message_id === seen.message_id ||
+                        compareTimelineItems(
+                            {
+                                message_id: item.message_id,
+                                // Compact list previews carry their date on the
+                                // conversation, not inside last_message.
+                                date: item.date || lastActivityAt,
+                            },
+                            seen
+                        ) <= 0
+                )
             ) {
-                const conversation = this.selectedConversation;
                 if (conversation) {
                     conversation.unread_count = 0;
                     conversation.first_unread_message_id = false;
                 }
                 this.state.timelineFirstUnreadMessageId = false;
             } else {
-                this.scheduleSynchronization(false, false);
+                this.scheduleSynchronization(false, true);
             }
             return true;
         } catch (_error) {
             this.scheduleSeenRetry(channelId, messageId, token, attempt);
             return false;
-        } finally {
-            pending.delete(request);
-            if (!pending.size) {
-                this.pendingSeenRequests.delete(channelId);
-            }
         }
     }
 
@@ -3100,6 +3127,23 @@ export class ContactCenterStore {
             this.destroyed
         ) {
             return Promise.resolve(false);
+        }
+        const pending = [...(this.pendingSeenRequests.get(channelId) || [])].find(
+            (request) =>
+                request.messageId === messageId && request.token === this.seenRetryToken
+        );
+        if (pending) {
+            return pending.promise;
+        }
+        const conversation = this.selectedConversation || {};
+        const confirmed = this.confirmedSeenPointer || {};
+        if (
+            confirmed.channelId === channelId &&
+            confirmed.messageId === messageId &&
+            !conversation.unread_count &&
+            !this.state.timelineFirstUnreadMessageId
+        ) {
+            return Promise.resolve(true);
         }
         this.cancelSeenRetry();
         return this.persistSeenPointer(channelId, messageId, this.seenRetryToken, 0);
@@ -3674,9 +3718,11 @@ export class ContactCenterStore {
         try {
             // Cancelling the UI token cannot undo a mark_seen already at the
             // server. Drain those writes before moving the personal pointer.
-            await Promise.allSettled([
-                ...(this.pendingSeenRequests.get(channelId) || []),
-            ]);
+            await Promise.allSettled(
+                [...(this.pendingSeenRequests.get(channelId) || [])].map(
+                    (request) => request.promise
+                )
+            );
             if (this.destroyed || this.deletedConversationIds.has(channelId)) {
                 return false;
             }

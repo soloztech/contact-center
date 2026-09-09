@@ -1718,6 +1718,13 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
     padding: 1rem #{"clamp(0.8rem, 2.5vw, 2.5rem)"} 1.5rem;
 }
 
+.cc-timeline__end {
+    display: block;
+    height: 1px;
+    flex: 0 0 1px;
+    pointer-events: none;
+}
+
 .cc-day-divider {
     display: flex;
     align-items: center;
