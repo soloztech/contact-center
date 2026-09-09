@@ -1,6 +1,6 @@
 /** @odoo-module **/
 
-import {Component, useEffect, useRef, useState} from "@odoo/owl";
+import {Component, onWillDestroy, useEffect, useRef, useState} from "@odoo/owl";
 import {MessageContent, controlTimelineMessageMeta} from "./message_content.esm";
 import {
     compareTimelineItems,
@@ -20,6 +20,7 @@ import {useService} from "@web/core/utils/hooks";
 const {DateTime} = luxon;
 const QUICK_REACTIONS = Object.freeze(["👍", "❤️", "😂", "😮", "😢", "🙏"]);
 const TIMELINE_BOTTOM_THRESHOLD = 80;
+const TIMELINE_PAGING_THRESHOLD = 200;
 const MESSAGE_RUN_WINDOW_MINUTES = 5;
 
 /**
@@ -222,11 +223,20 @@ export class ConversationTimeline extends Component {
             awayFromLatest: false,
         });
         this.preserveScroll = false;
+        this.paginationRequest = false;
+        this.paginationFrame = false;
+        this.lastScrollTop = 0;
+        this.positioningScroll = false;
+        this.destroyed = false;
         this.followLatest = true;
         this.observedChannelId = false;
         this.observedLastMessageId = 0;
         this.observedLastMessage = false;
         this.pendingInitialPositionChannelId = false;
+        onWillDestroy(() => {
+            this.destroyed = true;
+            this.cancelPagination();
+        });
         useEffect(
             () => this.synchronizeScroll(),
             () => [
@@ -540,6 +550,9 @@ export class ConversationTimeline extends Component {
         const lastMessage =
             this.state.messages[this.state.messages.length - 1] || false;
         if (channelChanged) {
+            this.cancelPagination();
+            this.lastScrollTop = 0;
+            this.positioningScroll = false;
             this.observedChannelId = channelId;
             this.pendingInitialPositionChannelId = channelId;
             this.observedLastMessageId =
@@ -601,13 +614,47 @@ export class ConversationTimeline extends Component {
     }
 
     onViewportScroll() {
-        this.followLatest = timelineViewportNearBottom(this.viewportRef.el);
+        const viewport = this.viewportRef.el;
+        if (!viewport || this.destroyed) {
+            return;
+        }
+        const movedUp = viewport.scrollTop < this.lastScrollTop;
+        const movedDown = viewport.scrollTop > this.lastScrollTop;
+        if (this.paginationRequest && this.state.timelinePhase === "loading_more") {
+            // Preserve reading movement while the RPC is pending. Once the
+            // page is ready, native anchoring may move scrollTop during render.
+            this.paginationRequest.scrollDelta +=
+                viewport.scrollTop - this.lastScrollTop;
+        }
+        this.lastScrollTop = viewport.scrollTop;
+        if (
+            this.preserveScroll ||
+            this.positioningScroll ||
+            this.state.timelinePhase !== "ready"
+        ) {
+            return;
+        }
+        this.followLatest = timelineViewportNearBottom(viewport);
         this.ui.awayFromLatest = !this.followLatest;
-        if (this.followLatest) {
-            if (this.state.timelineHasMoreForward) {
-                this.loadNewer();
-                return;
-            }
+        if (
+            movedUp &&
+            viewport.scrollTop <= TIMELINE_PAGING_THRESHOLD &&
+            this.state.timelineHasMore
+        ) {
+            return this.loadOlder();
+        }
+        if (
+            movedDown &&
+            timelineViewportNearBottom(viewport, TIMELINE_PAGING_THRESHOLD) &&
+            this.state.timelineHasMoreForward
+        ) {
+            return this.loadNewer();
+        }
+        this.markVisibleTailSeen();
+    }
+
+    markVisibleTailSeen() {
+        if (this.followLatest && !this.state.timelineHasMoreForward) {
             const shouldMarkSeen = Boolean(
                 this.ui.unseenMessages || this.state.timelineFirstUnreadMessageId
             );
@@ -669,14 +716,17 @@ export class ConversationTimeline extends Component {
         this.followLatest = true;
         this.ui.unseenMessages = 0;
         this.ui.awayFromLatest = false;
+        this.positioningScroll = true;
         browser.requestAnimationFrame(() => {
-            if (channelId !== this.state.selectedChannelId) {
+            if (this.destroyed || channelId !== this.state.selectedChannelId) {
                 return;
             }
             const viewport = this.viewportRef.el;
             if (viewport) {
                 viewport.scrollTop = viewport.scrollHeight;
+                this.lastScrollTop = viewport.scrollTop;
             }
+            this.positioningScroll = false;
             if (markSeen && this.latestMessageId) {
                 this.store.markSeen(this.latestMessageId);
             }
@@ -694,8 +744,9 @@ export class ConversationTimeline extends Component {
         this.followLatest = false;
         this.ui.unseenMessages = 0;
         this.ui.awayFromLatest = true;
+        this.positioningScroll = true;
         browser.requestAnimationFrame(() => {
-            if (channelId !== this.state.selectedChannelId) {
+            if (this.destroyed || channelId !== this.state.selectedChannelId) {
                 return;
             }
             const viewport = this.viewportRef.el;
@@ -709,6 +760,8 @@ export class ConversationTimeline extends Component {
                 return;
             }
             viewport.scrollTop = Math.max(0, boundary.offsetTop - 16);
+            this.lastScrollTop = viewport.scrollTop;
+            this.positioningScroll = false;
             // The browser may clamp this position to the end without emitting a
             // scroll event (including a timeline that does not overflow).
             this.followLatest =
@@ -719,6 +772,7 @@ export class ConversationTimeline extends Component {
     }
 
     async showLatest() {
+        this.cancelPagination();
         if (this.state.timelineHasMoreForward) {
             this.followLatest = true;
             this.ui.unseenMessages = 0;
@@ -729,33 +783,97 @@ export class ConversationTimeline extends Component {
         this.scrollToBottom({markSeen: true});
     }
 
-    async loadOlder() {
+    cancelPagination() {
+        this.paginationRequest = false;
+        this.preserveScroll = false;
+        if (this.paginationFrame) {
+            browser.cancelAnimationFrame(this.paginationFrame);
+            this.paginationFrame = false;
+        }
+    }
+
+    loadOlder() {
+        return this.loadPage("older");
+    }
+
+    loadNewer() {
+        return this.loadPage("newer");
+    }
+
+    async loadPage(direction) {
+        if (
+            this.destroyed ||
+            this.paginationRequest ||
+            this.state.timelinePhase !== "ready" ||
+            !(direction === "older"
+                ? this.state.timelineHasMore
+                : this.state.timelineHasMoreForward)
+        ) {
+            return false;
+        }
         const channelId = this.state.selectedChannelId;
         const viewport = this.viewportRef.el;
         const previousHeight = viewport ? viewport.scrollHeight : 0;
         const previousTop = viewport ? viewport.scrollTop : 0;
+        const viewportTop = viewport ? viewport.getBoundingClientRect().top : 0;
+        const anchor =
+            direction === "older" && viewport
+                ? [...viewport.querySelectorAll("[data-message-id]")].find(
+                      (element) => element.getBoundingClientRect().bottom > viewportTop
+                  )
+                : false;
+        const anchorTop = anchor ? anchor.getBoundingClientRect().top : 0;
+        const request = {scrollDelta: 0};
+        this.paginationRequest = request;
         this.preserveScroll = true;
-        await this.store.loadOlderMessages();
-        browser.requestAnimationFrame(() => {
-            if (channelId === this.state.selectedChannelId && viewport) {
-                viewport.scrollTop =
-                    previousTop + Math.max(0, viewport.scrollHeight - previousHeight);
+        let loaded = false;
+        try {
+            loaded = await (direction === "older"
+                ? this.store.loadOlderMessages()
+                : this.store.loadNewerMessages());
+            return loaded;
+        } finally {
+            if (!this.destroyed && this.paginationRequest === request) {
+                this.paginationFrame = browser.requestAnimationFrame(() => {
+                    this.paginationFrame = false;
+                    if (this.paginationRequest !== request) {
+                        return;
+                    }
+                    if (
+                        channelId !== this.state.selectedChannelId ||
+                        viewport !== this.viewportRef.el
+                    ) {
+                        this.cancelPagination();
+                        return;
+                    }
+                    if (loaded && direction === "older" && viewport) {
+                        if (anchor && viewport.contains(anchor)) {
+                            // A real message anchor also respects native browser
+                            // scroll anchoring when older nodes are inserted.
+                            viewport.scrollTop +=
+                                anchor.getBoundingClientRect().top -
+                                anchorTop +
+                                request.scrollDelta;
+                        } else {
+                            viewport.scrollTop =
+                                previousTop +
+                                request.scrollDelta +
+                                Math.max(0, viewport.scrollHeight - previousHeight);
+                        }
+                    }
+                    this.lastScrollTop = viewport ? viewport.scrollTop : 0;
+                    this.followLatest =
+                        timelineViewportNearBottom(viewport) &&
+                        !this.state.timelineHasMoreForward;
+                    this.ui.awayFromLatest = !this.followLatest;
+                    this.paginationRequest = false;
+                    this.preserveScroll = false;
+                    if (loaded && direction === "newer") {
+                        this.markVisibleTailSeen();
+                    }
+                });
             }
-            this.preserveScroll = false;
-        });
-    }
-
-    async loadNewer() {
-        const channelId = this.state.selectedChannelId;
-        this.preserveScroll = true;
-        await this.store.loadNewerMessages();
-        browser.requestAnimationFrame(() => {
-            if (channelId === this.state.selectedChannelId) {
-                this.followLatest = timelineViewportNearBottom(this.viewportRef.el);
-                this.ui.awayFromLatest = !this.followLatest;
-            }
-            this.preserveScroll = false;
-        });
+        }
     }
 
     reply(message) {

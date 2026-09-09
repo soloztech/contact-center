@@ -323,21 +323,12 @@ class ContactCenterIdentity(models.Model):
         """Link an explicitly selected shared company number to its company.
 
         The normal promotion path deliberately remains person-only.  A company is
-        accepted here only through the separately named supervisor operation so a
+        accepted here only through the separately named operation so a
         regular contact number cannot be classified as a company by accident.
         """
 
         self.ensure_one()
         self._check_promotion_access()
-        if not self.env.user.has_group(
-            "contact_center_base.group_contact_center_supervisor"
-        ):
-            raise AccessError(
-                _(
-                    "Only Contact Center supervisors can link a centralized number "
-                    "directly to a company."
-                )
-            )
         partner = self.env["res.partner"].browse(partner_id).exists()
         if not partner:
             raise ValidationError(_("The selected company does not exist."))
@@ -896,15 +887,6 @@ class ContactCenterIdentity(models.Model):
         if self.partner_id.id != expected_partner_id:
             raise ValidationError(
                 _("This identity is no longer linked to the expected contact.")
-            )
-        if self.partner_link_kind == "central_company" and not self.env.user.has_group(
-            "contact_center_base.group_contact_center_supervisor"
-        ):
-            raise AccessError(
-                _(
-                    "Only Contact Center supervisors can unlink a centralized "
-                    "company number."
-                )
             )
         self.sudo().with_context(
             contact_center_identity_link_token=_IDENTITY_LINK_TOKEN

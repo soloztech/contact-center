@@ -6077,6 +6077,261 @@ QUnit.module("contact_center_ui > model", (hooks) => {
     );
 
     QUnit.test(
+        "timeline edge paging is bounded, preserves the visible message and fences a changed conversation",
+        async (assert) => {
+            const fixture = getFixture();
+            fixture.innerHTML = `
+                <div style="height: 200px; overflow-y: auto">
+                    <article data-message-id="101" style="height: 300px"></article>
+                    <article data-message-id="102" style="height: 300px"></article>
+                    <article data-message-id="103" style="height: 300px"></article>
+                </div>`;
+            const viewport = fixture.firstElementChild;
+            viewport.scrollTop = 180;
+            const anchor = viewport.querySelector('[data-message-id="101"]');
+            const anchorTop = anchor.getBoundingClientRect().top;
+            const store = new ContactCenterStore({
+                orm: {},
+                busService: new EventTarget(),
+                notification: false,
+            });
+            Object.assign(store.state, {
+                selectedChannelId: 10,
+                timelineChannelId: 10,
+                timelinePhase: "ready",
+                timelineHasMore: true,
+                nextBeforeMessageId: 101,
+                timelineFirstUnreadMessageId: 101,
+                timelineHasMoreForward: true,
+                nextAfterChronologicalMessageId: 103,
+                messages: [101, 102, 103].map((message_id) => ({message_id})),
+            });
+            const pending = [];
+            store.call = (method, args, kwargs) => {
+                assert.strictEqual(method, "get_timeline");
+                return new Promise((resolve) => pending.push({args, kwargs, resolve}));
+            };
+            const timeline = Object.assign(
+                Object.create(ConversationTimeline.prototype),
+                {
+                    props: {state: store.state, store},
+                    viewportRef: {el: viewport},
+                    ui: {unseenMessages: 0, awayFromLatest: true},
+                    lastScrollTop: 400,
+                    paginationRequest: false,
+                    paginationFrame: false,
+                    preserveScroll: false,
+                    positioningScroll: false,
+                    destroyed: false,
+                }
+            );
+            const older = timeline.onViewportScroll();
+            assert.strictEqual(pending.length, 1, "approaching the top loads one page");
+            assert.strictEqual(pending[0].kwargs.limit, 100);
+            assert.strictEqual(pending[0].kwargs.before_message_id, 101);
+            timeline.onViewportScroll();
+            assert.notOk(await timeline.loadNewer(), "directions cannot compete");
+            assert.notOk(
+                await store.loadNewerMessages(),
+                "the store also guards concurrent pages"
+            );
+            assert.strictEqual(
+                pending.length,
+                1,
+                "repeated scroll events share the in-flight page"
+            );
+
+            viewport.scrollTop -= 80;
+            timeline.onViewportScroll();
+            viewport.insertAdjacentHTML(
+                "afterbegin",
+                '<article data-message-id="100" style="height: 300px"></article>'
+            );
+            pending[0].resolve({
+                schema_version: SUPPORTED_SCHEMA_VERSION,
+                channel_id: 10,
+                items: [{message_id: 100}, {message_id: 101}],
+                has_more: true,
+                next_before_message_id: 100,
+            });
+            assert.ok(await older);
+            await new Promise((resolve) => requestAnimationFrame(resolve));
+            assert.strictEqual(
+                anchor.getBoundingClientRect().top,
+                anchorTop + 80,
+                "prepending preserves the user's additional scroll while waiting"
+            );
+            assert.deepEqual(
+                store.state.messages.map((message) => message.message_id),
+                [100, 101, 102, 103],
+                "overlapping pages remain deduplicated"
+            );
+            timeline.onViewportScroll();
+            assert.strictEqual(
+                pending.length,
+                1,
+                "restoring the position does not drain more history"
+            );
+            assert.strictEqual(store.state.timelineFirstUnreadMessageId, 101);
+
+            viewport.scrollTop = viewport.scrollHeight - viewport.clientHeight - 100;
+            const newer = timeline.onViewportScroll();
+            assert.strictEqual(
+                pending.length,
+                2,
+                "approaching the bottom loads the unread tail"
+            );
+            assert.strictEqual(pending[1].kwargs.after_chronological_message_id, 103);
+            timeline.onViewportScroll();
+            assert.strictEqual(pending.length, 2);
+            const seen = [];
+            store.markSeen = (messageId) => seen.push(messageId);
+            viewport.scrollTop = viewport.scrollHeight;
+            timeline.onViewportScroll();
+            viewport.insertAdjacentHTML(
+                "beforeend",
+                '<article data-message-id="104" style="height: 40px"></article>'
+            );
+            pending[1].resolve({
+                schema_version: SUPPORTED_SCHEMA_VERSION,
+                channel_id: 10,
+                items: [{message_id: 104}],
+                has_more_forward: false,
+                next_after_chronological_message_id: 104,
+                latest_received_message_id: 104,
+            });
+            assert.ok(await newer);
+            await new Promise((resolve) => requestAnimationFrame(resolve));
+            assert.deepEqual(
+                seen,
+                [104],
+                "a short final page visible at the end is marked seen without a later scroll event"
+            );
+            assert.notOk(timeline.ui.awayFromLatest);
+
+            viewport.scrollTop = 100;
+            const stale = timeline.onViewportScroll();
+            assert.strictEqual(pending.length, 3);
+            store.state.selectedChannelId = 20;
+            store.state.timelineChannelId = 20;
+            store.state.messages = [{message_id: 200}];
+            timeline.cancelPagination();
+            viewport.scrollTop = 120;
+            pending[2].resolve({
+                schema_version: SUPPORTED_SCHEMA_VERSION,
+                channel_id: 10,
+                items: [{message_id: 99}],
+                has_more: false,
+                next_before_message_id: false,
+            });
+            assert.notOk(await stale);
+            await new Promise((resolve) => requestAnimationFrame(resolve));
+            assert.strictEqual(
+                viewport.scrollTop,
+                120,
+                "a stale page cannot move the new conversation"
+            );
+            assert.deepEqual(store.state.messages, [{message_id: 200}]);
+            assert.notOk(timeline.preserveScroll);
+            timeline.destroyed = true;
+            timeline.cancelPagination();
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "conversation list automatically pages near its end without changing selection or inbox order",
+        async (assert) => {
+            const store = new ContactCenterStore({
+                orm: {},
+                busService: new EventTarget(),
+                notification: false,
+            });
+            Object.assign(store.state, {
+                selectedChannelId: 10,
+                listPhase: "ready",
+                conversationsHaveMore: true,
+                nextConversationCursor: {channel_id: 10},
+                conversations: [{channel_id: 10, account: {id: 1, name: "Bruna"}}],
+                messages: [{message_id: 100}],
+            });
+            const pending = [];
+            store.call = (_method, _args, kwargs) =>
+                new Promise((resolve) => pending.push({kwargs, resolve}));
+            const list = Object.assign(Object.create(ConversationList.prototype), {
+                props: {state: store.state, store},
+                lastScrollTop: 0,
+                paginationPending: false,
+                destroyed: false,
+            });
+            const viewport = {scrollTop: 150, scrollHeight: 1000, clientHeight: 300};
+            list.viewportRef = {el: viewport};
+            list.onListScroll({currentTarget: viewport});
+            assert.strictEqual(
+                pending.length,
+                0,
+                "scrolling away from the end does not fetch"
+            );
+            viewport.scrollTop = 550;
+            const loading = list.onListScroll({currentTarget: viewport});
+            viewport.scrollTop = 600;
+            list.onListScroll({currentTarget: viewport});
+            assert.strictEqual(
+                pending.length,
+                1,
+                "one request while approaching the end"
+            );
+            assert.strictEqual(
+                pending[0].kwargs.limit,
+                50,
+                "list requests stay bounded independently of history"
+            );
+            pending[0].resolve({
+                schema_version: SUPPORTED_SCHEMA_VERSION,
+                items: [{channel_id: 20, account: {id: 2, name: "Alice"}}],
+                has_more: true,
+                next_cursor: {channel_id: 20},
+            });
+            assert.ok(await loading);
+            await new Promise((resolve) => requestAnimationFrame(resolve));
+            list.onListScroll({currentTarget: viewport});
+            assert.strictEqual(
+                pending.length,
+                1,
+                "completion cannot recursively load every page"
+            );
+            assert.strictEqual(store.state.selectedChannelId, 10);
+            assert.deepEqual(store.state.messages, [{message_id: 100}]);
+            assert.deepEqual(
+                groupConversationsByInbox(store.state.conversations).map(
+                    (group) => group.name
+                ),
+                ["Alice", "Bruna"]
+            );
+            assert.strictEqual(
+                viewport.scrollTop,
+                600,
+                "paging does not reset list position"
+            );
+            store.state.listPhase = "loading";
+            viewport.scrollTop = 650;
+            list.onListScroll({currentTarget: viewport});
+            assert.notOk(
+                await store.loadMoreConversations(),
+                "a filter reload cannot compete with pagination"
+            );
+            assert.strictEqual(pending.length, 1);
+            list.destroyed = true;
+            store.state.listPhase = "ready";
+            assert.notOk(
+                await list.loadMore(),
+                "a destroyed list cannot request a page"
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
         "opening at the first unread reconciles a clamped viewport without a scroll event",
         async (assert) => {
             const fixture = getFixture();
@@ -8654,7 +8909,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 kwargs: {
                     before_message_id: false,
                     anchor_message_id: 101,
-                    limit: 50,
+                    limit: 100,
                 },
             });
             assert.strictEqual(store.state.timelineFirstUnreadMessageId, 101);
@@ -8673,7 +8928,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 kwargs: {
                     before_message_id: false,
                     after_chronological_message_id: 102,
-                    limit: 50,
+                    limit: 100,
                 },
             });
             assert.deepEqual(

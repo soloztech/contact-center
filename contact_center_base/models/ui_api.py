@@ -1647,10 +1647,10 @@ class ContactCenterUiApi(models.AbstractModel):
                 "link_company": True,
                 "create_company": True,
                 # A direct company link is an explicit exception for a shared,
-                # centralized number.  Keep it separate from the person-first
-                # promotion contract and supervisor-only.
-                "link_central_company": is_supervisor,
-                "create_central_company": is_supervisor,
+                # centralized number. Keep it separate from the person-first
+                # promotion contract while retaining the authorized channel scope.
+                "link_central_company": True,
+                "create_central_company": True,
                 "rename_guest": True,
                 "view_source_webhook": self.env.user.has_group("base.group_system"),
             },
@@ -2869,15 +2869,7 @@ class ContactCenterUiApi(models.AbstractModel):
 
     @api.model
     def _check_central_company_access(self):
-        if not self.env.user.has_group(
-            "contact_center_base.group_contact_center_supervisor"
-        ):
-            raise AccessError(
-                _(
-                    "Only Contact Center supervisors can link a centralized number "
-                    "directly to a company."
-                )
-            )
+        self._application()._check_agent()
         return True
 
     @api.model

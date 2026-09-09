@@ -4263,15 +4263,17 @@ class TestContactCenter(SavepointCase):
                 {"name": "Forbidden Global Mutation"},
             )
 
-    def test_ui_links_or_creates_an_explicit_central_company(self):
+    def test_ui_agent_links_creates_and_unlinks_an_explicit_central_company(self):
         channel, _binding, identity = self._channel_binding()
         original_guest = identity.mail_guest_id
         api = self.env["contact.center.ui.api"].with_user(self.agent)
+        self.assertFalse(
+            self.agent.has_group("contact_center_base.group_contact_center_supervisor")
+        )
+        self.assertFalse(self.agent.has_group("base.group_partner_manager"))
         capabilities = api.bootstrap()["capabilities"]
-        self.assertFalse(capabilities["link_central_company"])
-        self.assertFalse(capabilities["create_central_company"])
-        with self.assertRaises(AccessError):
-            api.search_central_companies(channel.id, "Central")
+        self.assertTrue(capabilities["link_central_company"])
+        self.assertTrue(capabilities["create_central_company"])
 
         local_company = self.env["res.partner"].create(
             {
@@ -4282,18 +4284,6 @@ class TestContactCenter(SavepointCase):
                 "vat": "12345678000195",
             }
         )
-        with self.assertRaises(AccessError):
-            identity.with_user(self.agent).action_link_central_company(local_company.id)
-
-        supervisor_group = self.env.ref(
-            "contact_center_base.group_contact_center_supervisor"
-        )
-        self.agent.write({"groups_id": [(4, supervisor_group.id)]})
-        api = self.env["contact.center.ui.api"].with_user(self.agent)
-        capabilities = api.bootstrap()["capabilities"]
-        self.assertTrue(capabilities["link_central_company"])
-        self.assertTrue(capabilities["create_central_company"])
-
         global_company = self.env["res.partner"].create(
             {
                 "name": "Centralized Global Company",
@@ -4331,6 +4321,8 @@ class TestContactCenter(SavepointCase):
         self.assertNotIn(foreign_company.id, company_ids)
         with self.assertRaises(ValidationError):
             api.link_central_company(channel.id, person.id)
+        with self.assertRaises(ValidationError):
+            api.link_central_company(channel.id, foreign_company.id)
         # The ordinary promotion contract remains person-only.
         with self.assertRaises(ValidationError):
             identity.with_user(self.agent).action_link_partner(local_company.id)
@@ -4378,6 +4370,7 @@ class TestContactCenter(SavepointCase):
             linked = api.link_central_company(channel.id, local_company.id)
         identity.invalidate_recordset(["partner_id", "mail_guest_id"])
         self.assertEqual(identity.partner_id, local_company)
+        self.assertEqual(identity.partner_linked_by_id, self.agent)
         self.assertEqual(identity.mail_guest_id, original_guest)
         self.assertTrue(linked["identity"]["partner"]["is_company"])
         self.assertEqual(linked["identity"]["link_kind"], "central_company")
@@ -4397,7 +4390,6 @@ class TestContactCenter(SavepointCase):
         self.assertEqual(
             api.search_central_companies(channel.id, "Centralized")["items"], []
         )
-        self.agent.write({"groups_id": [(3, supervisor_group.id)]})
         # A linked central number is now a durable company classification:
         # Contacts may maintain ordinary fields, but cannot silently turn the
         # linked company into a person and leave a drifted identity behind.
@@ -4411,12 +4403,27 @@ class TestContactCenter(SavepointCase):
         )
         self.assertEqual(identity.partner_link_kind, "central_company")
         self.assertTrue(linked["link_invariant_valid"])
-        with self.assertRaises(AccessError):
-            self.env["contact.center.ui.api"].with_user(self.agent).unlink_partner(
-                channel.id, local_company.id
-            )
-        self.assertEqual(identity.partner_id, local_company)
-        self.agent.write({"groups_id": [(4, supervisor_group.id)]})
+        with self.assertRaises(ValidationError):
+            api.unlink_partner(channel.id, global_company.id)
+        notified_channels.clear()
+        with mock.patch.object(
+            application_type,
+            "_notify_ui",
+            autospec=True,
+            side_effect=capture_event,
+        ):
+            unlinked = api.unlink_partner(channel.id, local_company.id)
+        self.assertFalse(unlinked["identity"]["partner"])
+        self.assertFalse(identity.partner_id)
+        self.assertFalse(identity.partner_link_kind)
+        self.assertFalse(identity.partner_linked_by_id)
+        self.assertEqual(identity.mail_guest_id, original_guest)
+        self.assertCountEqual(notified_channels, [channel.id, second_channel.id])
+        with mock.patch.object(
+            application_type, "_notify_ui", autospec=True
+        ) as notify_unlink_retry:
+            api.unlink_partner(channel.id, local_company.id)
+        notify_unlink_retry.assert_not_called()
 
         create_channel, _create_binding, create_identity = self._channel_binding()
         create_guest = create_identity.mail_guest_id
@@ -4446,12 +4453,72 @@ class TestContactCenter(SavepointCase):
         self.assertTrue(create_identity.partner_id.is_company)
         self.assertEqual(create_identity.partner_link_kind, "central_company")
         self.assertEqual(create_identity.partner_id.vat, "98765432000198")
+        self.assertEqual(create_identity.partner_id.company_id, self.env.company)
+        self.assertEqual(create_identity.partner_linked_by_id, self.agent)
         self.assertEqual(create_identity.mail_guest_id, create_guest)
         with self.assertRaises(ValidationError):
             api.create_and_link_central_company(
                 create_channel.id,
                 {"name": "Unsupported", "country_id": self.env.ref("base.us").id},
             )
+
+    def test_central_company_operations_require_agent_and_conversation_access(self):
+        channel, _binding, identity = self._channel_binding()
+        company = self.env["res.partner"].create(
+            {
+                "name": "Scoped Central Company",
+                "company_id": self.env.company.id,
+                "is_company": True,
+                "type": "contact",
+            }
+        )
+        user_model = self.env["res.users"].with_context(no_reset_password=True)
+        outsiders = user_model.create(
+            [
+                {
+                    "name": "Central Company Unauthorized User",
+                    "login": "cc-central-outsider-%s" % uuid.uuid4(),
+                    "company_id": self.env.company.id,
+                    "company_ids": [(6, 0, self.env.company.ids)],
+                    "groups_id": [(6, 0, group.ids)],
+                }
+                for group in (self.agent_group, self.env.ref("base.group_user"))
+            ]
+        )
+        company_count = self.env["res.partner"].search_count(
+            [("is_company", "=", True)]
+        )
+        for outsider in outsiders:
+            api = self.env["contact.center.ui.api"].with_user(outsider)
+            with self.assertRaises(AccessError):
+                api.search_central_companies(channel.id, "Scoped")
+            with self.assertRaises(AccessError):
+                api.link_central_company(channel.id, company.id)
+            with self.assertRaises(AccessError):
+                api.create_and_link_central_company(
+                    channel.id, {"name": "Unauthorized Central Company"}
+                )
+            with self.assertRaises(AccessError):
+                identity.with_user(outsider).action_link_central_company(company.id)
+        self.assertFalse(identity.partner_id)
+        self.assertEqual(
+            self.env["res.partner"].search_count([("is_company", "=", True)]),
+            company_count,
+        )
+
+        identity.with_user(self.agent).action_link_central_company(company.id)
+        for outsider in outsiders:
+            with self.assertRaises(AccessError):
+                self.env["contact.center.ui.api"].with_user(outsider).unlink_partner(
+                    channel.id, company.id
+                )
+            with self.assertRaises(AccessError):
+                identity.with_user(outsider).action_unlink_partner(company.id)
+        self.assertEqual(identity.partner_id, company)
+        self.assertTrue(
+            identity.with_user(self.agent).action_unlink_partner(company.id)
+        )
+        self.assertFalse(identity.partner_id)
 
     def test_ui_partner_link_and_unlink_are_serialized_and_idempotent(self):
         channel, _binding, identity = self._channel_binding()

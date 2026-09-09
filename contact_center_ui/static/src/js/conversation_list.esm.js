@@ -19,11 +19,13 @@ import {ConnectionHealth} from "./connection_health.esm";
 import {DeferredImage} from "./deferred_image.esm";
 import {Dropdown} from "@web/core/dropdown/dropdown";
 import {DropdownItem} from "@web/core/dropdown/dropdown_item";
+import {browser} from "@web/core/browser/browser";
 import {deserializeDateTime} from "@web/core/l10n/dates";
 import {useOwnedDialogs} from "@web/core/utils/hooks";
 
 const {DateTime} = luxon;
 const LIST_VIEWS = new Set(["grouped", "flat"]);
+const LIST_PAGING_THRESHOLD = 200;
 const INBOX_NAME_COLLATOR = new Intl.Collator("pt-BR", {
     numeric: true,
     sensitivity: "base",
@@ -232,6 +234,11 @@ ConversationMenu.template = "contact_center_ui.ConversationMenu";
 export class ConversationList extends Component {
     setup() {
         this.searchRef = useRef("search");
+        this.viewportRef = useRef("viewport");
+        this.lastScrollTop = 0;
+        this.paginationPending = false;
+        this.paginationFrame = false;
+        this.destroyed = false;
         this.addDialog = useOwnedDialogs();
         this.ui = useState({
             pendingConversationIds: {},
@@ -242,6 +249,10 @@ export class ConversationList extends Component {
         this.onWindowKeydown = (event) => this.onShortcut(event);
         window.addEventListener("keydown", this.onWindowKeydown);
         onWillDestroy(() => {
+            this.destroyed = true;
+            if (this.paginationFrame) {
+                browser.cancelAnimationFrame(this.paginationFrame);
+            }
             window.removeEventListener("keydown", this.onWindowKeydown);
         });
     }
@@ -418,6 +429,44 @@ export class ConversationList extends Component {
 
     isGroup(conversation) {
         return isGroupConversation(conversation);
+    }
+
+    onListScroll(event) {
+        const viewport = event.currentTarget;
+        const movedDown = viewport.scrollTop > this.lastScrollTop;
+        this.lastScrollTop = viewport.scrollTop;
+        if (
+            movedDown &&
+            viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <=
+                LIST_PAGING_THRESHOLD
+        ) {
+            return this.loadMore();
+        }
+        return false;
+    }
+
+    async loadMore() {
+        if (
+            this.destroyed ||
+            this.paginationPending ||
+            this.state.listPhase !== "ready" ||
+            !this.state.conversationsHaveMore
+        ) {
+            return false;
+        }
+        this.paginationPending = true;
+        try {
+            return await this.store.loadMoreConversations();
+        } finally {
+            if (!this.destroyed) {
+                this.paginationFrame = browser.requestAnimationFrame(() => {
+                    this.paginationFrame = false;
+                    this.paginationPending = false;
+                    const viewport = this.viewportRef.el;
+                    this.lastScrollTop = viewport ? viewport.scrollTop : 0;
+                });
+            }
+        }
     }
 
     onSearchInput(event) {

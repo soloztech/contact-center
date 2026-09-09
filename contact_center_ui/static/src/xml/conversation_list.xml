@@ -251,7 +251,11 @@
                 </label>
             </div>
 
-            <div class="cc-conversation-list">
+            <div
+                class="cc-conversation-list"
+                t-ref="viewport"
+                t-on-scroll="onListScroll"
+            >
                 <div
                     t-if="state.listPhase === 'loading'"
                     class="cc-list-skeleton"
@@ -374,7 +378,7 @@
                     type="button"
                     class="cc-load-more"
                     t-att-disabled="state.listPhase === 'loading_more'"
-                    t-on-click="() => store.loadMoreConversations()"
+                    t-on-click="loadMore"
                 >
                     <t t-if="state.listPhase === 'loading_more'">Carregando…</t>
                     <t

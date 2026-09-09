@@ -29,7 +29,7 @@ import {session} from "@web/session";
 const API_MODEL = "contact.center.ui.api";
 const LIST_LIMIT = 50;
 const REALTIME_REFRESH_LIMIT = 200;
-const TIMELINE_LIMIT = 50;
+const TIMELINE_LIMIT = 100;
 const TIMELINE_REFRESH_LIMIT = 100;
 const TIMELINE_FORWARD_MAX_PAGES = 20;
 const TIMELINE_MODES = new Set(["reset", "older", "newer", "refresh_latest"]);
@@ -1907,7 +1907,7 @@ export class ContactCenterStore {
 
     loadMoreConversations() {
         if (
-            this.state.listPhase === "loading_more" ||
+            ["loading", "loading_more"].includes(this.state.listPhase) ||
             !this.state.conversationsHaveMore
         ) {
             return Promise.resolve(false);
@@ -2970,7 +2970,9 @@ export class ContactCenterStore {
 
     loadOlderMessages() {
         if (
-            this.state.timelinePhase === "loading_more" ||
+            ["loading", "loading_more", "loading_newer"].includes(
+                this.state.timelinePhase
+            ) ||
             (this.timelineForwardChannelId === this.state.selectedChannelId &&
                 this.timelineForwardCursor) ||
             !this.state.timelineHasMore
@@ -2982,7 +2984,9 @@ export class ContactCenterStore {
 
     loadNewerMessages() {
         if (
-            this.state.timelinePhase === "loading_newer" ||
+            ["loading", "loading_more", "loading_newer"].includes(
+                this.state.timelinePhase
+            ) ||
             !this.state.timelineHasMoreForward ||
             !this.state.nextAfterChronologicalMessageId
         ) {
