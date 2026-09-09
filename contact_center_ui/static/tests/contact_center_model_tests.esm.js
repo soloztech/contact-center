@@ -211,7 +211,18 @@ function activityConversationCursor(channelId, lastActivityAt) {
     };
 }
 
-QUnit.module("contact_center_ui > conversation lifecycle", () => {
+function removeNeutralizedDatabaseBanner() {
+    // The neutralized LAB injects this outside QUnit's fixture. Preserve the
+    // DOM-leak assertion for addon elements while excluding host-owned UI.
+    const banner = document.getElementById("oe_neutralize_banner");
+    if (banner) {
+        (banner.parentElement || banner).remove();
+    }
+}
+
+QUnit.module("contact_center_ui > conversation lifecycle", (hooks) => {
+    hooks.beforeEach(removeNeutralizedDatabaseBanner);
+
     function lifecycleStore() {
         const store = new ContactCenterStore({
             orm: {},
@@ -740,14 +751,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             assert.notOk(composer.local.actionBusy);
         }
     );
-    hooks.beforeEach(() => {
-        // The neutralized lab injects a banner outside QUnit's fixture. It is
-        // unrelated to this addon and otherwise trips Odoo's DOM-leak guard.
-        const banner = document.getElementById("oe_neutralize_banner");
-        if (banner) {
-            (banner.parentElement || banner).remove();
-        }
-    });
+    hooks.beforeEach(removeNeutralizedDatabaseBanner);
 
     QUnit.test(
         "keeps inbox scope read-only and filters its effective responsible roster",
