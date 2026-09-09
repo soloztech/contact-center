@@ -12,6 +12,11 @@ from ..services.tokens import (
     CONTACT_CENTER_PRODUCTIVITY_TOKEN,
 )
 
+# Conversation policy is a cohesive service lane spanning the account, binding,
+# inbox-event and UI API models. Odoo composes these `_inherit` fragments with
+# the independently maintained group and productivity lanes at registry load.
+# pylint: disable=consider-merging-classes-inherited
+
 _POLICY_TOKEN = object()
 
 

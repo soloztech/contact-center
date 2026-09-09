@@ -11,6 +11,10 @@ from odoo.tools.mail import plaintext2html
 from ..services.dto import SCHEMA_VERSION
 from .productivity import _PRODUCTIVITY_SERVICE_TOKEN, _canonical_uuid, _plain_text
 
+# Follow-up scheduling is a cohesive service lane spanning native activities and
+# the UI API. Odoo composes this `_inherit` fragment with the other UI services.
+# pylint: disable=consider-merging-classes-inherited
+
 _PRODUCTIVITY_NOTIFICATION_SUPPRESSION_TOKEN = object()
 _ACTIVITY_SUBSCRIPTION_TOKEN = object()
 _ACTIVITY_COMPLETION_TOKEN = object()
