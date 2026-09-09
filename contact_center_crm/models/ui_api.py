@@ -201,7 +201,7 @@ class ContactCenterUiApi(models.AbstractModel):
             "items": [],
             "has_more": False,
             "can_create_quotation": self._customer_can_create_quotation(
-                channel, partner
+                channel, company
             ),
         }
         if not available or not partner:
@@ -338,8 +338,8 @@ class ContactCenterUiApi(models.AbstractModel):
     @api.model
     def get_customer_quotation_action(self, channel_id):
         channel, _member = self._authorized_channel(channel_id)
-        partner, _commercial_partner = self._crm_customer(channel)
-        if not self._customer_can_create_quotation(channel, partner):
+        _partner, commercial_partner = self._crm_customer(channel)
+        if not self._customer_can_create_quotation(channel, commercial_partner):
             raise AccessError(_("You cannot create a quotation for this customer."))
         return {
             "schema_version": SCHEMA_VERSION,
@@ -351,7 +351,9 @@ class ContactCenterUiApi(models.AbstractModel):
                 "views": [(False, "form")],
                 "target": "new",
                 "context": {
-                    "default_partner_id": partner.id,
+                    # Native Sales onchanges choose billing, delivery and pricing
+                    # from the commercial customer represented by this contact.
+                    "default_partner_id": commercial_partner.id,
                     "default_company_id": channel.contact_center_company_id.id,
                     "allowed_company_ids": channel.contact_center_company_id.ids,
                 },

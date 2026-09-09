@@ -1537,6 +1537,98 @@ QUnit.module("contact_center_ui > model", (hooks) => {
     );
 
     QUnit.test(
+        "contact search rows keep canonical IDs without shadowing the linked partner",
+        async (assert) => {
+            registry.category("services").add("action", {
+                start: () => ({doAction: async () => undefined}),
+            });
+            makeFakeLocalizationService();
+            const env = await makeTestEnv();
+            const target = getFixture();
+            const store = new ContactCenterStore({
+                orm: {},
+                busService: new EventTarget(),
+                stateFactory: reactive,
+                notification: false,
+            });
+            store.state.bootstrap = {
+                capabilities: {link_contact: true, link_central_company: true},
+            };
+            store.state.selectedChannelId = 32;
+            store.state.detailsOpen = true;
+            store.state.conversations = [
+                openConversation({
+                    channel_id: 32,
+                    name: "Perfil convidado",
+                    identity: {
+                        id: 7,
+                        name: "Perfil convidado",
+                        persona_kind: "guest",
+                        link_kind: false,
+                        partner: false,
+                        aliases: [],
+                    },
+                }),
+            ];
+            const calls = [];
+            store.linkPartner = async (id) => {
+                calls.push({kind: "person", id});
+                store.closeContactLinker();
+            };
+            store.linkCentralCompany = async (id) => {
+                calls.push({kind: "central_company", id});
+                store.closeContactLinker();
+            };
+            try {
+                const panel = await mount(ContactPanel, target, {
+                    env,
+                    props: {
+                        conversation: store.selectedConversation,
+                        state: store.state,
+                        store,
+                    },
+                });
+                for (const targetKind of ["person", "central_company"]) {
+                    assert.ok(store.openContactLinker("search", targetKind));
+                    store.state.contactLinker.results = [
+                        {id: 17, name: "Mesmo nome", phone: "1111", email: ""},
+                        {id: 23, name: "Mesmo nome", phone: "2222", email: ""},
+                    ];
+                    store.state.contactLinker.phase = "ready";
+                    await nextTick();
+                    const rows = target.querySelectorAll(".cc-contact-results button");
+                    assert.strictEqual(
+                        rows.length,
+                        2,
+                        "same-name results are distinct records"
+                    );
+                    assert.strictEqual(
+                        rows[0].querySelector("small").textContent,
+                        "1111"
+                    );
+                    assert.strictEqual(
+                        rows[1].querySelector("small").textContent,
+                        "2222"
+                    );
+                    assert.notOk(
+                        panel.partner,
+                        "search results never replace the linked-partner getter"
+                    );
+                    await click(rows[1]);
+                    assert.deepEqual(
+                        calls[calls.length - 1],
+                        {kind: targetKind, id: 23},
+                        "the selected row sends its canonical record ID"
+                    );
+                    assert.notOk(store.state.contactLinker.open);
+                }
+            } finally {
+                store.destroy();
+            }
+        }
+    );
+
+    QUnit.test(
         "opens only the currently linked partner and reports action failures",
         async (assert) => {
             const actions = [];

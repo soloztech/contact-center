@@ -503,15 +503,17 @@
                                     /></p>
                                 <button
                                     t-foreach="state.contactLinker.results"
-                                    t-as="partner"
-                                    t-key="partner.id"
+                                    t-as="resultPartner"
+                                    t-key="resultPartner.id"
                                     type="button"
                                     t-att-disabled="state.contactLinker.phase === 'saving'"
-                                    t-on-click="() => centralCompanyLinker ? store.linkCentralCompany(partner.id) : store.linkPartner(partner.id)"
+                                    t-on-click="() => centralCompanyLinker ? store.linkCentralCompany(resultPartner.id) : store.linkPartner(resultPartner.id)"
                                 >
-                                    <strong>Vincular <t t-esc="partner.name" /></strong>
+                                    <strong>Vincular <t
+                                            t-esc="resultPartner.name"
+                                        /></strong>
                                     <small
-                                        t-esc="(centralCompanyLinker &amp;&amp; partner.vat) || partner.phone || partner.email || 'Sem detalhes cadastrais'"
+                                        t-esc="(centralCompanyLinker &amp;&amp; resultPartner.vat) || resultPartner.phone || resultPartner.email || 'Sem detalhes cadastrais'"
                                     />
                                 </button>
                                 <p

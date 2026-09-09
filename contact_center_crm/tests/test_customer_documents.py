@@ -3,7 +3,7 @@ from unittest import SkipTest
 from unittest.mock import patch
 
 from odoo.exceptions import AccessError
-from odoo.tests import HttpCase, tagged
+from odoo.tests import Form, HttpCase, tagged
 
 from .test_conversation_crm import ConversationCrmCase
 
@@ -81,12 +81,90 @@ class TestCustomerSaleDocuments(CustomerSaleDocumentsCase):
         self.assertEqual(
             action["action"]["context"],
             {
-                "default_partner_id": self.person.id,
+                "default_partner_id": self.customer.id,
                 "default_company_id": self.env.company.id,
                 "allowed_company_ids": self.env.company.ids,
             },
         )
         self.assertEqual(self.env["sale.order"].search_count([]), before)
+
+    def test_quotation_form_uses_company_billing_and_shipping_defaults(self):
+        self.agent.groups_id |= self.env.ref("sale.group_delivery_invoice_address")
+        invoice_address, delivery_address = self.env["res.partner"].create(
+            [
+                {
+                    "name": "Customer Billing",
+                    "parent_id": self.customer.id,
+                    "type": "invoice",
+                },
+                {
+                    "name": "Customer Delivery",
+                    "parent_id": self.customer.id,
+                    "type": "delivery",
+                },
+            ]
+        )
+        action = self.api.get_customer_quotation_action(self.channel.id)["action"]
+        before = self.env["sale.order"].search_count([])
+        form = Form(
+            self.env["sale.order"]
+            .with_user(self.agent)
+            .with_context(**action["context"])
+        )
+        self.assertEqual(form.partner_id, self.customer)
+        self.assertEqual(form.partner_invoice_id, invoice_address)
+        self.assertEqual(form.partner_shipping_id, delivery_address)
+        self.assertEqual(form.company_id, self.env.company)
+        self.assertEqual(self.env["sale.order"].search_count([]), before)
+
+    def test_quotation_customer_supports_standalone_and_centralized_contacts(self):
+        individual = self.env["res.partner"].create({"name": "Individual Buyer"})
+        individual_channel = self._channel(self.account, individual)
+        central_channel = self._channel(self.account)
+        self.api.link_central_company(central_channel.id, self.customer.id)
+        for channel, expected_customer in (
+            (individual_channel, individual),
+            (central_channel, self.customer),
+        ):
+            with self.subTest(channel=channel.id):
+                self.assertTrue(
+                    self.api.get_customer_records(channel.id)["can_create_quotation"]
+                )
+                action = self.api.get_customer_quotation_action(channel.id)["action"]
+                self.assertEqual(
+                    action["context"]["default_partner_id"], expected_customer.id
+                )
+
+    def test_quotation_keeps_channel_company_and_respects_customer_read_rules(self):
+        other_company = self.env["res.company"].create(
+            {"name": "Another Sales Company"}
+        )
+        self.agent.company_ids |= other_company
+        api = self.api.with_context(
+            allowed_company_ids=[other_company.id, self.env.company.id]
+        )
+        action = api.get_customer_quotation_action(self.channel.id)["action"]
+        self.assertEqual(
+            action["context"],
+            {
+                "default_partner_id": self.customer.id,
+                "default_company_id": self.env.company.id,
+                "allowed_company_ids": self.env.company.ids,
+            },
+        )
+        self.env["ir.rule"].create(
+            {
+                "name": "Hide the commercial customer",
+                "model_id": self.env["ir.model"]._get_id("res.partner"),
+                "domain_force": "[('id', '!=', %s)]" % self.customer.id,
+            }
+        )
+        self.person.with_user(self.agent).check_access_rule("read")
+        self.assertFalse(
+            api.get_customer_records(self.channel.id)["can_create_quotation"]
+        )
+        with self.assertRaises(AccessError):
+            api.get_customer_quotation_action(self.channel.id)
 
     def test_sales_tools_require_customer_sales_acl_and_optional_module(self):
         channel = self._customer_channel_for(self.non_sales)
