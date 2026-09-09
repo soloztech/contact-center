@@ -89,7 +89,7 @@ class TestCustomerSaleDocuments(CustomerSaleDocumentsCase):
         self.assertEqual(self.env["sale.order"].search_count([]), before)
 
     def test_quotation_form_uses_company_billing_and_shipping_defaults(self):
-        self.agent.groups_id |= self.env.ref("sale.group_delivery_invoice_address")
+        self.agent.groups_id |= self.env.ref("account.group_delivery_invoice_address")
         invoice_address, delivery_address = self.env["res.partner"].create(
             [
                 {
