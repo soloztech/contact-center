@@ -24,6 +24,10 @@ import {useOwnedDialogs} from "@web/core/utils/hooks";
 
 const {DateTime} = luxon;
 const LIST_VIEWS = new Set(["grouped", "flat"]);
+const INBOX_NAME_COLLATOR = new Intl.Collator("pt-BR", {
+    numeric: true,
+    sensitivity: "base",
+});
 
 function positiveInteger(value) {
     return Number.isSafeInteger(value) && value > 0 ? value : false;
@@ -55,6 +59,11 @@ function safeInboxName(value, fallback) {
 
 function safePlatform(value) {
     return typeof value === "string" ? value.trim().slice(0, 40) : "";
+}
+
+function compareInboxGroups(left, right) {
+    const nameOrder = INBOX_NAME_COLLATOR.compare(left.name, right.name);
+    return nameOrder || String(left.key).localeCompare(String(right.key));
 }
 
 function editableShortcutTarget(target) {
@@ -156,7 +165,7 @@ export function groupConversationsByInbox(conversations, accounts = []) {
             unread_count: 0,
         });
     }
-    return [...groups.values()];
+    return [...groups.values()].sort(compareInboxGroups);
 }
 
 export function conversationPreviewText(conversation) {

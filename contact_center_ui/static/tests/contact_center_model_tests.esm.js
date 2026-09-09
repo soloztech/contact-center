@@ -2047,7 +2047,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
     );
 
     QUnit.test(
-        "groups conversations by canonical inbox in activity order",
+        "groups conversations by canonical inbox in alphabetical order",
         (assert) => {
             const first = Object.freeze({
                 channel_id: 1,
@@ -2094,19 +2094,25 @@ QUnit.module("contact_center_ui > model", (hooks) => {
 
             assert.deepEqual(
                 groups.map((group) => group.key),
-                ["inbox:10", "inbox:20", "inbox:30", "inbox:unknown", "inbox:40"],
-                "first activity fixes each inbox position"
+                ["inbox:unknown", "inbox:40", "inbox:20", "inbox:10", "inbox:30"],
+                "inbox activity does not change the alphabetical group order"
             );
-            assert.deepEqual(groups[0].conversations, [first, third]);
-            assert.strictEqual(groups[0].name, "Lucas");
-            assert.strictEqual(groups[0].platform, "whatsapp");
-            assert.strictEqual(groups[0].unread_count, 5);
-            assert.deepEqual(groups[3].conversations, [
+            const groupsByKey = Object.fromEntries(
+                groups.map((group) => [group.key, group])
+            );
+            assert.deepEqual(groupsByKey["inbox:10"].conversations, [first, third]);
+            assert.strictEqual(groupsByKey["inbox:10"].name, "Lucas");
+            assert.strictEqual(groupsByKey["inbox:10"].platform, "whatsapp");
+            assert.strictEqual(groupsByKey["inbox:10"].unread_count, 5);
+            assert.deepEqual(groupsByKey["inbox:unknown"].conversations, [
                 missingAccount,
                 malformedAccount,
             ]);
-            assert.strictEqual(groups[3].name, "Caixa não identificada");
-            assert.strictEqual(groups[4].name, "Caixa sem nome");
+            assert.strictEqual(
+                groupsByKey["inbox:unknown"].name,
+                "Caixa não identificada"
+            );
+            assert.strictEqual(groupsByKey["inbox:40"].name, "Caixa sem nome");
             assert.strictEqual(conversations[0], first, "the source remains untouched");
             assert.deepEqual(conversationInboxMetadata(null), {
                 key: "inbox:unknown",
@@ -2155,12 +2161,12 @@ QUnit.module("contact_center_ui > model", (hooks) => {
 
             assert.deepEqual(
                 groups.map((group) => group.key),
-                ["inbox:10", "inbox:20", "inbox:30"],
-                "loaded activity stays first and scoped empty inboxes are appended"
+                ["inbox:20", "inbox:30", "inbox:10"],
+                "loaded and empty inboxes share one alphabetical order"
             );
-            assert.deepEqual(groups[0].conversations, [conversation]);
-            assert.strictEqual(groups[0].unread_count, 2);
-            assert.deepEqual(groups[1], {
+            assert.deepEqual(groups[2].conversations, [conversation]);
+            assert.strictEqual(groups[2].unread_count, 2);
+            assert.deepEqual(groups[0], {
                 key: "inbox:20",
                 id: 20,
                 name: "Instagram",
@@ -2170,7 +2176,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             });
             assert.deepEqual(
                 groupConversationsByInbox([], accounts).map((group) => group.key),
-                ["inbox:10", "inbox:20", "inbox:30"],
+                ["inbox:20", "inbox:30", "inbox:10"],
                 "the grouped view can render an entirely empty authorized fleet"
             );
         }

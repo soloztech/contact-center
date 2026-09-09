@@ -3946,24 +3946,12 @@ class TestContactCenter(SavepointCase):
             conversation["identity"]["partner"]["id"], identity.partner_id.id
         )
 
-    def test_ui_links_or_creates_a_company_for_an_existing_contact(self):
+    def test_ui_allows_agent_to_link_or_create_company_for_existing_contact(self):
         channel, _binding, identity = self._channel_binding()
         api = self.env["contact.center.ui.api"].with_user(self.agent)
-        capabilities = api.bootstrap()["capabilities"]
-        self.assertFalse(capabilities["link_company"])
-        self.assertFalse(capabilities["create_company"])
-        with self.assertRaises(AccessError):
-            api.search_partner_companies(channel.id, 999999, "Candidate")
-        with self.assertRaises(AccessError):
-            api.create_and_link_partner_company(
-                channel.id, 999999, {"name": "Company Before Contact"}
-            )
-
-        supervisor_group = self.env.ref(
-            "contact_center_base.group_contact_center_supervisor"
+        self.assertFalse(
+            self.agent.has_group("contact_center_base.group_contact_center_supervisor")
         )
-        self.agent.write({"groups_id": [(4, supervisor_group.id)]})
-        api = self.env["contact.center.ui.api"].with_user(self.agent)
         capabilities = api.bootstrap()["capabilities"]
         self.assertTrue(capabilities["link_company"])
         self.assertTrue(capabilities["create_company"])

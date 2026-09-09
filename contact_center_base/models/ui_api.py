@@ -1641,11 +1641,11 @@ class ContactCenterUiApi(models.AbstractModel):
                 # This capability follows create_and_link_partner's dedicated,
                 # channel-scoped policy, not the broad res.partner create ACL.
                 "create_contact": True,
-                "link_company": is_supervisor,
-                # Company creation follows the same narrow, channel-scoped
-                # policy as contact creation, but only supervisors may mutate
-                # the commercial parent and trigger Odoo's field sync.
-                "create_company": is_supervisor,
+                # A person/company relation is managed through dedicated,
+                # channel-scoped endpoints.  Agents may use this narrow flow
+                # without receiving broad Contacts write access.
+                "link_company": True,
+                "create_company": True,
                 # A direct company link is an explicit exception for a shared,
                 # centralized number.  Keep it separate from the person-first
                 # promotion contract and supervisor-only.
@@ -2909,12 +2909,10 @@ class ContactCenterUiApi(models.AbstractModel):
 
     @api.model
     def _linked_person_for_company(self, channel, expected_partner_id, *, lock=False):
-        if not self.env.user.has_group(
-            "contact_center_base.group_contact_center_supervisor"
-        ):
-            raise AccessError(
-                _("Only Contact Center supervisors can manage contact companies.")
-            )
+        # Public callers authorize the conversation before reaching this helper.
+        # Keep the role check here as defense in depth while allowing the same
+        # constrained operation to every Contact Center agent.
+        self._application()._check_agent()
         expected_partner_id = self._positive_id(expected_partner_id, _("contact ID"))
         if lock:
             # A linked partner's structural-write guard takes partner ->
