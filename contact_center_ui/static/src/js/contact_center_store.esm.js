@@ -37,6 +37,8 @@ const SEEN_RETRY_DELAYS = Object.freeze([1000, 3000, 10000]);
 const CONNECTION_HEALTH_INVALIDATION_DELAY = 160;
 const INBOX_DENSITY_STORAGE_KEY = "contact_center_ui.inbox_density.v1";
 const INBOX_DENSITIES = new Set(["comfortable", "compact"]);
+const CONVERSATION_STATE_KEYS = Object.freeze(["open", "resolved", "archived"]);
+const CONVERSATION_STATES = new Set(CONVERSATION_STATE_KEYS);
 // The bus is an invalidation transport, not the source of truth.  Reconcile at
 // a low frequency even while connected so that a notification lost during a
 // browser sleep, SharedWorker hand-off, or reconnect cannot leave the inbox
@@ -72,6 +74,17 @@ const OPERATION_JOURNAL_TTL_MS = 24 * 60 * 60 * 1000;
 const OPERATION_FINGERPRINT_PATTERN = /^[0-9a-f]{32}$/;
 const UUID_PATTERN =
     /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+function normalizeConversationStateFilters(value) {
+    if (
+        !Array.isArray(value) ||
+        value.some((state) => !CONVERSATION_STATES.has(state))
+    ) {
+        return false;
+    }
+    const selected = new Set(value);
+    return CONVERSATION_STATE_KEYS.filter((state) => selected.has(state));
+}
 
 function timelineLoadingPhase(mode) {
     if (mode === "reset") {
@@ -934,7 +947,7 @@ export class ContactCenterStore {
             connectionHealthCheckingId: false,
             connectionHealthError: "",
             filters: {
-                state: "open",
+                states: ["open"],
                 accountId: false,
                 query: "",
                 responsibility: "all",
@@ -1429,7 +1442,7 @@ export class ContactCenterStore {
             const directed =
                 navigation && (navigation.channelId || navigation.activityTiming);
             if (directed) {
-                this.state.filters.state = false;
+                this.state.filters.states = [];
                 this.state.filters.activityTiming = navigation.activityTiming;
             }
             const loading = this.loadConversations({
@@ -1624,8 +1637,8 @@ export class ContactCenterStore {
 
     conversationFilters() {
         const filters = {};
-        if (this.state.filters.state) {
-            filters.state = this.state.filters.state;
+        if (this.state.filters.states.length) {
+            filters.states = [...this.state.filters.states];
         }
         if (this.state.filters.accountId) {
             filters.account_id = this.state.filters.accountId;
@@ -1920,6 +1933,9 @@ export class ContactCenterStore {
         if (!(name in this.state.filters)) {
             return false;
         }
+        if (name === "states") {
+            return this.setConversationStateFilters(value);
+        }
         if (name === "responsibility") {
             if (!isResponsibilityScope(value)) {
                 return false;
@@ -1954,6 +1970,15 @@ export class ContactCenterStore {
             return;
         }
         this.loadConversations({reset: true, selectFirst: true});
+    }
+
+    setConversationStateFilters(value) {
+        const states = normalizeConversationStateFilters(value);
+        if (states === false) {
+            return false;
+        }
+        this.state.filters.states = states;
+        return this.loadConversations({reset: true, selectFirst: true});
     }
 
     toggleInboxDensity() {
@@ -3533,8 +3558,8 @@ export class ContactCenterStore {
         ) {
             return false;
         }
-        const stateFilter = this.state.filters.state;
-        if (stateFilter && normalizedItem.state !== stateFilter) {
+        const stateFilters = this.state.filters.states;
+        if (stateFilters.length && !stateFilters.includes(normalizedItem.state)) {
             this.state.conversations = this.state.conversations.filter(
                 (conversation) => conversation.channel_id !== normalizedItem.channel_id
             );

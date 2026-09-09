@@ -3858,6 +3858,27 @@ class TestContactCenter(SavepointCase):
         )
         with self.assertRaises(ValidationError):
             api.list_conversations(filters={"state": "pending"})
+        self.assertIn(
+            ("contact_center_state", "in", ["open", "resolved"]),
+            api._conversation_list_domain({"states": ["open", "resolved"]}),
+        )
+        self.assertFalse(
+            any(
+                item[0] == "contact_center_state"
+                for item in api._conversation_list_domain({"states": []})
+            )
+        )
+        for invalid_states in (
+            "open",
+            ["open", "pending"],
+            [1],
+        ):
+            with self.assertRaises(ValidationError):
+                api._conversation_list_domain({"states": invalid_states})
+        with self.assertRaises(ValidationError):
+            api._conversation_list_domain(
+                {"state": "open", "states": ["open", "resolved"]}
+            )
 
         updated = api.update_conversation(
             channel.id, {"state": "resolved", "tag_ids": [tag.id]}

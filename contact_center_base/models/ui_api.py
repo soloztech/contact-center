@@ -1742,9 +1742,23 @@ class ContactCenterUiApi(models.AbstractModel):
             ("channel_member_ids.partner_id", "=", self.env.user.partner_id.id),
             ("contact_center_company_id", "in", self.env.companies.ids),
         ]
+        supported_states = ("open", "resolved", "archived")
+        states = filters.get("states")
         state = filters.get("state")
-        if state:
-            if state not in ("open", "resolved", "archived"):
+        if states is not None and state:
+            raise ValidationError(
+                _("Use either one conversation state or a list of states, not both.")
+            )
+        if states is not None:
+            if not isinstance(states, list) or any(
+                item not in supported_states for item in states
+            ):
+                raise ValidationError(_("Unsupported conversation states."))
+            states = list(dict.fromkeys(states))
+            if states:
+                domain.append(("contact_center_state", "in", states))
+        elif state:
+            if state not in supported_states:
                 raise ValidationError(_("Unsupported conversation state."))
             domain.append(("contact_center_state", "=", state))
         account_id = filters.get("account_id")

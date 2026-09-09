@@ -139,8 +139,8 @@
                         t-as="item"
                         t-key="item.key"
                         type="button"
-                        t-attf-class="cc-state-option cc-state-option--#{item.key} #{state.filters.state === item.key ? 'is-active' : ''}"
-                        t-att-aria-pressed="state.filters.state === item.key ? 'true' : 'false'"
+                        t-attf-class="cc-state-option cc-state-option--#{item.key} #{state.filters.states.includes(item.key) ? 'is-active' : ''}"
+                        t-att-aria-pressed="state.filters.states.includes(item.key) ? 'true' : 'false'"
                         t-on-click="() => this.onStateClick(item.key)"
                     >
                         <span t-esc="item.label" />

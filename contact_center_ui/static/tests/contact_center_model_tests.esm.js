@@ -583,7 +583,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             await store.loadBootstrap();
             assert.deepEqual(loads, [{reset: true, selectFirst: false}]);
             assert.notOk(store.state.selectedChannelId);
-            assert.notOk(store.state.filters.state);
+            assert.deepEqual(store.state.filters.states, []);
             assert.strictEqual(store.conversationFilters().activity_timing, "due");
             assert.notOk(
                 store.initialNavigation,
@@ -3730,7 +3730,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             });
             assert.deepEqual(store.responsibilityVisibleConversations, [mine]);
             assert.deepEqual(requestedFilters.pop(), {
-                state: "open",
+                states: ["open"],
                 responsibility: "mine",
             });
 
@@ -3754,7 +3754,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             assert.strictEqual(store.state.mobilePane, "list");
             assert.deepEqual(
                 store.conversationFilters(),
-                {state: "open", responsibility: "unassigned"},
+                {states: ["open"], responsibility: "unassigned"},
                 "the responsibility scope is part of the paginated server contract"
             );
 
@@ -5229,7 +5229,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             });
             const patches = [];
             const reloads = [];
-            store.state.filters.state = "open";
+            store.state.filters.states = ["open"];
             store.state.selectedChannelId = 10;
             store.state.conversations = [
                 openConversation({channel_id: 10, name: "Atendimento"}),
@@ -5256,7 +5256,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             assert.deepEqual(patches, [{state: "resolved"}]);
             assert.deepEqual(reloads, [{reset: true, selectFirst: true}]);
 
-            store.state.filters.state = false;
+            store.state.filters.states = [];
             store.state.selectedChannelId = 10;
             store.state.conversations = [
                 openConversation({
@@ -5272,6 +5272,49 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 1,
                 "the all-states filter keeps the row"
             );
+        }
+    );
+
+    QUnit.test(
+        "state chips toggle independently and combine with OR",
+        async (assert) => {
+            const store = new ContactCenterStore({
+                orm: {},
+                busService: {},
+                notification: false,
+            });
+            const loads = [];
+            store.loadConversations = async (options) => {
+                loads.push(options);
+                return true;
+            };
+            const list = {state: store.state, store};
+
+            assert.ok(
+                await ConversationList.prototype.onStateClick.call(list, "resolved")
+            );
+            assert.deepEqual(store.state.filters.states, ["open", "resolved"]);
+            assert.deepEqual(store.conversationFilters(), {
+                states: ["open", "resolved"],
+            });
+
+            assert.ok(await ConversationList.prototype.onStateClick.call(list, "open"));
+            assert.deepEqual(store.state.filters.states, ["resolved"]);
+
+            assert.ok(
+                await ConversationList.prototype.onStateClick.call(list, "resolved")
+            );
+            assert.deepEqual(store.state.filters.states, []);
+            assert.deepEqual(
+                store.conversationFilters(),
+                {},
+                "no selected state means all states"
+            );
+            assert.notOk(
+                await ConversationList.prototype.onStateClick.call(list, "unsupported")
+            );
+            assert.deepEqual(store.state.filters.states, []);
+            assert.strictEqual(loads.length, 3);
         }
     );
 
@@ -5339,7 +5382,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 busService: {removeEventListener: () => undefined},
                 notification: false,
             });
-            store.state.filters.state = "open";
+            store.state.filters.states = ["open"];
             store.state.conversations = [
                 openConversation({
                     channel_id: 10,
@@ -5558,7 +5601,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             busService: {removeEventListener: () => undefined},
             notification: false,
         });
-        store.state.filters.state = false;
+        store.state.filters.states = [];
         store.state.conversations = [openConversation({channel_id: 10})];
         store.call = async (method, args) => ({
             schema_version: SUPPORTED_SCHEMA_VERSION,
@@ -5657,7 +5700,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 busService: {removeEventListener: () => undefined},
                 notification: false,
             });
-            store.state.filters.state = "open";
+            store.state.filters.states = ["open"];
             store.state.conversations = [
                 openConversation({channel_id: 10}),
                 openConversation({channel_id: 20}),
@@ -9597,7 +9640,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 busService: {},
                 notification: false,
             });
-            store.state.filters.state = "open";
+            store.state.filters.states = ["open"];
             store.state.selectedChannelId = 10;
             store.state.timelineChannelId = 10;
             store.state.conversations = [{channel_id: 10, state: "open"}];
@@ -10742,7 +10785,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             notification: false,
         });
         store.state.filters = {
-            state: "open",
+            states: ["open", "resolved"],
             accountId: 4,
             query: "  Maria  ",
             responsibility: "mine",
@@ -10753,7 +10796,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
         };
 
         assert.deepEqual(store.conversationFilters(), {
-            state: "open",
+            states: ["open", "resolved"],
             account_id: 4,
             query: "Maria",
             responsibility: "mine",

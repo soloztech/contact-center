@@ -474,7 +474,13 @@ export class ConversationList extends Component {
     }
 
     onStateClick(state) {
-        this.store.setFilter("state", state);
+        const states = new Set(this.state.filters.states);
+        if (states.has(state)) {
+            states.delete(state);
+        } else {
+            states.add(state);
+        }
+        return this.store.setFilter("states", [...states]);
     }
 
     onAccountChange(event) {
