@@ -263,10 +263,10 @@
     />
     <menuitem
         id="menu_contact_center_quick_replies"
-        name="Quick Reply Scopes"
-        parent="menu_contact_center_configuration"
+        name="Respostas rápidas"
+        parent="menu_contact_center_root"
         action="action_contact_center_quick_reply_bindings"
         sequence="50"
-        groups="contact_center_base.group_contact_center_admin"
+        groups="contact_center_base.group_contact_center_agent"
     />
 </odoo>

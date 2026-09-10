@@ -25,6 +25,7 @@ from . import (
     test_phase5_group_metadata,
     test_phase5_groups,
     test_productivity,
+    test_quick_reply_management,
     test_queue_recovery,
     test_source_webhook_link,
     test_structured_content,

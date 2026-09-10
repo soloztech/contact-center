@@ -3,12 +3,9 @@
     <t t-name="contact_center_ui.ConversationList" owl="1">
         <aside class="cc-inbox-panel" aria-label="Conversas">
             <header class="cc-inbox-header">
-                <div>
-                    <p class="cc-kicker">Soloz / atendimento</p>
-                    <div class="cc-inbox-title">
-                        <h1>Conversas</h1>
-                        <span t-esc="displayedCount" />
-                    </div>
+                <div class="cc-inbox-title">
+                    <h1>Conversas</h1>
+                    <span t-esc="displayedCount" />
                 </div>
                 <div class="cc-inbox-header__status">
                     <button
@@ -27,12 +24,11 @@
                         />
                     </button>
                     <span
-                        t-attf-class="cc-realtime-status cc-realtime-status--#{realtimeMeta.state}"
+                        class="sr-only"
                         role="status"
                         t-att-title="realtimeMeta.description"
                         t-att-aria-label="realtimeMeta.description"
                     >
-                        <i class="fa fa-bolt" aria-hidden="true" />
                         <span t-esc="realtimeMeta.label" />
                     </span>
                     <ConnectionHealth
@@ -40,18 +36,6 @@
                         store="store"
                         state="state"
                     />
-                    <button
-                        t-if="compactMode"
-                        type="button"
-                        class="cc-icon-button cc-compact-tools-toggle"
-                        t-att-aria-expanded="ui.compactToolsOpen ? 'true' : 'false'"
-                        aria-controls="cc-inbox-tools"
-                        t-att-title="ui.compactToolsOpen ? 'Ocultar filtros' : 'Mostrar filtros'"
-                        t-att-aria-label="ui.compactToolsOpen ? 'Ocultar filtros da lista' : 'Mostrar filtros da lista'"
-                        t-on-click="toggleCompactTools"
-                    >
-                        <i class="fa fa-filter" aria-hidden="true" />
-                    </button>
                     <button
                         type="button"
                         class="cc-icon-button cc-inbox-density-toggle"
@@ -68,10 +52,7 @@
                 </div>
             </header>
 
-            <div
-                id="cc-inbox-tools"
-                t-attf-class="cc-inbox-tools #{compactMode &amp;&amp; !ui.compactToolsOpen ? 'is-compact-collapsed' : ''}"
-            >
+            <div id="cc-inbox-tools" class="cc-inbox-tools">
                 <label class="cc-search-field">
                     <i class="fa fa-search" aria-hidden="true" />
                     <span class="sr-only">Buscar conversas</span>
@@ -84,31 +65,25 @@
                     />
                 </label>
 
-                <div class="cc-triage-row">
-                    <div
-                        class="cc-responsibility-tabs"
-                        role="group"
-                        aria-label="Filtrar por responsável"
+                <div class="cc-inbox-filter-toolbar">
+                    <button
+                        type="button"
+                        t-ref="filterToggle"
+                        t-attf-class="cc-inbox-filter-toggle #{activeFilterCount ? 'has-filters' : ''}"
+                        t-att-aria-expanded="ui.filtersOpen ? 'true' : 'false'"
+                        aria-controls="cc-inbox-filter-panel"
+                        aria-haspopup="dialog"
+                        t-on-click="toggleFilters"
                     >
-                        <button
-                            type="button"
-                            t-att-class="state.filters.responsibility === 'all' ? 'is-active' : ''"
-                            t-att-aria-pressed="state.filters.responsibility === 'all' ? 'true' : 'false'"
-                            t-on-click="() => this.setResponsibility('all')"
-                        >Todas</button>
-                        <button
-                            type="button"
-                            t-att-class="state.filters.responsibility === 'mine' ? 'is-active' : ''"
-                            t-att-aria-pressed="state.filters.responsibility === 'mine' ? 'true' : 'false'"
-                            t-on-click="() => this.setResponsibility('mine')"
-                        >Minhas</button>
-                        <button
-                            type="button"
-                            t-att-class="state.filters.responsibility === 'unassigned' ? 'is-active' : ''"
-                            t-att-aria-pressed="state.filters.responsibility === 'unassigned' ? 'true' : 'false'"
-                            t-on-click="() => this.setResponsibility('unassigned')"
-                        >Não atribuídas</button>
-                    </div>
+                        <i class="fa fa-filter" aria-hidden="true" />
+                        <span>Filtros</span>
+                        <b t-if="activeFilterCount" t-esc="activeFilterCount" />
+                    </button>
+                    <span
+                        class="cc-inbox-filter-summary"
+                        t-att-title="filterSummary"
+                        t-esc="filterSummary"
+                    />
                     <div
                         class="cc-list-view-switch"
                         role="group"
@@ -133,122 +108,229 @@
                     </div>
                 </div>
 
-                <div class="cc-inbox-tabs" role="group" aria-label="Filtrar por estado">
-                    <button
-                        t-foreach="store.conversationStates"
-                        t-as="item"
-                        t-key="item.key"
-                        type="button"
-                        t-attf-class="cc-state-option cc-state-option--#{item.key} #{state.filters.states.includes(item.key) ? 'is-active' : ''}"
-                        t-att-aria-pressed="state.filters.states.includes(item.key) ? 'true' : 'false'"
-                        t-on-click="() => this.onStateClick(item.key)"
-                    >
-                        <span t-esc="item.label" />
-                    </button>
-                </div>
+                <section
+                    t-if="ui.filtersOpen"
+                    t-ref="filterPanel"
+                    id="cc-inbox-filter-panel"
+                    class="cc-inbox-filter-panel"
+                    role="dialog"
+                    aria-label="Filtrar conversas"
+                    tabindex="-1"
+                >
+                    <header class="cc-inbox-filter-panel__header">
+                        <h2>Filtrar conversas</h2>
+                        <button
+                            type="button"
+                            class="cc-icon-button"
+                            aria-label="Fechar filtros"
+                            t-on-click="() => this.closeFilters()"
+                        ><i class="fa fa-times" aria-hidden="true" /></button>
+                    </header>
+                    <div class="cc-inbox-filter-panel__body">
+                    <fieldset class="cc-inbox-filter-section">
+                        <legend><i
+                                    class="fa fa-circle-o"
+                                    aria-hidden="true"
+                                />Estado</legend>
+                        <div
+                                class="cc-inbox-tabs"
+                                role="group"
+                                aria-label="Filtrar por estado"
+                            >
+                            <button
+                                    t-foreach="store.conversationStates"
+                                    t-as="item"
+                                    t-key="item.key"
+                                    type="button"
+                                    t-attf-class="cc-state-option cc-state-option--#{item.key} #{state.filters.states.includes(item.key) ? 'is-active' : ''}"
+                                    t-att-aria-pressed="state.filters.states.includes(item.key) ? 'true' : 'false'"
+                                    t-on-click="() => this.onStateClick(item.key)"
+                                >
+                                <i
+                                        t-attf-class="fa #{state.filters.states.includes(item.key) ? 'fa-check-square' : 'fa-square-o'}"
+                                        aria-hidden="true"
+                                    />
+                                <span t-esc="item.label" />
+                            </button>
+                        </div>
+                        <p
+                                class="cc-inbox-filter-hint"
+                            >Combine estados. Nenhum marcado mostra todos.</p>
+                    </fieldset>
 
-                <div class="cc-secondary-filters" aria-label="Outros filtros">
+                    <fieldset class="cc-inbox-filter-section">
+                        <legend><i
+                                    class="fa fa-user-o"
+                                    aria-hidden="true"
+                                />Responsável</legend>
+                    <div
+                                class="cc-responsibility-tabs"
+                                role="group"
+                                aria-label="Filtrar por responsável"
+                            >
+                        <button
+                                    type="button"
+                                    t-att-class="state.filters.responsibility === 'all' ? 'is-active' : ''"
+                                    t-att-aria-pressed="state.filters.responsibility === 'all' ? 'true' : 'false'"
+                                    t-on-click="() => this.setResponsibility('all')"
+                                >Todas</button>
+                        <button
+                                    type="button"
+                                    t-att-class="state.filters.responsibility === 'mine' ? 'is-active' : ''"
+                                    t-att-aria-pressed="state.filters.responsibility === 'mine' ? 'true' : 'false'"
+                                    t-on-click="() => this.setResponsibility('mine')"
+                                >Minhas</button>
+                        <button
+                                    type="button"
+                                    t-att-class="state.filters.responsibility === 'unassigned' ? 'is-active' : ''"
+                                    t-att-aria-pressed="state.filters.responsibility === 'unassigned' ? 'true' : 'false'"
+                                    t-on-click="() => this.setResponsibility('unassigned')"
+                                >Não atribuídas</button>
+                    </div>
+                    </fieldset>
+
+                    <fieldset class="cc-inbox-filter-section">
+                        <legend><i
+                                    class="fa fa-comments-o"
+                                    aria-hidden="true"
+                                />Conversa</legend>
+                <div class="cc-secondary-filters">
                     <button
-                        type="button"
-                        t-att-class="state.filters.unreadOnly ? 'cc-filter-chip is-active' : 'cc-filter-chip'"
-                        t-att-aria-pressed="state.filters.unreadOnly ? 'true' : 'false'"
-                        t-on-click="toggleUnreadOnly"
-                    >
+                                    type="button"
+                                    t-att-class="state.filters.unreadOnly ? 'cc-filter-chip is-active' : 'cc-filter-chip'"
+                                    t-att-aria-pressed="state.filters.unreadOnly ? 'true' : 'false'"
+                                    t-on-click="toggleUnreadOnly"
+                                >
                         <i class="fa fa-envelope" aria-hidden="true" />
                         <span>Não lidas</span>
                     </button>
                     <div
-                        class="cc-conversation-type-filter"
-                        role="group"
-                        aria-label="Tipo de conversa"
-                    >
+                                    class="cc-conversation-type-filter"
+                                    role="group"
+                                    aria-label="Tipo de conversa"
+                                >
                         <button
-                            type="button"
-                            t-att-class="!state.filters.conversationType ? 'is-active' : ''"
-                            t-att-aria-pressed="!state.filters.conversationType ? 'true' : 'false'"
-                            t-on-click="() => this.setConversationType(false)"
-                        >Todas</button>
+                                        type="button"
+                                        t-att-class="!state.filters.conversationType ? 'is-active' : ''"
+                                        t-att-aria-pressed="!state.filters.conversationType ? 'true' : 'false'"
+                                        t-on-click="() => this.setConversationType(false)"
+                                    >Todas</button>
                         <button
-                            type="button"
-                            t-att-class="state.filters.conversationType === 'direct' ? 'is-active' : ''"
-                            t-att-aria-pressed="state.filters.conversationType === 'direct' ? 'true' : 'false'"
-                            t-on-click="() => this.setConversationType('direct')"
-                        >Diretas</button>
+                                        type="button"
+                                        t-att-class="state.filters.conversationType === 'direct' ? 'is-active' : ''"
+                                        t-att-aria-pressed="state.filters.conversationType === 'direct' ? 'true' : 'false'"
+                                        t-on-click="() => this.setConversationType('direct')"
+                                    >Diretas</button>
                         <button
-                            type="button"
-                            t-att-class="state.filters.conversationType === 'group' ? 'is-active' : ''"
-                            t-att-aria-pressed="state.filters.conversationType === 'group' ? 'true' : 'false'"
-                            t-on-click="() => this.setConversationType('group')"
-                        >Grupos</button>
+                                        type="button"
+                                        t-att-class="state.filters.conversationType === 'group' ? 'is-active' : ''"
+                                        t-att-aria-pressed="state.filters.conversationType === 'group' ? 'true' : 'false'"
+                                        t-on-click="() => this.setConversationType('group')"
+                                    >Grupos</button>
                     </div>
-                    <label t-if="store.tags.length" class="cc-tag-filter">
+                </div>
+                    </fieldset>
+                    <fieldset
+                            t-if="accounts.length > 1"
+                            class="cc-inbox-filter-section"
+                        >
+                        <legend><i
+                                    class="fa fa-inbox"
+                                    aria-hidden="true"
+                                />Caixa</legend>
+                        <label class="cc-account-filter">
+                            <span class="sr-only">Filtrar por caixa</span>
+                            <select
+                                    t-on-change="onAccountChange"
+                                    aria-label="Filtrar por caixa"
+                                >
+                                <option value="">Todas as caixas</option>
+                                <option
+                                        t-foreach="accounts"
+                                        t-as="account"
+                                        t-key="account.id"
+                                        t-att-value="account.id"
+                                        t-att-selected="state.filters.accountId === account.id"
+                                    ><t t-esc="account.name" /></option>
+                            </select>
+                        </label>
+                    </fieldset>
+                    <fieldset t-if="store.tags.length" class="cc-inbox-filter-section">
+                        <legend><i
+                                    class="fa fa-tag"
+                                    aria-hidden="true"
+                                />Marcador</legend>
+                    <label class="cc-tag-filter">
                         <span class="sr-only">Filtrar por marcador</span>
                         <i class="fa fa-tag" aria-hidden="true" />
                         <select
-                            aria-label="Filtrar por marcador"
-                            t-on-change="onTagChange"
-                        >
+                                    aria-label="Filtrar por marcador"
+                                    t-on-change="onTagChange"
+                                >
                             <option value="">Todos os marcadores</option>
                             <option
-                                t-foreach="store.tags"
-                                t-as="tag"
-                                t-key="tag.id"
-                                t-att-value="tag.id"
-                                t-att-selected="state.filters.tagId === tag.id"
-                            ><t t-esc="tag.name" /></option>
+                                        t-foreach="store.tags"
+                                        t-as="tag"
+                                        t-key="tag.id"
+                                        t-att-value="tag.id"
+                                        t-att-selected="state.filters.tagId === tag.id"
+                                    ><t t-esc="tag.name" /></option>
                         </select>
                     </label>
-                    <label
-                        t-if="store.capabilities.followups === true"
-                        class="cc-activity-filter"
-                    >
+                    </fieldset>
+                    <fieldset
+                            t-if="store.capabilities.followups === true"
+                            class="cc-inbox-filter-section"
+                        >
+                        <legend><i
+                                    class="fa fa-clock-o"
+                                    aria-hidden="true"
+                                />Meus follow-ups</legend>
+                    <label class="cc-activity-filter">
                         <span class="sr-only">Filtrar pelos meus follow-ups</span>
                         <i class="fa fa-clock-o" aria-hidden="true" />
                         <select
-                            aria-label="Filtrar pelos meus follow-ups"
-                            t-on-change="onActivityTimingChange"
-                        >
+                                    aria-label="Filtrar pelos meus follow-ups"
+                                    t-on-change="onActivityTimingChange"
+                                >
                             <option value="">Follow-up: sem filtro</option>
                             <option
-                                value="all"
-                                t-att-selected="state.filters.activityTiming === 'all'"
-                            >Todos os meus follow-ups</option>
+                                        value="all"
+                                        t-att-selected="state.filters.activityTiming === 'all'"
+                                    >Todos os meus follow-ups</option>
                             <option
-                                value="due"
-                                t-att-selected="state.filters.activityTiming === 'due'"
-                            >Meus de hoje e atrasados</option>
+                                        value="due"
+                                        t-att-selected="state.filters.activityTiming === 'due'"
+                                    >Meus de hoje e atrasados</option>
                             <option
-                                value="overdue"
-                                t-att-selected="state.filters.activityTiming === 'overdue'"
-                            >Meus atrasados</option>
+                                        value="overdue"
+                                        t-att-selected="state.filters.activityTiming === 'overdue'"
+                                    >Meus atrasados</option>
                             <option
-                                value="today"
-                                t-att-selected="state.filters.activityTiming === 'today'"
-                            >Meus de hoje</option>
+                                        value="today"
+                                        t-att-selected="state.filters.activityTiming === 'today'"
+                                    >Meus de hoje</option>
                             <option
-                                value="planned"
-                                t-att-selected="state.filters.activityTiming === 'planned'"
-                            >Meus próximos</option>
+                                        value="planned"
+                                        t-att-selected="state.filters.activityTiming === 'planned'"
+                                    >Meus próximos</option>
                         </select>
                     </label>
-                </div>
-
-                <label
-                    t-if="accounts.length > 1 &amp;&amp; (ui.view === 'flat' || state.filters.accountId)"
-                    class="cc-account-filter"
-                >
-                    <span>Caixa</span>
-                    <select t-on-change="onAccountChange">
-                        <option value="">Todas</option>
-                        <option
-                            t-foreach="accounts"
-                            t-as="account"
-                            t-key="account.id"
-                            t-att-value="account.id"
-                            t-att-selected="state.filters.accountId === account.id"
-                        ><t t-esc="account.name" /></option>
-                    </select>
-                </label>
+                    </fieldset>
+                    </div>
+                    <footer class="cc-inbox-filter-panel__footer">
+                        <button
+                            type="button"
+                            class="cc-inbox-filter-clear"
+                            t-on-click="clearFilters"
+                        >Limpar filtros</button>
+                        <button
+                            type="button"
+                            class="cc-inbox-filter-done"
+                            t-on-click="() => this.closeFilters()"
+                        >Concluir</button>
+                    </footer>
+                </section>
             </div>
 
             <div

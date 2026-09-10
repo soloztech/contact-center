@@ -13,6 +13,7 @@ import {BrowserAttention} from "./browser_attention.esm";
 import {ContactCenterStore} from "./contact_center_store.esm";
 import {ContactPanel} from "./contact_panel.esm";
 import {ConversationList} from "./conversation_list.esm";
+import {ConversationTags} from "./conversation_tags.esm";
 import {ConversationTimeline} from "./conversation_timeline.esm";
 import {DeferredImage} from "./deferred_image.esm";
 import {MessageComposer} from "./message_composer.esm";
@@ -154,6 +155,7 @@ ContactCenterApp.components = {
     ContactPanel,
     ConversationList,
     ConversationTimeline,
+    ConversationTags,
     DeferredImage,
     MessageComposer,
 };

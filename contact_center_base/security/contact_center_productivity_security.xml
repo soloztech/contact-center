@@ -1,5 +1,24 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <odoo noupdate="1">
+    <record id="rule_contact_center_quick_reply_personal" model="ir.rule">
+        <field name="name">Personal Contact Center replies by owner</field>
+        <field name="model_id" ref="model_contact_center_quick_reply_binding" />
+        <field name="groups" eval="[(4, ref('group_contact_center_agent'))]" />
+        <field
+            name="domain_force"
+        >[('company_id', 'in', company_ids), ('scope', '=', 'personal'), ('owner_id', '=', user.id)]</field>
+    </record>
+    <record id="rule_contact_center_shortcode_personal_content" model="ir.rule">
+        <field name="name">Protect Contact Center personal reply text</field>
+        <field name="model_id" ref="mail.model_mail_shortcode" />
+        <field
+            name="domain_force"
+        >['|', ('contact_center_binding_ids', '=', False), ('contact_center_binding_ids.company_id', 'in', company_ids)] if user.has_group('contact_center_base.group_contact_center_admin') else ['|', ('contact_center_binding_ids', '=', False), '&amp;', ('contact_center_binding_ids.company_id', 'in', company_ids), '|', ('contact_center_binding_ids.scope', '!=', 'personal'), ('contact_center_binding_ids.owner_id', '=', user.id)]</field>
+        <field name="perm_read" eval="True" />
+        <field name="perm_write" eval="False" />
+        <field name="perm_create" eval="False" />
+        <field name="perm_unlink" eval="False" />
+    </record>
     <record id="rule_contact_center_scheduled_message_membership" model="ir.rule">
         <field
             name="name"

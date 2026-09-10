@@ -720,7 +720,7 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
 .cc-inbox-header {
     position: relative;
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     min-height: 4.9rem;
     align-items: center;
     justify-content: space-between;
@@ -733,7 +733,17 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
     display: flex;
     align-items: center;
     margin-left: auto;
-    gap: 0.5rem;
+    flex: 0 0 auto;
+    gap: 4px;
+
+    .cc-icon-button,
+    .cc-attention-beacon,
+    .cc-connection-health__trigger {
+        min-width: 32px;
+        width: 32px;
+        height: 32px;
+        font-size: 13px;
+    }
 }
 
 .cc-attention-beacon {
@@ -826,11 +836,16 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
 
 .cc-inbox-title {
     display: flex;
+    min-width: 0;
     align-items: baseline;
     margin-top: 0.25rem;
     gap: 0.6rem;
 
     h1 {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
         font-size: 1.75rem;
         font-weight: 630;
         letter-spacing: -0.035em;
@@ -844,9 +859,251 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
 }
 
 .cc-inbox-tools {
+    position: relative;
     padding: 0.78rem 0.85rem 0.7rem;
     border-bottom: 1px solid var(--cc-line-soft);
     background: #f4f7f6;
+}
+
+.cc-inbox-filter-toolbar {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    margin-top: 8px;
+    gap: 6px;
+
+    .cc-list-view-switch button {
+        min-height: 30px;
+        width: 28px;
+    }
+}
+
+.cc-inbox-filter-toggle {
+    display: inline-flex;
+    min-height: 34px;
+    flex: 0 0 auto;
+    align-items: center;
+    padding: 0 9px;
+    border: 1px solid var(--cc-line);
+    border-radius: 5px;
+    color: var(--cc-ink-soft);
+    background: #fff;
+    font-size: 12px;
+    font-weight: 650;
+    gap: 6px;
+
+    &.has-filters,
+    &[aria-expanded="true"] {
+        border-color: #b3c9de;
+        color: var(--cc-cobalt-deep);
+        background: var(--cc-cobalt-soft);
+    }
+
+    b {
+        display: grid;
+        min-width: 18px;
+        height: 18px;
+        place-items: center;
+        border-radius: 4px;
+        color: #fff;
+        background: var(--cc-cobalt);
+        font-family: "SFMono-Regular", Consolas, monospace;
+        font-size: 10px;
+    }
+}
+
+.cc-inbox-filter-summary {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    color: var(--cc-steel);
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cc-inbox-filter-panel {
+    position: absolute;
+    z-index: 12;
+    top: calc(100% - 3px);
+    right: 10px;
+    left: 10px;
+    display: flex;
+    max-height: min(65vh, 590px);
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid var(--cc-line);
+    border-top: 3px solid var(--cc-cobalt);
+    border-radius: 7px;
+    color: var(--cc-ink);
+    background: var(--cc-paper);
+    box-shadow: 0 12px 32px rgba(23, 39, 48, 0.18);
+
+    &:focus-visible {
+        outline: 2px solid var(--cc-cobalt);
+        outline-offset: 2px;
+    }
+
+    button:focus-visible,
+    select:focus-visible {
+        outline: 2px solid var(--cc-cobalt);
+        outline-offset: 2px;
+    }
+}
+
+.cc-inbox-filter-toggle:focus-visible {
+    outline: 2px solid var(--cc-cobalt);
+    outline-offset: 2px;
+}
+
+.cc-inbox-filter-panel__header,
+.cc-inbox-filter-panel__footer {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    gap: 8px;
+    background: #fff;
+}
+
+.cc-inbox-filter-panel__header {
+    border-bottom: 1px solid var(--cc-line-soft);
+
+    h2 {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 650;
+    }
+
+    .cc-icon-button {
+        min-width: 28px;
+        width: 28px;
+        height: 28px;
+        font-size: 12px;
+    }
+}
+
+.cc-inbox-filter-panel__body {
+    min-height: 0;
+    padding: 12px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.cc-inbox-filter-section {
+    min-width: 0;
+    margin: 0;
+    padding: 0 0 13px;
+    border: 0;
+
+    &:last-child {
+        padding-bottom: 0;
+    }
+
+    legend {
+        display: flex;
+        float: none;
+        align-items: center;
+        margin: 0 0 7px;
+        padding: 0;
+        color: var(--cc-ink-soft);
+        font-size: 12px;
+        font-weight: 650;
+        gap: 7px;
+
+        i {
+            width: 14px;
+            color: var(--cc-steel);
+            text-align: center;
+        }
+    }
+
+    .cc-inbox-tabs,
+    .cc-secondary-filters {
+        flex-wrap: wrap;
+        margin-top: 0;
+        overflow: visible;
+        gap: 5px;
+    }
+
+    .cc-inbox-tabs button {
+        display: flex;
+        min-height: 32px;
+        align-items: center;
+        padding: 5px 7px;
+        font-size: 12px;
+        gap: 6px;
+    }
+
+    .cc-responsibility-tabs,
+    .cc-conversation-type-filter {
+        display: flex;
+        flex-wrap: wrap;
+        overflow: visible;
+
+        button {
+            min-height: 30px;
+            flex: 1 0 auto;
+            padding: 5px 7px;
+            font-size: 11px;
+        }
+    }
+
+    .cc-filter-chip {
+        min-height: 32px;
+        padding: 5px 8px;
+        font-size: 12px;
+    }
+
+    .cc-conversation-type-filter {
+        flex: 1 0 100%;
+    }
+
+    .cc-account-filter,
+    .cc-tag-filter,
+    .cc-activity-filter {
+        display: flex;
+        width: 100%;
+        margin: 0;
+
+        select {
+            width: 100%;
+            max-width: none;
+            min-height: 34px;
+            font-size: 12px;
+        }
+    }
+}
+
+.cc-inbox-filter-hint {
+    margin: 5px 0 0;
+    color: var(--cc-steel);
+    font-size: 10px;
+    line-height: 1.5;
+}
+
+.cc-inbox-filter-panel__footer {
+    border-top: 1px solid var(--cc-line-soft);
+
+    button {
+        min-height: 32px;
+        padding: 5px 9px;
+        border: 1px solid transparent;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 650;
+    }
+}
+
+.cc-inbox-filter-clear {
+    color: var(--cc-steel);
+    background: transparent;
+}
+
+.cc-inbox-filter-done {
+    color: #fff;
+    background: var(--cc-cobalt);
 }
 
 .cc-triage-row {
@@ -2218,27 +2475,31 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
 
 .cc-audio-player {
     display: grid;
-    min-width: #{"min(22rem, 62vw)"};
-    grid-template-columns: auto minmax(8rem, 1fr) auto auto;
+    width: #{"min(20rem, 62vw)"};
+    grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
-    padding: 0.65rem;
+    padding: 0.35rem 0.25rem;
     color: var(--cc-ink-soft);
-    background: linear-gradient(135deg, #f7fafb, #edf3f5);
-    gap: 0.5rem;
+    gap: 0.65rem;
+}
+
+.cc-media--audio {
+    overflow: visible;
+    border: 0;
+    background: transparent;
 }
 
 .cc-audio-player__play,
-.cc-audio-player__speed,
-.cc-audio-player__download {
+.cc-audio-player__speed {
     display: grid;
     width: 2.45rem;
     height: 2.45rem;
     flex: 0 0 auto;
     place-items: center;
-    border: 1px solid #bdcbd0;
+    border: 0;
     border-radius: 50%;
     color: var(--cc-cobalt-deep);
-    background: #fff;
+    background: transparent;
     text-decoration: none;
 
     &:hover,
@@ -2251,9 +2512,9 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
 }
 
 .cc-audio-player__play {
-    border-color: var(--cc-cobalt);
-    color: #fff;
-    background: var(--cc-cobalt);
+    align-self: start;
+    color: var(--cc-cobalt);
+    font-size: 1.15rem;
 
     i {
         margin-left: 0.08rem;
@@ -2263,66 +2524,51 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
         margin-left: 0;
     }
 
-    &:hover,
-    &:focus-visible {
-        color: #fff;
-        background: var(--cc-cobalt-deep);
+    &:disabled {
+        color: var(--cc-steel);
+        cursor: default;
+        opacity: 0.55;
     }
 }
 
 .cc-audio-player__speed {
-    border-radius: 0.35rem;
+    align-self: start;
+    border-radius: 999px;
     font-family: "SFMono-Regular", Consolas, monospace;
-    font-size: 0.62rem;
+    font-size: 0.7rem;
     font-weight: 750;
 }
 
 .cc-audio-player__main {
     display: grid;
     min-width: 0;
-    gap: 0.28rem;
+    padding-top: 0.32rem;
+    gap: 0.18rem;
 }
 
-.cc-audio-player__heading {
+.cc-audio-player__footer {
     display: flex;
     min-width: 0;
-    align-items: flex-end;
+    align-items: center;
     justify-content: space-between;
     gap: 0.55rem;
 
-    > span {
-        display: grid;
-        min-width: 0;
-        gap: 0.04rem;
-    }
-
-    strong,
-    small {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-
-    strong {
-        color: var(--cc-ink-soft);
-        font-size: 0.69rem;
-    }
-
-    small,
     time {
-        color: #52666f;
+        color: var(--cc-steel);
         font-family: "SFMono-Regular", Consolas, monospace;
-        font-size: 0.58rem;
+        font-size: 0.64rem;
+        font-variant-numeric: tabular-nums;
     }
 
-    time {
-        flex: 0 0 auto;
+    i {
+        color: var(--cc-steel);
+        font-size: 0.65rem;
     }
 }
 
 .cc-audio-scrub {
     position: relative;
-    height: 1.35rem;
+    height: 1.75rem;
     border-radius: 0.2rem;
 
     &:focus-within {
@@ -2339,6 +2585,17 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
         cursor: pointer;
         opacity: 0;
     }
+}
+
+.cc-audio-scrub__thumb {
+    position: absolute;
+    top: 50%;
+    width: 0.65rem;
+    height: 0.65rem;
+    border-radius: 50%;
+    background: var(--cc-cobalt);
+    transform: translate(-50%, -50%);
+    pointer-events: none;
 }
 
 .cc-audio-wave {
@@ -2450,6 +2707,15 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
     cursor: zoom-in;
 }
 
+.cc-media-document--file {
+    grid-template-columns: auto minmax(0, 1fr);
+
+    &:hover {
+        color: var(--cc-ink);
+        background: transparent;
+    }
+}
+
 .cc-media-document__icon {
     display: grid;
     width: 2.35rem;
@@ -2481,26 +2747,6 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
         color: var(--cc-steel);
         font-family: "SFMono-Regular", Consolas, monospace;
         font-size: 0.56rem;
-    }
-}
-
-.cc-media-download {
-    position: absolute;
-    top: 0.42rem;
-    right: 0.42rem;
-    display: grid;
-    width: 2.35rem;
-    height: 2.35rem;
-    place-items: center;
-    border: 1px solid rgba(255, 255, 255, 0.7);
-    border-radius: 50%;
-    color: #fff;
-    background: rgba(23, 39, 48, 0.68);
-
-    &:hover,
-    &:focus-visible {
-        color: #fff;
-        background: rgba(23, 39, 48, 0.9);
     }
 }
 
@@ -2769,7 +3015,6 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
         pointer-events: none;
     }
 
-    .cc-audio-player__heading strong,
     .cc-media-document__copy strong {
         text-decoration: line-through;
         text-decoration-thickness: 1px;
@@ -2897,7 +3142,7 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
     width: 14.75rem;
     padding: 0.28rem;
 
-    button {
+    [role="menuitem"] {
         display: flex;
         min-height: 2.55rem;
         align-items: center;
@@ -2907,6 +3152,7 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
         color: var(--cc-ink);
         background: transparent;
         text-align: left;
+        text-decoration: none;
         gap: 0.55rem;
 
         i {
@@ -2924,6 +3170,13 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
             color: var(--cc-danger);
         }
     }
+}
+
+.cc-message-menu__download span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .cc-reaction-picker {
@@ -4957,16 +5210,16 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
     }
 
     .cc-inbox-header {
-        min-height: 78px;
-        padding: 13px 16px 12px;
+        min-height: 62px;
+        padding: 10px 12px;
     }
 
     .cc-inbox-title {
-        margin-top: 4px;
-        gap: 9px;
+        margin-top: 0;
+        gap: 6px;
 
         h1 {
-            font-size: 26px;
+            font-size: 22px;
         }
 
         span {
@@ -5298,21 +5551,19 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
         font-size: 12px;
     }
 
-    .cc-audio-player__heading strong,
     .cc-media-document__copy strong,
     .cc-message-tombstone {
         font-size: 14px;
     }
 
-    .cc-audio-player__heading small,
-    .cc-audio-player__heading time,
+    .cc-audio-player__footer time,
     .cc-media-document__copy small,
     .cc-media-state,
     .cc-delete-confirmation > span {
         font-size: 11px;
     }
 
-    .cc-message-menu button,
+    .cc-message-menu [role="menuitem"],
     .cc-delete-confirmation strong,
     .cc-message-action-button {
         font-size: 13px;
@@ -5567,7 +5818,7 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
             gap: 6px;
 
             h1 {
-                font-size: 21px;
+                font-size: 18px;
             }
 
             span {
@@ -5866,8 +6117,7 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
 
     .cc-message-actions__toggle,
     .cc-audio-player__play,
-    .cc-audio-player__speed,
-    .cc-audio-player__download {
+    .cc-audio-player__speed {
         width: 2.75rem;
         height: 2.75rem;
     }
@@ -5876,17 +6126,12 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
         min-width: #{"min(18rem, 72vw)"};
     }
 
-    .cc-message-menu button,
+    .cc-message-menu [role="menuitem"],
     .cc-delete-confirmation button,
     .cc-message-action-button,
     .cc-reaction-chip,
     .cc-composer-attachment__retry {
         min-height: 2.75rem;
-    }
-
-    .cc-media-download {
-        width: 2.75rem;
-        height: 2.75rem;
     }
 
     .cc-media-viewer-dialog {
@@ -5976,12 +6221,8 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
     }
 
     .cc-audio-player {
-        grid-template-columns: auto minmax(6.5rem, 1fr) auto auto;
+        grid-template-columns: auto minmax(0, 1fr) auto;
         gap: 0.38rem;
-    }
-
-    .cc-audio-player__heading small {
-        display: none;
     }
 
     .cc-read-only-composer__copy small {
@@ -6028,11 +6269,7 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
 
 @media (max-width: 360px) {
     .cc-audio-player {
-        grid-template-columns: auto minmax(5.5rem, 1fr) auto;
-    }
-
-    .cc-audio-player__speed {
-        display: none;
+        gap: 0.25rem;
     }
 }
 

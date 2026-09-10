@@ -232,13 +232,17 @@ def registry_phase(env, phase, source, candidate, output):
     assert not config["http_enable"] and not config["test_enable"]
     assert config["workers"] == config["max_cron_threads"] == 0
     modules = env["ir.module.module"].search([("name", "in", list(MODULES))])
-    expected = ast.literal_eval(
-        (source / "contact_center_base/__manifest__.py").read_text()
-    )["version"]
+    expected = {
+        name: ast.literal_eval((source / name / "__manifest__.py").read_text())[
+            "version"
+        ]
+        for name in MODULES
+    }
     assert len(modules) == len(MODULES)
     versions = {row.name: (row.state, row.latest_version) for row in modules}
     assert all(
-        row.state == "installed" and row.latest_version == expected for row in modules
+        row.state == "installed" and row.latest_version == expected[row.name]
+        for row in modules
     ), versions
     params = env["ir.config_parameter"].sudo()
     if phase == "seed_old":

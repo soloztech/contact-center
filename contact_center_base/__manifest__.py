@@ -1,7 +1,7 @@
 {
     "name": "Contact Center Base",
     "summary": "Provider-neutral contact center foundation",
-    "version": "16.0.1.2.0",
+    "version": "16.0.1.2.1",
     "category": "Productivity/Discuss",
     "author": "Soloz Technologies",
     "website": "https://github.com/soloztech/contact-center",

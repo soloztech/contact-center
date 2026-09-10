@@ -1972,6 +1972,23 @@ export class ContactCenterStore {
         this.loadConversations({reset: true, selectFirst: true});
     }
 
+    clearConversationFilters() {
+        if (this.searchTimer !== null) {
+            browser.clearTimeout(this.searchTimer);
+            this.searchTimer = null;
+        }
+        Object.assign(this.state.filters, {
+            states: [],
+            accountId: false,
+            responsibility: "all",
+            unreadOnly: false,
+            conversationType: false,
+            tagId: false,
+            activityTiming: false,
+        });
+        return this.loadConversations({reset: true, selectFirst: true});
+    }
+
     setConversationStateFilters(value) {
         const states = normalizeConversationStateFilters(value);
         if (states === false) {

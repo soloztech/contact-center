@@ -117,6 +117,16 @@
                 </header>
 
                 <t t-if="local.tool === 'quick_reply'">
+                    <button
+                        t-if="store.capabilities.manage_quick_replies"
+                        type="button"
+                        class="cc-message-action-button"
+                        t-att-disabled="switchHasBlockingWork"
+                        t-on-click="manageQuickReplies"
+                    ><i
+                            class="fa fa-cog"
+                            aria-hidden="true"
+                        /> Gerenciar respostas rápidas</button>
                     <label class="cc-productivity-search">
                         <i class="fa fa-search" aria-hidden="true" />
                         <span class="sr-only">Buscar resposta rápida</span>

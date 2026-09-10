@@ -407,8 +407,10 @@
         <field name="arch" type="xml">
             <tree decoration-muted="not active" default_order="sequence, id">
                 <field name="sequence" widget="handle" />
-                <field name="shortcode_id" />
+                <field name="shortcut" />
+                <field name="body" />
                 <field name="scope" />
+                <field name="owner_id" optional="show" />
                 <field name="company_id" invisible="1" />
                 <field name="company_id" groups="base.group_multi_company" />
                 <field name="team_id" optional="show" />
@@ -427,7 +429,10 @@
                 <sheet>
                     <group>
                         <group>
-                            <field name="shortcode_id" />
+                            <field name="shortcode_id" invisible="1" required="0" />
+                            <field name="shortcut" required="1" />
+                            <field name="body" required="1" />
+                            <field name="description" />
                             <field name="active" />
                             <field name="sequence" />
                         </group>
@@ -438,6 +443,12 @@
                                 groups="base.group_multi_company"
                             />
                             <field name="scope" />
+                            <field
+                                name="owner_id"
+                                attrs="{'invisible': [('scope', '!=', 'personal')], 'required': [('scope', '=', 'personal')]}"
+                                readonly="1"
+                                force_save="1"
+                            />
                             <field
                                 name="team_id"
                                 attrs="{'invisible': [('scope', '!=', 'team')], 'required': [('scope', '=', 'team')]}"
@@ -461,7 +472,7 @@
         id="action_contact_center_quick_reply_bindings"
         model="ir.actions.act_window"
     >
-        <field name="name">Quick Reply Scopes</field>
+        <field name="name">Respostas rápidas</field>
         <field name="res_model">contact.center.quick.reply.binding</field>
         <field name="view_mode">tree,form</field>
         <field name="context">{'search_default_active': 1}</field>

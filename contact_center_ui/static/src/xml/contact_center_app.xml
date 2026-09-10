@@ -148,6 +148,12 @@
                                         aria-hidden="true"
                                     />
                                 </button>
+                                <ConversationTags
+                                    t-if="store.capabilities.manage_tags"
+                                    t-key="selectedConversation.channel_id"
+                                    store="store"
+                                    conversation="selectedConversation"
+                                />
                             </div>
                         </header>
                         <ConversationTimeline store="store" state="store.state" />

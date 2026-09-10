@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<templates xml:space="preserve">
+    <t t-name="contact_center_ui.ConversationTags" owl="1">
+        <div class="cc-conversation-tags" t-ref="root" t-on-keydown="onKeydown">
+            <button
+                type="button"
+                class="cc-icon-button cc-conversation-tags__trigger"
+                t-ref="trigger"
+                aria-label="Marcadores da conversa"
+                aria-haspopup="dialog"
+                t-att-aria-controls="'cc-conversation-tags-' + props.conversation.channel_id"
+                title="Marcadores da conversa"
+                t-att-aria-expanded="local.open ? 'true' : 'false'"
+                t-on-click="toggle"
+            >
+                <i class="fa fa-tags" aria-hidden="true" />
+                <span
+                    t-if="selectedCount"
+                    class="cc-conversation-tags__count"
+                    t-esc="selectedCount"
+                />
+            </button>
+            <section
+                t-if="local.open"
+                class="cc-conversation-tags__panel"
+                role="dialog"
+                t-att-id="'cc-conversation-tags-' + props.conversation.channel_id"
+                aria-label="Marcadores da conversa"
+            >
+                <header><strong>Marcadores</strong><button
+                        type="button"
+                        aria-label="Fechar marcadores"
+                        t-on-click="() => this.close()"
+                    ><i class="fa fa-times" aria-hidden="true" /></button></header>
+                <form t-on-submit="createTag">
+                    <label class="cc-conversation-tags__search">
+                        <i class="fa fa-search" aria-hidden="true" />
+                        <span class="sr-only">Buscar ou cadastrar marcador</span>
+                        <input
+                            t-ref="search"
+                            type="search"
+                            maxlength="80"
+                            placeholder="Buscar marcador…"
+                            t-model="local.query"
+                        />
+                    </label>
+                    <p t-if="local.loading" role="status">Carregando marcadores…</p>
+                    <div t-else="" class="cc-conversation-tags__items">
+                        <button
+                            t-foreach="visibleTags"
+                            t-as="tag"
+                            t-key="tag.id"
+                            type="button"
+                            t-att-class="isSelected(tag.id) ? 'is-selected' : ''"
+                            t-att-aria-pressed="isSelected(tag.id) ? 'true' : 'false'"
+                            t-att-disabled="local.saving"
+                            t-on-click="() => this.toggleTag(tag.id)"
+                        >
+                            <span
+                                t-attf-class="cc-tag-color cc-tag-color--#{tag.color}"
+                                aria-hidden="true"
+                            />
+                            <span t-esc="tag.name" />
+                            <i
+                                t-if="isSelected(tag.id)"
+                                class="fa fa-check"
+                                aria-hidden="true"
+                            />
+                        </button>
+                        <p t-if="!visibleTags.length">Nenhum marcador encontrado.</p>
+                    </div>
+                    <p
+                        t-if="local.error"
+                        class="cc-conversation-tags__error"
+                        role="alert"
+                        t-esc="local.error"
+                    />
+                    <p t-if="local.notice" role="status" t-esc="local.notice" />
+                    <button
+                        t-if="canCreateName"
+                        type="submit"
+                        class="cc-conversation-tags__create"
+                        t-att-disabled="local.saving || local.loading"
+                    >
+                        <i class="fa fa-plus" aria-hidden="true" /> Cadastrar “<t
+                            t-esc="local.query.trim()"
+                        />”
+                    </button>
+                    <small
+                        t-if="local.canCreate &amp;&amp; !local.query.trim()"
+                    >Cadastre um nome para reutilizar em suas conversas. O cadastro não aplica o marcador.</small>
+                </form>
+            </section>
+        </div>
+    </t>
+</templates>

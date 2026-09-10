@@ -43,6 +43,7 @@ _QUICK_REPLY_SCOPE_PRIORITY = {
     "team": 1,
     "account": 2,
     "channel": 3,
+    "personal": 4,
 }
 
 _INTERNAL_NOTE_PROTECTED_MESSAGE_FIELDS = frozenset(
@@ -267,6 +268,30 @@ class ContactCenterQuickReplyBinding(models.Model):
         index=True,
         ondelete="restrict",
     )
+    shortcut = fields.Char(
+        related="shortcode_id.source",
+        string="Atalho",
+        readonly=False,
+        compute_sudo=False,
+    )
+    body = fields.Text(
+        related="shortcode_id.substitution",
+        string="Resposta",
+        readonly=False,
+        compute_sudo=False,
+    )
+    description = fields.Char(
+        related="shortcode_id.description",
+        string="Descrição",
+        readonly=False,
+        compute_sudo=False,
+    )
+    owner_id = fields.Many2one(
+        "res.users",
+        string="Proprietário",
+        index=True,
+        ondelete="restrict",
+    )
     company_id = fields.Many2one(
         "res.company",
         required=True,
@@ -276,13 +301,15 @@ class ContactCenterQuickReplyBinding(models.Model):
     )
     scope = fields.Selection(
         [
-            ("company", "Company"),
-            ("team", "Team"),
-            ("account", "Inbox"),
-            ("channel", "Conversation"),
+            ("personal", "Pessoal"),
+            ("company", "Empresa"),
+            ("team", "Equipe"),
+            ("account", "Caixa de entrada"),
+            ("channel", "Conversa"),
         ],
+        string="Disponível para",
         required=True,
-        default="company",
+        default="personal",
         index=True,
     )
     team_id = fields.Many2one(
@@ -329,7 +356,9 @@ class ContactCenterQuickReplyBinding(models.Model):
         ),
         (
             "scope_target_exact",
-            "CHECK((scope = 'company' AND team_id IS NULL AND account_id IS NULL "
+            "CHECK((scope = 'personal' AND owner_id IS NOT NULL AND team_id IS NULL "
+            "AND account_id IS NULL AND channel_id IS NULL) OR "
+            "(scope = 'company' AND team_id IS NULL AND account_id IS NULL "
             "AND channel_id IS NULL) OR (scope = 'team' AND team_id IS NOT NULL "
             "AND account_id IS NULL AND channel_id IS NULL) OR (scope = 'account' "
             "AND team_id IS NULL AND account_id IS NOT NULL AND channel_id IS NULL) "
@@ -337,14 +366,26 @@ class ContactCenterQuickReplyBinding(models.Model):
             "AND channel_id IS NOT NULL))",
             "Select exactly the target required by the quick reply scope.",
         ),
+        (
+            "scope_owner_exact",
+            "CHECK((scope = 'personal') = (owner_id IS NOT NULL))",
+            "Only a personal quick reply must have an owner.",
+        ),
     ]
 
     @api.depends(
-        "shortcode_id", "company_id", "scope", "team_id", "account_id", "channel_id"
+        "shortcode_id",
+        "company_id",
+        "scope",
+        "owner_id",
+        "team_id",
+        "account_id",
+        "channel_id",
     )
     def _compute_scope_key(self):
         for binding in self:
             target = {
+                "personal": binding.owner_id.id,
                 "company": binding.company_id.id,
                 "team": binding.team_id.id,
                 "account": binding.account_id.id,
@@ -360,6 +401,7 @@ class ContactCenterQuickReplyBinding(models.Model):
     @api.onchange("scope")
     def _onchange_scope(self):
         for binding in self:
+            binding.owner_id = self.env.user if binding.scope == "personal" else False
             if binding.scope != "team":
                 binding.team_id = False
             if binding.scope != "account":
@@ -368,7 +410,13 @@ class ContactCenterQuickReplyBinding(models.Model):
                 binding.channel_id = False
 
     @api.constrains(
-        "shortcode_id", "company_id", "scope", "team_id", "account_id", "channel_id"
+        "shortcode_id",
+        "company_id",
+        "scope",
+        "owner_id",
+        "team_id",
+        "account_id",
+        "channel_id",
     )
     def _check_scope(self):
         for binding in self:
@@ -379,10 +427,12 @@ class ContactCenterQuickReplyBinding(models.Model):
             }
             expected = selected.get(binding.scope)
             populated = [name for name, record in selected.items() if record]
-            if binding.scope == "company":
+            if binding.scope in ("company", "personal"):
                 if populated:
                     raise ValidationError(
-                        _("A company quick reply cannot target a narrower scope.")
+                        _(
+                            "A company or personal quick reply cannot target another scope."
+                        )
                     )
             elif not expected or populated != [binding.scope]:
                 raise ValidationError(
@@ -406,6 +456,150 @@ class ContactCenterQuickReplyBinding(models.Model):
                 raise ValidationError(
                     _("The quick reply conversation belongs to another scope.")
                 )
+            if binding.scope == "personal" and (
+                not binding.owner_id
+                or binding.owner_id.share
+                or binding.company_id not in binding.owner_id.company_ids
+            ):
+                raise ValidationError(
+                    _("Select an internal owner in the reply company.")
+                )
+            siblings = (
+                self.sudo()
+                .with_context(active_test=False)
+                .search(
+                    [
+                        ("shortcode_id", "=", binding.shortcode_id.id),
+                        ("id", "!=", binding.id),
+                    ],
+                )
+            )
+            if siblings and (
+                binding.scope == "personal" or "personal" in siblings.mapped("scope")
+            ):
+                raise ValidationError(
+                    _("A personal reply cannot share its native content.")
+                )
+
+    def _check_management(self):
+        if not self or self.env.su:
+            return
+        user = self.env.user
+        if not user.has_group("contact_center_base.group_contact_center_agent"):
+            raise AccessError(_("Contact Center agent access is required."))
+        administrator = user.has_group("contact_center_base.group_contact_center_admin")
+        supervisor = user.has_group(
+            "contact_center_base.group_contact_center_supervisor"
+        )
+        for binding in self:
+            if binding.company_id not in self.env.companies:
+                raise AccessError(
+                    _("The quick reply belongs to an unavailable company.")
+                )
+            if administrator:
+                continue
+            if binding.scope == "personal" and binding.owner_id == user:
+                continue
+            if (
+                supervisor
+                and binding.scope == "team"
+                and user in binding.team_id.supervisor_ids
+                and binding.team_id.company_id == binding.company_id
+            ):
+                continue
+            raise AccessError(
+                _("Manage only your personal replies or a team you supervise.")
+            )
+
+    @api.model
+    def default_get(self, field_names):
+        values = super().default_get(field_names)
+        if "owner_id" in field_names and values.get("scope", "personal") == "personal":
+            values.setdefault("owner_id", self.env.uid)
+        return values
+
+    @api.model_create_multi
+    def create(self, values_list):
+        prepared = []
+        for incoming in values_list:
+            values = dict(incoming)
+            values.setdefault("company_id", self.env.company.id)
+            values.setdefault("scope", "personal")
+            values.setdefault(
+                "owner_id", self.env.uid if values["scope"] == "personal" else False
+            )
+            self.new(values)._check_management()
+            if values.get("shortcode_id"):
+                if not self.env.su and not self.env.user.has_group(
+                    "contact_center_base.group_contact_center_admin"
+                ):
+                    raise AccessError(
+                        _("Create a reply instead of linking existing native content.")
+                    )
+            else:
+                shortcut = _plain_text(
+                    values.pop("shortcut", ""), _("shortcut"), 100
+                ).strip()
+                body = _plain_text(
+                    values.pop("body", ""), _("quick reply"), _MAX_NOTE_CHARS
+                )
+                if not shortcut or not body.strip():
+                    raise ValidationError(_("A shortcut and reply text are required."))
+                shortcode = self.env["mail.shortcode"].create(
+                    {
+                        "source": shortcut,
+                        "substitution": body,
+                        "description": values.pop("description", False),
+                    }
+                )
+                values["shortcode_id"] = shortcode.id
+            prepared.append(values)
+        return super().create(prepared)
+
+    def write(self, values):
+        self._check_management()
+        if {"shortcut", "body", "description"}.intersection(values):
+            self.shortcode_id._contact_center_check_content_management()
+        for binding in self:
+            candidate = {
+                name: values.get(
+                    name, binding[name].id if name.endswith("_id") else binding[name]
+                )
+                for name in (
+                    "company_id",
+                    "scope",
+                    "owner_id",
+                    "team_id",
+                    "account_id",
+                    "channel_id",
+                )
+            }
+            self.new(candidate)._check_management()
+            if (
+                values.get("shortcode_id", binding.shortcode_id.id)
+                != binding.shortcode_id.id
+            ):
+                raise AccessError(
+                    _("The native content of a managed reply cannot be replaced.")
+                )
+        return super().write(values)
+
+    def unlink(self):
+        self._check_management()
+        personal_content = self.filtered(
+            lambda binding: binding.scope == "personal"
+        ).shortcode_id
+        result = super().unlink()
+        for shortcode in personal_content:
+            if (
+                not self.sudo()
+                .with_context(active_test=False)
+                .search_count([("shortcode_id", "=", shortcode.id)])
+            ):
+                shortcode.with_context(
+                    contact_center_personal_reply_deletion_token=_PRODUCTIVITY_SERVICE_TOKEN
+                ).unlink()
+        return result
 
 
 class ContactCenterScheduledMessage(models.Model):
@@ -768,10 +962,60 @@ class ContactCenterUiApiProductivity(models.AbstractModel):
         result["capabilities"].update(
             {
                 "quick_replies": True,
+                "manage_quick_replies": True,
+                "create_tags": self.env.user.has_group(
+                    "contact_center_base.group_contact_center_supervisor"
+                )
+                and self.env["contact.center.tag"].check_access_rights(
+                    "create", raise_exception=False
+                ),
                 "internal_notes": True,
                 "scheduled_messages": True,
             }
         )
+        return result
+
+    @api.model
+    def conversation_tag_catalog(self, channel_id):
+        channel, _member = self._authorized_channel(channel_id)
+        tags = self.env["contact.center.tag"].search(
+            [("company_id", "=", channel.contact_center_company_id.id)],
+            order="name, id",
+        )
+        return {
+            "items": [
+                {"id": tag.id, "name": tag.name, "color": tag.color} for tag in tags
+            ],
+            "can_create": self.env.user.has_group(
+                "contact_center_base.group_contact_center_supervisor"
+            )
+            and self.env["contact.center.tag"].check_access_rights(
+                "create", raise_exception=False
+            ),
+        }
+
+    @api.model
+    def create_conversation_tag(self, channel_id, name, color=0):
+        """Register a reusable company tag without changing any conversation."""
+        channel, _member = self._authorized_channel(channel_id)
+        if not self.env.user.has_group(
+            "contact_center_base.group_contact_center_supervisor"
+        ):
+            raise AccessError(_("Only a Contact Center supervisor can create tags."))
+        if not isinstance(name, str) or not name.strip() or len(name.strip()) > 100:
+            raise ValidationError(_("Enter a tag name of at most 100 characters."))
+        name = name.strip()
+        if type(color) is not int or not 0 <= color <= 11:
+            raise ValidationError(_("Enter a tag name and a color between 0 and 11."))
+        tag = self.env["contact.center.tag"].create(
+            {
+                "name": name,
+                "color": color,
+                "company_id": channel.contact_center_company_id.id,
+            }
+        )
+        result = self.conversation_tag_catalog(channel.id)
+        result["created_id"] = tag.id
         return result
 
     @api.model
@@ -834,6 +1078,7 @@ class ContactCenterUiApiProductivity(models.AbstractModel):
                 ]
             )
         target_by_scope = {
+            "personal": ("owner_id", self.env.user.ids),
             "company": ("company_id", channel.contact_center_company_id.ids),
             "team": ("team_id", channel.contact_center_access_team_ids.ids),
             "account": ("account_id", channel_binding.account_id.ids),
@@ -848,6 +1093,7 @@ class ContactCenterUiApiProductivity(models.AbstractModel):
                     [
                         [
                             ("active", "=", True),
+                            ("company_id", "=", channel.contact_center_company_id.id),
                             ("scope", "=", scope),
                             (target_field, "in", target_ids),
                         ],

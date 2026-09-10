@@ -1,7 +1,11 @@
 /** @odoo-module **/
 
 import {Component, onWillDestroy, useEffect, useRef, useState} from "@odoo/owl";
-import {MessageContent, controlTimelineMessageMeta} from "./message_content.esm";
+import {
+    MessageContent,
+    controlTimelineMessageMeta,
+    downloadableMessageMedia,
+} from "./message_content.esm";
 import {
     compareTimelineItems,
     conversationUiPolicy,
@@ -480,11 +484,16 @@ export class ConversationTimeline extends Component {
     hasActions(message) {
         return (
             sourceWebhookActionEnabled(this.store.capabilities, message) ||
+            downloadableMessageMedia(message).length > 0 ||
             (!isControlTimelineMessage(message) &&
                 ["reply", "react", "edit", "delete"].some((action) =>
                     this.messageActionAllowed(message, action)
                 ))
         );
+    }
+
+    mediaDownloads(message) {
+        return downloadableMessageMedia(message);
     }
 
     canViewSourceWebhook(message) {

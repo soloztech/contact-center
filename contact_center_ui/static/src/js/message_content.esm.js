@@ -171,6 +171,45 @@ export function viewableMediaItems(mediaItems) {
     return mediaItems.map(sanitizedViewerItem).filter(Boolean);
 }
 
+export function downloadableMessageMedia(message) {
+    if (
+        !message ||
+        (message.is_deleted && message.deleted_content_visible !== true) ||
+        controlTimelineMessageMeta(message) ||
+        !Array.isArray(message.media)
+    ) {
+        return [];
+    }
+    const seen = new Set();
+    return message.media.flatMap((media) => {
+        if (
+            !media ||
+            media.state !== "ready" ||
+            !Object.prototype.hasOwnProperty.call(MEDIA_LABELS, media.kind) ||
+            !Number.isSafeInteger(media.id) ||
+            media.id <= 0 ||
+            localMediaContentId(media.content_url) !== media.id ||
+            seen.has(media.id)
+        ) {
+            return [];
+        }
+        seen.add(media.id);
+        return [
+            {
+                id: media.id,
+                name:
+                    typeof media.name === "string" && media.name.trim()
+                        ? media.name.trim().slice(0, 240)
+                        : MEDIA_LABELS[media.kind],
+                download_url:
+                    localMediaId(media.download_url) === media.id
+                        ? media.download_url
+                        : `${media.content_url}?download=1`,
+            },
+        ];
+    });
+}
+
 export class MediaViewer extends Component {
     setup() {
         const startIndex = Number.isInteger(this.props.startIndex)
@@ -291,13 +330,18 @@ export class AudioPlayer extends Component {
             : this.media.name || "Áudio";
     }
 
-    get meta() {
-        return [
-            this.media.is_voice_note ? "Áudio do WhatsApp" : "Arquivo de áudio",
-            formatFileSize(this.media.size_bytes),
-        ]
-            .filter(Boolean)
-            .join(" · ");
+    get timeLabel() {
+        return formatAudioTime(
+            this.state.playing || this.state.currentTime > 0
+                ? this.state.currentTime
+                : this.state.duration
+        );
+    }
+
+    get positionLabel() {
+        return `${formatAudioTime(this.state.currentTime)} de ${formatAudioTime(
+            this.state.duration
+        )}`;
     }
 
     get waveform() {
@@ -450,10 +494,6 @@ export class MessageContent extends Component {
 
     contentUrl(media) {
         return media.content_url || "";
-    }
-
-    downloadUrl(media) {
-        return media.download_url || media.content_url || "";
     }
 
     isViewablePdf(media) {

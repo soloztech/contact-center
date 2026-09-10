@@ -140,13 +140,7 @@
                     </span>
                     <i class="fa fa-expand" aria-hidden="true" />
                 </button>
-                <a
-                    t-else=""
-                    class="cc-media-document"
-                    t-att-href="downloadUrl(media)"
-                    t-att-download="fileLabel(media)"
-                    t-att-aria-label="'Baixar ' + fileLabel(media)"
-                >
+                <div t-else="" class="cc-media-document cc-media-document--file">
                     <span class="cc-media-document__icon" aria-hidden="true">
                         <i class="fa fa-file-o" />
                     </span>
@@ -154,18 +148,7 @@
                         <strong t-esc="fileLabel(media)" />
                         <small t-esc="fileMeta(media)" />
                     </span>
-                    <i class="fa fa-download" aria-hidden="true" />
-                </a>
-                <a
-                    t-if="['image', 'video'].includes(media.kind) &amp;&amp; downloadUrl(media)"
-                    class="cc-media-download"
-                    t-att-href="downloadUrl(media)"
-                    t-att-download="fileLabel(media)"
-                    t-att-aria-label="'Baixar ' + fileLabel(media)"
-                    title="Baixar arquivo"
-                >
-                    <i class="fa fa-download" aria-hidden="true" />
-                </a>
+                </div>
             </div>
         </div>
         <p t-if="message.body_text" t-esc="message.body_text" />
@@ -385,7 +368,13 @@
     </t>
 
     <t t-name="contact_center_ui.AudioPlayer" owl="1">
-        <div class="cc-audio-player" t-att-class="{ 'is-error': state.error }">
+        <div
+            class="cc-audio-player"
+            t-att-class="{ 'is-error': state.error }"
+            role="group"
+            t-att-aria-label="label"
+            t-att-title="label"
+        >
             <button
                 type="button"
                 class="cc-audio-player__play"
@@ -399,17 +388,6 @@
                 />
             </button>
             <div class="cc-audio-player__main">
-                <div class="cc-audio-player__heading">
-                    <span>
-                        <strong t-esc="label" />
-                        <small t-esc="meta" />
-                    </span>
-                    <time>
-                        <t t-esc="formatTime(state.currentTime)" />
-                        <span aria-hidden="true"> / </span>
-                        <t t-esc="formatTime(state.duration)" />
-                    </time>
-                </div>
                 <div class="cc-audio-scrub">
                     <span class="cc-audio-wave" aria-hidden="true">
                         <i
@@ -420,6 +398,11 @@
                             t-att-style="'height: ' + height + '%'"
                         />
                     </span>
+                    <span
+                        class="cc-audio-scrub__thumb"
+                        t-att-style="'left: ' + progressRatio * 100 + '%'"
+                        aria-hidden="true"
+                    />
                     <input
                         type="range"
                         min="0"
@@ -427,8 +410,17 @@
                         t-att-max="state.duration || 1"
                         t-att-value="state.currentTime"
                         t-att-disabled="!state.duration || state.error"
+                        t-att-aria-valuetext="positionLabel"
                         aria-label="Posição do áudio"
                         t-on-input="onSeek"
+                    />
+                </div>
+                <div class="cc-audio-player__footer">
+                    <time t-att-aria-label="positionLabel" t-esc="timeLabel" />
+                    <i
+                        t-if="media.is_voice_note"
+                        class="fa fa-microphone"
+                        aria-hidden="true"
                     />
                 </div>
                 <span
@@ -444,15 +436,6 @@
                 t-att-title="'Velocidade ' + state.rate + 'x'"
                 t-on-click="cycleRate"
             ><t t-esc="state.rate" />x</button>
-            <a
-                class="cc-audio-player__download"
-                t-att-href="media.download_url || media.content_url"
-                t-att-download="media.name || label"
-                t-att-aria-label="'Baixar ' + label"
-                title="Baixar áudio"
-            >
-                <i class="fa fa-download" aria-hidden="true" />
-            </a>
             <audio
                 class="cc-audio-player__element"
                 t-ref="audio"

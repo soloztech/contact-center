@@ -1,6 +1,6 @@
 /** @odoo-module **/
 
-import {Component, onWillDestroy, useRef, useState} from "@odoo/owl";
+import {Component, onWillDestroy, useEffect, useRef, useState} from "@odoo/owl";
 import {
     conversationAvatarUrl,
     conversationDisplayName,
@@ -235,6 +235,8 @@ export class ConversationList extends Component {
     setup() {
         this.searchRef = useRef("search");
         this.viewportRef = useRef("viewport");
+        this.filterToggleRef = useRef("filterToggle");
+        this.filterPanelRef = useRef("filterPanel");
         this.lastScrollTop = 0;
         this.paginationPending = false;
         this.paginationFrame = false;
@@ -244,16 +246,27 @@ export class ConversationList extends Component {
             pendingConversationIds: {},
             view: "grouped",
             collapsedInboxes: {},
-            compactToolsOpen: false,
+            filtersOpen: false,
         });
         this.onWindowKeydown = (event) => this.onShortcut(event);
+        this.onWindowPointerdown = (event) => this.onFilterOutsidePointerdown(event);
         window.addEventListener("keydown", this.onWindowKeydown);
+        window.addEventListener("pointerdown", this.onWindowPointerdown);
+        useEffect(
+            () => {
+                if (this.ui.filtersOpen && this.filterPanelRef.el) {
+                    this.filterPanelRef.el.focus();
+                }
+            },
+            () => [this.ui.filtersOpen]
+        );
         onWillDestroy(() => {
             this.destroyed = true;
             if (this.paginationFrame) {
                 browser.cancelAnimationFrame(this.paginationFrame);
             }
             window.removeEventListener("keydown", this.onWindowKeydown);
+            window.removeEventListener("pointerdown", this.onWindowPointerdown);
         });
     }
 
@@ -336,6 +349,59 @@ export class ConversationList extends Component {
 
     get densityButtonLabel() {
         return this.compactMode ? "Expandir lista" : "Usar lista compacta";
+    }
+
+    get activeFilterCount() {
+        const filters = this.state.filters;
+        return [
+            filters.states.length > 0,
+            Boolean(filters.accountId),
+            filters.responsibility !== "all",
+            filters.unreadOnly,
+            Boolean(filters.conversationType),
+            Boolean(filters.tagId),
+            Boolean(filters.activityTiming),
+        ].filter(Boolean).length;
+    }
+
+    get filterSummary() {
+        const selected = this.state.filters.states;
+        return selected.length
+            ? this.store.conversationStates
+                  .filter((item) => selected.includes(item.key))
+                  .map((item) => item.label)
+                  .join(", ")
+            : "Todos os estados";
+    }
+
+    toggleFilters() {
+        if (this.ui.filtersOpen) {
+            this.closeFilters();
+        } else {
+            this.ui.filtersOpen = true;
+        }
+    }
+
+    closeFilters(restoreFocus = true) {
+        this.ui.filtersOpen = false;
+        if (restoreFocus && this.filterToggleRef.el) {
+            this.filterToggleRef.el.focus();
+        }
+    }
+
+    onFilterOutsidePointerdown(event) {
+        if (
+            this.ui.filtersOpen &&
+            this.filterPanelRef.el &&
+            !this.filterPanelRef.el.contains(event.target) &&
+            !this.filterToggleRef.el.contains(event.target)
+        ) {
+            this.closeFilters(false);
+        }
+    }
+
+    clearFilters() {
+        return this.store.clearConversationFilters();
     }
 
     initials(name) {
@@ -526,15 +592,22 @@ export class ConversationList extends Component {
     }
 
     onShortcut(event) {
+        if (this.ui.filtersOpen) {
+            if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                this.closeFilters();
+                return true;
+            }
+            // Do not navigate the conversation list while editing its filters.
+            return false;
+        }
         const shortcut = conversationListShortcut(event);
         if (!shortcut) {
             return false;
         }
         event.preventDefault();
         if (shortcut === "search") {
-            if (this.compactMode) {
-                this.ui.compactToolsOpen = true;
-            }
             if (this.searchRef.el) {
                 this.searchRef.el.focus();
             }
@@ -550,12 +623,8 @@ export class ConversationList extends Component {
     }
 
     toggleDensity() {
-        this.ui.compactToolsOpen = false;
+        this.closeFilters(false);
         this.store.toggleInboxDensity();
-    }
-
-    toggleCompactTools() {
-        this.ui.compactToolsOpen = !this.ui.compactToolsOpen;
     }
 
     inboxCollapsed(key) {

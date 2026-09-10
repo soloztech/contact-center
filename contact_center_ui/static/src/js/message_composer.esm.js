@@ -16,8 +16,6 @@ import {
     normalizeMessageMedia,
     validateMediaFile,
 } from "./contact_center_model.esm";
-import {deserializeDateTime} from "@web/core/l10n/dates";
-import {session} from "@web/session";
 import {
     STRUCTURED_ACTION_LABELS,
     STRUCTURED_CONTENT_LABELS,
@@ -26,6 +24,9 @@ import {
     outboundStructuredCapabilities,
     structuredDraftSubmission,
 } from "./structured_content.esm";
+import {deserializeDateTime} from "@web/core/l10n/dates";
+import {session} from "@web/session";
+import {useService} from "@web/core/utils/hooks";
 
 const {DateTime} = luxon;
 
@@ -369,6 +370,7 @@ export function composerHint(conversation, bootstrap) {
 
 export class MessageComposer extends Component {
     setup() {
+        this.action = useService("action");
         this.inputRef = useRef("input");
         this.fileRef = useRef("file");
         this.voiceCancelRef = useRef("voiceCancel");
@@ -1363,6 +1365,22 @@ export class MessageComposer extends Component {
             return this.store.searchQuickReplies(this.local.quickReplyQuery);
         }
         return this.store.loadProductivity({force: true});
+    }
+
+    manageQuickReplies() {
+        if (this.switchHasBlockingWork) {
+            return false;
+        }
+        return this.action.doAction({
+            type: "ir.actions.act_window",
+            name: "Respostas rápidas",
+            res_model: "contact.center.quick.reply.binding",
+            views: [
+                [false, "list"],
+                [false, "form"],
+            ],
+            target: "new",
+        });
     }
 
     onQuickReplySearch(event) {

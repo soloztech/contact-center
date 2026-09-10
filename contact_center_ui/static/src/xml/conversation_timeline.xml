@@ -374,6 +374,20 @@
                     <i class="fa fa-file-code-o" aria-hidden="true" />
                     Ver webhook de origem
                 </button>
+                <a
+                    t-foreach="mediaDownloads(message)"
+                    t-as="media"
+                    t-key="media.id"
+                    role="menuitem"
+                    class="cc-message-menu__download"
+                    t-att-href="media.download_url"
+                    t-att-download="media.name"
+                    t-att-title="'Baixar ' + media.name"
+                    t-on-click="closeActions"
+                >
+                    <i class="fa fa-download" aria-hidden="true" />
+                    <span>Baixar <t t-esc="media.name" /></span>
+                </a>
                 <button
                     t-if="messageActionAllowed(message, 'delete')"
                     type="button"
