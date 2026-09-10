@@ -267,6 +267,54 @@ class TestWuzapiAdapter(WuzapiCase):
         )
         self.assertEqual(self.connection.wuzapi_own_identity_json, before)
 
+    @mock.patch(REQUEST_PATCH)
+    def test_health_records_own_lid_from_the_authenticated_session(self, request):
+        self.account.own_external_identity = "5511888888888:12@s.whatsapp.net"
+        request.side_effect = [
+            FakeResponse(
+                200,
+                {
+                    "success": True,
+                    "data": {
+                        "connected": True,
+                        "loggedIn": True,
+                        "jid": "5511888888888:12@s.whatsapp.net",
+                    },
+                },
+            ),
+            FakeResponse(
+                200,
+                {
+                    "success": True,
+                    "data": {
+                        "jid": "5511888888888@s.whatsapp.net",
+                        "lid": "200000000000002@lid",
+                    },
+                },
+            ),
+        ]
+        health = self.adapter.get_health(self.connection)
+        self.connection._apply_health_result(health, records_health_probe=True)
+        self.assertEqual(
+            self.connection.wuzapi_own_identity_json,
+            {
+                "jid": "5511888888888@s.whatsapp.net",
+                "lid": "200000000000002@lid",
+                "configuration_revision": self.connection.health_configuration_revision,
+            },
+        )
+        self.assertEqual(
+            request.call_args.args,
+            (
+                "GET",
+                "https://wuzapi.invalid/user/lid/5511888888888@s.whatsapp.net",
+            ),
+        )
+        self.assertEqual(
+            request.call_args.kwargs["headers"]["Token"],
+            self.connection.wuzapi_api_token,
+        )
+
     def _command(
         self,
         reply_to=None,
@@ -4869,6 +4917,6 @@ class TestWuzapiAdapter(WuzapiCase):
 
         self.assertEqual(health["state"], "connected")
         self.assertIs(health["identity_matches"], True)
-        args, kwargs = request.call_args
+        args, kwargs = request.call_args_list[0]
         self.assertEqual(args, ("GET", "https://rotated.wuzapi.invalid/session/status"))
         self.assertEqual(kwargs["headers"]["Token"], "rotated-api-token")
