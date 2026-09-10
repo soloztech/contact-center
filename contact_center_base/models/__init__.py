@@ -1,3 +1,8 @@
+# The UI API must exist before its in-module model extensions are registered.
+from . import ui_api
+
+# isort: split
+
 from . import (
     account,
     application,
@@ -25,5 +30,4 @@ from . import (
     read_receipt,
     resolution,
     start_conversation,
-    ui_api,
 )
