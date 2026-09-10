@@ -3,7 +3,8 @@ import uuid
 from unittest import mock
 
 from odoo.exceptions import AccessError, ValidationError
-from odoo.tests.common import SavepointCase
+from odoo.tests import tagged
+from odoo.tests.common import SavepointCase, TransactionCase
 from odoo.tools import html2plaintext
 
 from ..services.adapter import ProviderAdapter, adapter_registry
@@ -158,7 +159,7 @@ class TestContactCenterResolution(SavepointCase):
     def _reopen_notes(self, channel):
         return self._notes(channel).filtered(
             lambda note: html2plaintext(note.message_id.body).strip()
-            == "Conversa reaberta por nova mensagem do cliente."
+            == "Conversation reopened by a new customer message."
         )
 
     def test_resolution_creates_one_internal_audit_note_and_no_customer_traffic(self):
@@ -481,3 +482,31 @@ class TestContactCenterResolution(SavepointCase):
             self.env.ref("contact_center_base.group_contact_center_supervisor"),
             menu.groups_id,
         )
+
+
+@tagged("-at_install", "post_install")
+class TestContactCenterSourceTranslations(TransactionCase):
+    def test_portuguese_labels_and_validation_survive_english_source_messages(self):
+        self.env["res.lang"]._activate_lang("pt_BR")
+        self.env["ir.module.module"].search(
+            [("name", "=", "contact_center_base")]
+        )._update_translations(["pt_BR"], overwrite=True)
+        reasons = self.env["contact.center.resolution.reason"]
+        self.assertEqual(
+            reasons.with_context(lang="en_US").fields_get(["name"])["name"]["string"],
+            "Reason",
+        )
+        self.assertEqual(
+            reasons.with_context(lang="pt_BR").fields_get(["name"])["name"]["string"],
+            "Motivo",
+        )
+        for language, expected in (
+            ("en_US", "Enter a reason of up to 120 characters."),
+            ("pt_BR", "Informe um motivo de até 120 caracteres."),
+        ):
+            with self.assertRaisesRegex(ValidationError, expected), self.cr.savepoint():
+                reasons.with_context(lang=language).create({"name": "x" * 121})
+        action = self.env.ref(
+            "contact_center_base.action_contact_center_resolution_reasons"
+        )
+        self.assertEqual(action.with_context(lang="pt_BR").name, "Motivos de resolução")

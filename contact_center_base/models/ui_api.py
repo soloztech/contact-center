@@ -811,6 +811,40 @@ class ContactCenterUiApi(models.AbstractModel):
         }
 
     @api.model
+    def _visible_secondary_companies(self, identity, partner):
+        if not partner or identity.partner_link_kind != "person":
+            return self.env["res.partner"]
+        return (
+            self.env["res.partner"]
+            .with_context(active_test=False)
+            .search(
+                [
+                    (
+                        "id",
+                        "in",
+                        partner.sudo().contact_center_secondary_company_ids.ids,
+                    ),
+                    ("is_company", "=", True),
+                    ("type", "=", "contact"),
+                    ("company_id", "in", [False, identity.company_id.id]),
+                ],
+                order="name, id",
+            )
+        )
+
+    @api.model
+    def _partner_company_management_allowed(self, identity, partner):
+        return bool(
+            partner
+            and identity.partner_link_kind == "person"
+            and partner.active
+            and not partner.is_company
+            and partner.type == "contact"
+            and partner.company_id == identity.company_id
+            and not self._partner_has_internal_user(partner)
+        )
+
+    @api.model
     def _visible_partner_company(self, identity, partner):
         company_id = partner.sudo().parent_id.id
         if not company_id:
@@ -879,24 +913,33 @@ class ContactCenterUiApi(models.AbstractModel):
             if identity.partner_id
         }
         parent_ids = list(set(parent_id_by_identity.values()) - {False})
+        secondary_ids_by_partner = {
+            partner.id: partner.sudo().contact_center_secondary_company_ids.ids
+            for partner in partners
+        }
+        all_company_ids = set(parent_ids)
+        for secondary_ids in secondary_ids_by_partner.values():
+            all_company_ids.update(secondary_ids)
         company_ids = identities.mapped("company_id").ids
         visible_companies = (
             self.env["res.partner"]
             .with_context(active_test=False)
             .search(
                 [
-                    ("id", "in", parent_ids),
+                    ("id", "in", sorted(all_company_ids)),
                     ("is_company", "=", True),
                     ("type", "=", "contact"),
                     ("company_id", "in", [False] + company_ids),
                 ]
             )
-            if parent_ids
+            if all_company_ids
             else empty_company
         )
         visible_by_id = {company.id: company for company in visible_companies}
         company_by_identity = {}
         linking_allowed_by_identity = {}
+        management_allowed_by_identity = {}
+        secondary_by_identity = {}
         for identity in identities:
             partner = identity.partner_id
             company = visible_by_id.get(parent_id_by_identity.get(identity.id))
@@ -907,17 +950,29 @@ class ContactCenterUiApi(models.AbstractModel):
             ):
                 company = empty_company
             company_by_identity[identity.id] = company or empty_company
-            linking_allowed_by_identity[identity.id] = bool(
+            management_allowed_by_identity[identity.id] = bool(
                 partner
                 and identity.partner_link_kind == "person"
                 and partner.active
                 and not partner.is_company
                 and partner.type == "contact"
                 and partner.company_id == identity.company_id
-                and not parent_id_by_identity.get(identity.id)
                 and partner.id not in internal_user_partner_ids
             )
-        return company_by_identity, linking_allowed_by_identity
+            linking_allowed_by_identity[identity.id] = bool(
+                management_allowed_by_identity[identity.id]
+                and not parent_id_by_identity.get(identity.id)
+            )
+            secondary_by_identity[identity.id] = visible_companies.filtered(
+                lambda item: item.id in secondary_ids_by_partner.get(partner.id, [])
+                and (not item.company_id or item.company_id == identity.company_id)
+            ).sorted(lambda item: (item.name or "", item.id))
+        return (
+            company_by_identity,
+            linking_allowed_by_identity,
+            secondary_by_identity,
+            management_allowed_by_identity,
+        )
 
     @api.model
     def _serialize_identity(
@@ -926,6 +981,8 @@ class ContactCenterUiApi(models.AbstractModel):
         binding=None,
         partner_company=None,
         company_linking_allowed=None,
+        secondary_companies=None,
+        company_management_allowed=None,
     ):
         if not identity:
             return False
@@ -937,6 +994,12 @@ class ContactCenterUiApi(models.AbstractModel):
             )
         if company_linking_allowed is None:
             company_linking_allowed = self._partner_company_linking_allowed(
+                identity, partner
+            )
+        if secondary_companies is None:
+            secondary_companies = self._visible_secondary_companies(identity, partner)
+        if company_management_allowed is None:
+            company_management_allowed = self._partner_company_management_allowed(
                 identity, partner
             )
         # The caller has already authorized the channel/member scope. Technical
@@ -985,6 +1048,15 @@ class ContactCenterUiApi(models.AbstractModel):
                     "is_company": bool(partner.is_company),
                     "company_linking_allowed": bool(company_linking_allowed),
                     "company": self._serialize_partner_company(partner_company),
+                    "secondary_companies": [
+                        self._serialize_partner_company(company)
+                        for company in secondary_companies
+                    ],
+                    "company_management_allowed": bool(company_management_allowed),
+                    "secondary_company_linking_allowed": bool(
+                        company_management_allowed
+                        and identity.company_id.contact_center_secondary_companies_enabled
+                    ),
                 }
                 if partner
                 else False
@@ -1443,6 +1515,8 @@ class ContactCenterUiApi(models.AbstractModel):
                 binding=binding,
                 partner_company=prefetched["partner_company"],
                 company_linking_allowed=prefetched["company_linking_allowed"],
+                secondary_companies=prefetched["secondary_companies"],
+                company_management_allowed=prefetched["company_management_allowed"],
             )
             if "partner_company" in prefetched
             else self._serialize_identity(identity, binding=binding)
@@ -1931,6 +2005,8 @@ class ContactCenterUiApi(models.AbstractModel):
         (
             partner_company_by_identity,
             company_linking_allowed_by_identity,
+            secondary_companies_by_identity,
+            company_management_allowed_by_identity,
         ) = self._batch_partner_company_projection(bindings.mapped("identity_id"))
         members = self.env["mail.channel.member"].search(
             [
@@ -2028,6 +2104,8 @@ class ContactCenterUiApi(models.AbstractModel):
             "last_outbox_by_binding": last_outbox_by_binding,
             "group_profile_by_binding": group_profile_by_binding,
             "partner_company_by_identity": partner_company_by_identity,
+            "secondary_companies_by_identity": secondary_companies_by_identity,
+            "company_management_allowed_by_identity": company_management_allowed_by_identity,
             "company_linking_allowed_by_identity": (
                 company_linking_allowed_by_identity
             ),
@@ -2110,6 +2188,14 @@ class ContactCenterUiApi(models.AbstractModel):
                             if binding and binding.identity_id
                             else False
                         ),
+                        "secondary_companies": prefetched[
+                            "secondary_companies_by_identity"
+                        ].get(
+                            binding.identity_id.id if binding else False, empty_partner
+                        ),
+                        "company_management_allowed": prefetched[
+                            "company_management_allowed_by_identity"
+                        ].get(binding.identity_id.id if binding else False, False),
                     },
                 )
             )
@@ -2976,6 +3062,7 @@ class ContactCenterUiApi(models.AbstractModel):
                     "type",
                     "company_id",
                     "parent_id",
+                    "contact_center_secondary_company_ids",
                     "user_ids",
                 ]
             )
@@ -3248,26 +3335,57 @@ class ContactCenterUiApi(models.AbstractModel):
 
     @api.model
     def search_partner_companies(
-        self, channel_id, expected_partner_id, query, limit=12
+        self, channel_id, expected_partner_id, query, limit=12, relation_kind="primary"
     ):
         channel, _member = self._authorized_channel(channel_id)
         _identity, person = self._linked_person_for_company(
             channel, expected_partner_id
         )
-        if person.parent_id or not isinstance(query, str) or len(query.strip()) < 2:
+        self._check_partner_company_relation_kind(channel, relation_kind)
+        if (
+            (relation_kind == "primary" and person.parent_id)
+            or not isinstance(query, str)
+            or len(query.strip()) < 2
+        ):
             return {"schema_version": SCHEMA_VERSION, "items": []}
         query = query.strip()[:100]
         limit = self._bounded_int(
             limit, default=12, minimum=1, maximum=30, label=_("limit")
         )
-        return {
-            "schema_version": SCHEMA_VERSION,
-            "items": self._search_partner_company_items(channel, query, limit),
-        }
+        items = self._search_partner_company_items(channel, query, limit)
+        if relation_kind == "secondary":
+            existing_ids = set(
+                person.contact_center_secondary_company_ids.ids + person.parent_id.ids
+            )
+            items = [item for item in items if item["id"] not in existing_ids]
+        return {"schema_version": SCHEMA_VERSION, "items": items}
 
     @api.model
-    def link_partner_company(self, channel_id, expected_partner_id, company_partner_id):
+    def _check_partner_company_relation_kind(self, channel, relation_kind):
+        if relation_kind not in ("primary", "secondary"):
+            raise ValidationError(
+                _("Select a primary or secondary company relationship.")
+            )
+        if (
+            relation_kind == "secondary"
+            and not channel.contact_center_company_id.contact_center_secondary_companies_enabled
+        ):
+            raise ValidationError(
+                _(
+                    "Secondary company relationships are disabled in Contact Center settings."
+                )
+            )
+
+    @api.model
+    def link_partner_company(
+        self,
+        channel_id,
+        expected_partner_id,
+        company_partner_id,
+        relation_kind="primary",
+    ):
         channel, _member = self._authorized_channel(channel_id)
+        self._check_partner_company_relation_kind(channel, relation_kind)
         company_partner_id = self._positive_id(company_partner_id, _("company ID"))
         # Authorize the person before resolving the supplied company, then lock
         # company -> identity -> person. Core partner field synchronization uses
@@ -3279,13 +3397,26 @@ class ContactCenterUiApi(models.AbstractModel):
         identity, person = self._linked_person_for_company(
             channel, expected_partner_id, lock=True
         )
-        if person.parent_id and person.parent_id.id != company_partner_id:
+        if relation_kind == "secondary":
+            if person.parent_id == company:
+                raise ValidationError(_("This company is already the primary company."))
+            if company not in person.contact_center_secondary_company_ids:
+                person.sudo().write(
+                    {"contact_center_secondary_company_ids": [(4, company.id)]}
+                )
+                self._notify_partner_identities(person)
+        elif person.parent_id and person.parent_id.id != company_partner_id:
             raise ValidationError(_("This contact already belongs to another company."))
-        if not person.parent_id:
+        elif not person.parent_id:
             # This is the standard Odoo person -> commercial entity relation.
             # The narrow sudo is intentional: agents have partner read access,
             # while the channel, person and target company were checked above.
-            person.sudo().write({"parent_id": company.id})
+            person.sudo().write(
+                {
+                    "parent_id": company.id,
+                    "contact_center_secondary_company_ids": [(3, company.id)],
+                }
+            )
             person.invalidate_recordset(["parent_id", "display_name"])
             self._notify_partner_identities(person)
         return {
@@ -3297,14 +3428,17 @@ class ContactCenterUiApi(models.AbstractModel):
         }
 
     @api.model
-    def create_and_link_partner_company(self, channel_id, expected_partner_id, values):
+    def create_and_link_partner_company(
+        self, channel_id, expected_partner_id, values, relation_kind="primary"
+    ):
         channel, _member = self._authorized_channel(channel_id)
+        self._check_partner_company_relation_kind(channel, relation_kind)
         company_values = self._company_creation_values(channel, values)
 
         identity, person = self._linked_person_for_company(
             channel, expected_partner_id, lock=True
         )
-        if person.parent_id:
+        if relation_kind == "primary" and person.parent_id:
             raise ValidationError(_("This contact already belongs to a company."))
         company = (
             self.env["res.partner"]
@@ -3312,12 +3446,73 @@ class ContactCenterUiApi(models.AbstractModel):
             .with_context(no_vat_validation=False)
             .create(company_values)
         )
-        person.sudo().write({"parent_id": company.id})
+        person.sudo().write(
+            {"parent_id": company.id}
+            if relation_kind == "primary"
+            else {"contact_center_secondary_company_ids": [(4, company.id)]}
+        )
         person.invalidate_recordset(["parent_id", "display_name"])
         self._notify_partner_identities(person)
         return {
             "schema_version": SCHEMA_VERSION,
             "company": self._serialize_partner_company(company),
+            "identity": self._serialize_identity(
+                identity, binding=self._binding_for_channel(channel)
+            ),
+        }
+
+    @api.model
+    def unlink_partner_company(
+        self,
+        channel_id,
+        expected_partner_id,
+        company_partner_id,
+        relation_kind="primary",
+    ):
+        """Remove just the selected relationship, keeping the person and documents."""
+        channel, _member = self._authorized_channel(channel_id)
+        if relation_kind not in ("primary", "secondary"):
+            raise ValidationError(
+                _("Select a primary or secondary company relationship.")
+            )
+        company_partner_id = self._positive_id(company_partner_id, _("company ID"))
+        self._linked_person_for_company(channel, expected_partner_id)
+        # The selected company must still be readable, including an archived
+        # company whose existing relationship the operator needs to remove.
+        company = (
+            self.env["res.partner"]
+            .with_context(active_test=False)
+            .search(
+                [
+                    ("id", "=", company_partner_id),
+                    ("is_company", "=", True),
+                    ("company_id", "in", [False, channel.contact_center_company_id.id]),
+                ],
+                limit=1,
+            )
+        )
+        if not company:
+            raise ValidationError(_("The selected company is not available."))
+        self.env.cr.execute(
+            "SELECT id FROM res_partner WHERE id = %s FOR UPDATE", [company.id]
+        )
+        identity, person = self._linked_person_for_company(
+            channel, expected_partner_id, lock=True
+        )
+        if relation_kind == "primary":
+            if person.parent_id and person.parent_id.id != company_partner_id:
+                raise ValidationError(
+                    _("The primary company changed. Reopen the company editor.")
+                )
+            if person.parent_id:
+                person.sudo().write({"parent_id": False})
+        elif company in person.contact_center_secondary_company_ids:
+            person.sudo().write(
+                {"contact_center_secondary_company_ids": [(3, company.id)]}
+            )
+        self._notify_partner_identities(person)
+        return {
+            "schema_version": SCHEMA_VERSION,
             "identity": self._serialize_identity(
                 identity, binding=self._binding_for_channel(channel)
             ),

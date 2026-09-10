@@ -27,7 +27,7 @@
         </field>
     </record>
     <record id="action_contact_center_resolution_reasons" model="ir.actions.act_window">
-        <field name="name">Motivos de resolução</field>
+        <field name="name">Resolution Reasons</field>
         <field name="res_model">contact.center.resolution.reason</field>
         <field name="view_mode">tree,form</field>
         <field name="target">new</field>
@@ -35,7 +35,7 @@
     </record>
     <menuitem
         id="menu_contact_center_resolution_reasons"
-        name="Motivos de resolução"
+        name="Resolution Reasons"
         parent="menu_contact_center_root"
         action="action_contact_center_resolution_reasons"
         sequence="55"

@@ -6,13 +6,15 @@
 Provider-neutral contact center for Odoo 16, with a standalone Owl inbox, WhatsApp
 through WuzAPI, and Messenger and Page-linked Instagram through Meta.
 
-All six addons use version **`16.0.1.1.0`**. Clean installations need no data handoff.
+Addon versions advance with their changes: Base and UI **`16.0.1.3.0`**, WuzAPI
+**`16.0.1.2.3`**, CRM **`16.0.1.2.1`**, Meta and Kanban **`16.0.1.2.0`**.
+Clean installations need no data handoff.
 Upgrades from the `16.0.1.0.0` production baseline use the cumulative
 [inbox-access migration](operations/account-access-upgrade.md), which preserves
 existing users, teams and conversation assignments. Older development snapshots
 still require their explicit laboratory procedures before this upgrade.
 
-The [current audit](reviews/2026-09-05-greenfield-audit.md) records changes,
+The [current audit review](reviews/2026-09-10-critical-audit-and-ui.md) records changes,
 verification and remaining limits. Historical test counts, deployment hashes and phase
 milestones remain in [reviews/](reviews/); they do not establish readiness for a new
 deployment.
@@ -68,6 +70,9 @@ configuration and technical-ledger access.
 - Text and media composition, provider-supported replies and mutations, dispatch and
   delivery status, tags, assignments, identity naming and explicit contact linking.
 - Scoped quick replies, immutable internal notes, conversation follow-ups and scheduled provider messages.
+  Personal quick replies are filtered by their owner in both the Contact Center
+  and the native Discuss bootstrap. Agents retain native management rights on
+  ordinary shortcodes that are not bound to Contact Center scopes.
   The customer panel shows opportunities, quotations, orders and invoices by contact.
   Historical CRM associations remain independent. Follow-ups belong to conversations,
   work without Kanban, and open the inbox from the activity menu. Optional Kanban adds
@@ -75,6 +80,22 @@ configuration and technical-ledger access.
 - Conversation states `open`, `resolved` and `archived`. New inbound messages reopen
   resolved conversations; archived conversations stay archived until explicitly
   restored.
+- Start a conversation by phone in an authorized, connected inbox; validate the
+  number with the provider and reuse the existing conversation without sending a
+  message. Resolution reasons and justifications create immutable internal notes.
+- Agents may create/link contacts and companies inside conversations they can
+  access, including central service numbers. This does not grant general Contacts
+  administration or access to another inbox.
+- A contact keeps its native primary company and may have secondary company
+  relationships. Quotations continue to default to the primary commercial partner.
+  Relationship removal and correcting the linked person are separate operations;
+  [the relationship contract](research/partner-company-relationships.md) describes
+  their effects. Administrators configure secondary links in **Configuration →
+  Contact relationships**.
+- Sticky day markers, bounded message menus, compact voice messages and a floating
+  video player with optional browser Picture-in-Picture. Native Odoo link-preview
+  records appear in the timeline; extraction runs in the existing background queue
+  using bounded public HTTP requests, never during webhook ingress.
 - Per-inbox deleted-message display: a tombstone by default, or an attenuated retained
   snapshot when configured. Tombstone mode removes operational body, reactions and
   media.
@@ -167,7 +188,9 @@ retain provenance so removal does not revoke pre-existing manual permissions.
    `addons_path`.
 2. Install the Python requirements declared by the selected addons and their
    prerequisites. For this repository, use `python -m pip install -r requirements.txt`
-   in the Odoo environment.
+   in the Odoo environment. Before upgrading Base, verify `import phonenumbers`
+   with the exact Python executable used by each Odoo service; installing it into
+   another shell or virtual environment does not satisfy the module dependency.
 3. Install `queue_job`, `contact_center_base`, a provider addon and `contact_center_ui`.
    Add `contact_center_crm` for the customer panel; Sales and Accounting tabs use
    those native modules when installed and permitted. Add `contact_center_kanban`
@@ -207,12 +230,15 @@ external Meta approval.
 
 Run `pre-commit run --all-files` for repository checks. Odoo suites cover contracts,
 permissions, state transitions, concurrency, provider failures and recovery; QUnit
-covers the inbox model and technical JSON viewer. The
+covers mounted components, history/reading, menus, media, relationships and the
+technical JSON viewer. Run the Contact Center QUnit suites in both normal and
+`debug=assets` modes against the exact candidate before deployment; the Python CI
+result alone is not evidence that those browser suites passed. The
 [CI workflow](.github/workflows/test.yml) documents the OCB/PostgreSQL test environment
 and private cross-repository dependency checkout. Use disposable test databases and
 synthetic provider responses; provider integration checks require their own evidence.
 
-See the [current audit](reviews/2026-09-05-greenfield-audit.md) for this working tree
+See the [current audit review](reviews/2026-09-10-critical-audit-and-ui.md) for this working tree
 and [historical reviews](reviews/) for previous laboratory results and design decisions.
 
 ## License

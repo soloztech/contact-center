@@ -286,12 +286,82 @@ class TestContactCenterQuickReplyManagement(SavepointCase):
                 }
             )
         )
+        for editor in (user, self.agent, self.supervisor):
+            native = self.env["mail.shortcode"].create(
+                {"source": "ordinary", "substitution": "Original"}
+            )
+            native.with_user(editor).write(
+                {"substitution": "Native behavior unchanged"}
+            )
+            self.assertEqual(native.substitution, "Native behavior unchanged")
+            native.with_user(editor).unlink()
+
+    def test_discuss_bootstrap_respects_personal_content_for_every_recipient(self):
+        personal = self._reply()
+        archived = self._reply(active=False)
+        shared = self._reply(self.supervisor, scope="team", team_id=self.team.id)
         native = self.env["mail.shortcode"].create(
-            {"source": "ordinary", "substitution": "Original"}
+            {"source": "native-public", "substitution": "Ordinary native reply"}
         )
-        native.with_user(user).write({"substitution": "Native behavior unchanged"})
-        self.assertEqual(native.substitution, "Native behavior unchanged")
-        native.with_user(user).unlink()
+        employee = (
+            self.env["res.users"]
+            .with_context(no_reset_password=True)
+            .create(
+                {
+                    "name": "Discuss recipient outside Contact Center",
+                    "login": "discuss-only-%s" % uuid.uuid4(),
+                    "groups_id": [(6, 0, self.env.ref("base.group_user").ids)],
+                }
+            )
+        )
+        for recipient in (self.agent, self.other, employee):
+            for elevated in (False, True):
+                user = recipient.with_user(recipient).sudo(elevated)
+                shortcodes = user._init_messaging()["shortcodes"]
+                ids = {row["id"] for row in shortcodes}
+                self.assertIn(native.id, ids)
+                self.assertIn(shared.shortcode_id.id, ids)
+                if recipient == self.agent:
+                    self.assertIn(personal.shortcode_id.id, ids)
+                else:
+                    self.assertNotIn(personal.shortcode_id.id, ids)
+                    self.assertNotIn(archived.shortcode_id.id, ids)
+                    self.assertNotIn(personal.shortcut, str(shortcodes))
+
+    def test_quick_reply_search_and_discuss_exclude_other_company_content(self):
+        company = self.env["res.company"].create({"name": "Reply search company"})
+        self.agent.company_ids |= company
+        marker = "company-search-%s" % uuid.uuid4()
+        own = self._reply(shortcut=marker)
+        foreign = (
+            self.env["contact.center.quick.reply.binding"]
+            .with_context(allowed_company_ids=company.ids)
+            .create(
+                {
+                    "shortcut": marker + "-foreign",
+                    "body": "Other company personal body",
+                    "company_id": company.id,
+                    "scope": "personal",
+                    "owner_id": self.agent.id,
+                }
+            )
+        )
+        # Both companies may be active: the inbox company still defines the
+        # catalog, even when a server-side caller is elevated.
+        api = (
+            self.env["contact.center.ui.api"]
+            .with_user(self.agent)
+            .with_context(allowed_company_ids=(self.env.company | company).ids)
+        )
+        for elevated in (False, True):
+            result = api.sudo(elevated).search_quick_replies(self.channel.id, marker)
+            self.assertEqual([row["binding_id"] for row in result["items"]], own.ids)
+        user = self.agent.with_user(self.agent).with_context(
+            allowed_company_ids=self.env.company.ids
+        )
+        shortcodes = user._init_messaging()["shortcodes"]
+        self.assertIn(own.shortcode_id.id, [row["id"] for row in shortcodes])
+        self.assertNotIn(foreign.shortcode_id.id, [row["id"] for row in shortcodes])
 
     def test_quick_reply_menu_is_available_to_agents(self):
         menu = self.env.ref("contact_center_base.menu_contact_center_quick_replies")

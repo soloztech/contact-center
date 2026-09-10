@@ -274,12 +274,12 @@ class TestConversationUnreadAndActivityNotes(SavepointCase):
         self.assertEqual(notes.message_id.subtype_id, self.env.ref("mail.mt_note"))
         self.assertFalse(notes.message_id.partner_ids)
         self.assertIn(self.agent.display_name, html2plaintext(notes.message_id.body))
-        self.assertIn("resolveu", html2plaintext(notes.message_id.body))
+        self.assertIn("resolved", html2plaintext(notes.message_id.body))
         api.update_conversation(channel.id, {"state": "open"})
         api.update_conversation(channel.id, {"state": "open"})
         self.assertEqual(len(self._notes(channel)), 2)
         self.assertIn(
-            "reabriu", html2plaintext(self._notes(channel)[-1].message_id.body)
+            "reopened", html2plaintext(self._notes(channel)[-1].message_id.body)
         )
         self.assertEqual(channel.contact_center_last_message_id, cursor)
         for user in (self.agent, self.colleague):
@@ -300,7 +300,7 @@ class TestConversationUnreadAndActivityNotes(SavepointCase):
         notes = self._notes(channel)
         self.assertEqual(len(notes), 1)
         self.assertEqual(notes.requested_by_id, self.agent)
-        self.assertIn("assumiu", html2plaintext(notes.message_id.body))
+        self.assertIn("claimed", html2plaintext(notes.message_id.body))
         supervisor = self._api(self.supervisor)
         supervisor.update_conversation(
             channel.id, {"responsible_id": self.colleague.id}
@@ -341,7 +341,7 @@ class TestConversationUnreadAndActivityNotes(SavepointCase):
         notes = self._notes(channel)
         self.assertEqual(len(notes), 1)
         body = html2plaintext(notes.message_id.body)
-        self.assertIn("resolveu", body)
+        self.assertIn("resolved", body)
         self.assertIn(self.colleague.display_name, body)
 
     def test_denied_assignment_never_creates_an_activity_note(self):

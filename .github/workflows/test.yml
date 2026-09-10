@@ -4,7 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       peer_ref:
-        description: "Full Marketing Center commit SHA for coordinated release validation"
+        description:
+          "Full Marketing Center commit SHA for coordinated release validation"
         required: false
         type: string
   pull_request:
@@ -47,7 +48,7 @@ jobs:
     container: ${{ matrix.container }}
     name: ${{ matrix.name }}
     env:
-      PEER_REF: ${{ inputs.peer_ref || '3591efab46c3f7a4f02ab6c35ca21a9997e48b06' }}
+      PEER_REF: ${{ inputs.peer_ref || '69e589a35c40247e03206856a5d869686c714a59' }}
     strategy:
       fail-fast: false
       matrix:
@@ -110,7 +111,7 @@ jobs:
       - name: Checkout current production version for additive upgrade rehearsal
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: 9660986fb530c07de7fd3c44b1007b6a3a12b56f
+          ref: 5bd6381eb93809a25629e13ce0f03d6b92677fd7
           path: .ci-installed-contact-center
           persist-credentials: false
       - name: Isolate current production source from candidate discovery
@@ -123,7 +124,9 @@ jobs:
       - name: Install addons and dependencies
         run: oca_install_addons
       - name: Test cumulative inbox access migration guards
-        run: python -m unittest discover -s release_migrations/tests -p 'test_account_access_many2many.py'
+        run:
+          python -m unittest discover -s release_migrations/tests -p
+          'test_account_access_many2many.py'
       - name: Rehearse native Contact Center access upgrade from installed version
         shell: bash
         timeout-minutes: 40
@@ -187,5 +190,9 @@ jobs:
           path: /tmp/odoo_tests/${{ env.PGDATABASE }}
           if-no-files-found: ignore
       - name: Update .pot files
-        run: oca_export_and_push_pot https://x-access-token:${{ secrets.GIT_PUSH_TOKEN }}@github.com/${{ github.repository }}
-        if: ${{ matrix.makepot == 'true' && github.event_name == 'push' && github.repository_owner == 'soloztech' }}
+        run:
+          oca_export_and_push_pot https://x-access-token:${{ secrets.GIT_PUSH_TOKEN
+          }}@github.com/${{ github.repository }}
+        if:
+          ${{ matrix.makepot == 'true' && github.event_name == 'push' &&
+          github.repository_owner == 'soloztech' }}

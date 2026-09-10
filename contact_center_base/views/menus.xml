@@ -264,7 +264,7 @@
     />
     <menuitem
         id="menu_contact_center_quick_replies"
-        name="Respostas rápidas"
+        name="Quick Replies"
         parent="menu_contact_center_root"
         action="action_contact_center_quick_reply_bindings"
         sequence="50"

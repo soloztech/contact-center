@@ -478,6 +478,58 @@ QUnit.module("contact_center_ui > sidebar filter flyout", (hooks) => {
     );
 
     QUnit.test(
+        "start stays open through Escape, outside click and cancel until the server responds",
+        async (assert) => {
+            const store = filterStore();
+            try {
+                store.state.filters.accountId = 1;
+                store.normalizeStartPhone = async () => ({
+                    normalized_phone: "5511912345678",
+                    formatted_phone: "+55 11 91234-5678",
+                });
+                let resolveStart = null;
+                let remainsCurrent = null;
+                store.startConversation = (_account, _phone, {isCurrent}) => {
+                    remainsCurrent = isCurrent;
+                    return new Promise((resolve) => {
+                        resolveStart = resolve;
+                    });
+                };
+                const {list, target} = await mountList(store);
+                await click(target, ".cc-start-conversation-toggle");
+                list.ui.startPhone = "11 91234-5678";
+                await list.previewStartPhone();
+                const request = list.submitStartConversation();
+                await nextTick();
+                list.closeStartConversation();
+                list.onFilterOutsidePointerdown({target: document.body});
+                list.onShortcut({
+                    key: "Escape",
+                    preventDefault: () => undefined,
+                    stopPropagation: () => undefined,
+                });
+                list.toggleFilters();
+                assert.ok(list.ui.startOpen);
+                assert.ok(
+                    remainsCurrent(),
+                    "the result cannot be discarded by dismissing the popover"
+                );
+                assert.ok(
+                    target.querySelector('[aria-label="Fechar iniciar conversa"]')
+                        .disabled
+                );
+                assert.notOk(list.ui.filtersOpen);
+                resolveStart({channel_id: 22});
+                assert.ok(await request);
+                assert.notOk(list.ui.startPending);
+                assert.notOk(list.ui.startOpen);
+            } finally {
+                store.destroy();
+            }
+        }
+    );
+
+    QUnit.test(
         "start errors remain inline and double submission creates only one request",
         async (assert) => {
             const store = filterStore();

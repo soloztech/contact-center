@@ -2,9 +2,13 @@ import datetime
 import uuid
 from unittest import mock
 
-from odoo import fields
+from psycopg2.errors import SerializationFailure
+
+from odoo import SUPERUSER_ID, api, fields
 from odoo.exceptions import AccessError, UserError, ValidationError
-from odoo.tests.common import SavepointCase
+from odoo.tests import tagged
+from odoo.tests.common import SavepointCase, TransactionCase
+from odoo.tools import mute_logger
 
 from ..models.application import IdentityConflictError
 from ..models.conversation_actions import _policy_context
@@ -15,7 +19,8 @@ from ..services.adapter import (
     TransientAdapterError,
     adapter_registry,
 )
-from ..services.dto import AddressDTO, DirectAddressResult, EventDTO
+from ..services.dto import AddressDTO, DirectAddressResult, DTOValidationError, EventDTO
+from ..services.tokens import CONTACT_CENTER_MEMBERSHIP_TOKEN, CONTACT_CENTER_POST_TOKEN
 from .test_contact_center import FakeAdapter
 
 
@@ -271,6 +276,73 @@ class TestContactCenterStartConversation(SavepointCase):
                     self._start(user=user)
         lookup.assert_not_called()
 
+    def test_sudo_preserves_explicit_inbox_scope_before_provider_lookup(self):
+        before = self._footprint()
+        with mock.patch.object(
+            DirectStartTestAdapter, "resolve_direct_address"
+        ) as lookup:
+            for user in (self.outsider, self.admin):
+                with self.assertRaises(AccessError):
+                    self._api(user).sudo().start_conversation(
+                        self.account.id, "(11) 99876-5432"
+                    )
+        lookup.assert_not_called()
+        self.assertEqual(before, self._footprint())
+
+    def test_inactive_session_company_denied_even_when_user_has_inbox_access(self):
+        company = self.env["res.company"].create(
+            {"name": "Another start company", "country_id": self.env.ref("base.br").id}
+        )
+        self.agent.company_ids |= company
+        account = self.env["contact.center.account"].create(
+            {
+                "name": "Other company start inbox",
+                "company_id": company.id,
+                "platform": "whatsapp",
+                "external_ref": "other-start-%s" % uuid.uuid4(),
+                "access_user_ids": [(6, 0, self.agent.ids)],
+            }
+        )
+        self.env["contact.center.provider.connection"].create(
+            {
+                "name": "Other company start connection",
+                "account_id": account.id,
+                "adapter_key": "test.direct_start",
+                "external_ref": "other-start-%s" % uuid.uuid4(),
+                "active": True,
+                "role": "primary",
+                "state": "connected",
+                "inbound_active": True,
+                "outbound_active": True,
+                "capabilities_json": {"send_message": True},
+                "last_state_observed_at": fields.Datetime.now(),
+                "last_state_source": "health_job",
+                "health_detail": "healthy",
+            }
+        )
+        before = self._footprint()
+        api = self._api().with_context(allowed_company_ids=self.env.company.ids)
+        with mock.patch.object(
+            DirectStartTestAdapter, "resolve_direct_address"
+        ) as lookup:
+            for elevated in (False, True):
+                with self.assertRaises(AccessError):
+                    api.sudo(elevated).start_conversation(account.id, "(11) 99876-5432")
+        lookup.assert_not_called()
+        self.assertEqual(before, self._footprint())
+        own = self._start()
+        other = api.with_context(allowed_company_ids=company.ids).start_conversation(
+            account.id, "(11) 99876-5432"
+        )
+        self.assertNotEqual(own["channel_id"], other["channel_id"])
+        binding = (
+            self.env["mail.channel"]
+            .browse(other["channel_id"])
+            .contact_center_binding_ids
+        )
+        self.assertEqual(binding.account_id, account)
+        self.assertEqual(binding.identity_id.company_id, company)
+
     def test_bad_input_has_no_lookup(self):
         before = self._footprint()
         with mock.patch.object(
@@ -385,6 +457,7 @@ class TestContactCenterStartConversation(SavepointCase):
             self._start()
         for error_type in (
             AdapterError,
+            DTOValidationError,
             TransientAdapterError,
             ProviderPausedError,
             ProviderRateLimitError,
@@ -540,6 +613,48 @@ class TestContactCenterStartConversation(SavepointCase):
         )
         self.assertEqual(message.res_id, started["channel_id"])
 
+    def test_lid_primary_start_reuses_phone_primary_conversation(self):
+        lid = "987654321098765@lid"
+        phone = "5511998765432@s.whatsapp.net"
+        resolved = DirectAddressResult(
+            state="ready",
+            conversation_ref=lid,
+            addresses=(
+                AddressDTO(
+                    namespace="whatsapp.lid",
+                    value=lid,
+                    value_normalized=lid,
+                    confidence="protocol",
+                ),
+                AddressDTO(
+                    namespace="whatsapp.pn",
+                    value=phone,
+                    value_normalized=phone,
+                    confidence="protocol",
+                    role="alternate",
+                    resolution_scope="company",
+                ),
+            ),
+        )
+        with mock.patch.object(
+            DirectStartTestAdapter, "resolve_direct_address", return_value=resolved
+        ):
+            first = self._start()
+        binding = (
+            self.env["mail.channel"]
+            .browse(first["channel_id"])
+            .contact_center_binding_ids
+        )
+        self.assertEqual(binding.conversation_ref, lid)
+        self.assertEqual(
+            set(binding.alias_ids.mapped("value_normalized")), {lid, phone}
+        )
+        after = self._footprint()
+        second = self._start()
+        self.assertFalse(second["created"])
+        self.assertEqual(first["channel_id"], second["channel_id"])
+        self.assertEqual(after, self._footprint())
+
     def test_tag_catalog_menu_is_supervisor_only_and_reuses_action(self):
         menu = self.env.ref("contact_center_base.menu_contact_center_tags")
         self.assertEqual(
@@ -569,3 +684,153 @@ class TestContactCenterStartConversation(SavepointCase):
             .with_user(self.supervisor)
             .create({"name": "Supervisor reusable catalog"})
         )
+
+
+@tagged("-at_install", "post_install")
+class TestContactCenterStartConcurrency(TransactionCase):
+    """Two real requests overlap while the first waits for its provider read."""
+
+    def _fixture(self):
+        token = uuid.uuid4().hex
+        with self.registry.cursor() as cr:
+            env = api.Environment(cr, SUPERUSER_ID, {})
+            user = (
+                env["res.users"]
+                .with_context(no_reset_password=True)
+                .create(
+                    {
+                        "name": "Start race %s" % token,
+                        "login": "start-race-%s" % token,
+                        "company_id": env.company.id,
+                        "company_ids": [(6, 0, env.company.ids)],
+                        "groups_id": [
+                            (
+                                6,
+                                0,
+                                env.ref(
+                                    "contact_center_base.group_contact_center_agent"
+                                ).ids,
+                            )
+                        ],
+                    }
+                )
+            )
+            account = env["contact.center.account"].create(
+                {
+                    "name": "Start race %s" % token,
+                    "company_id": env.company.id,
+                    "platform": "whatsapp",
+                    "external_ref": token,
+                    "access_user_ids": [(6, 0, user.ids)],
+                }
+            )
+            connection = env["contact.center.provider.connection"].create(
+                {
+                    "name": "Start race provider",
+                    "account_id": account.id,
+                    "adapter_key": "test.direct_start",
+                    "external_ref": token,
+                    "state": "connected",
+                    "active": True,
+                    "role": "primary",
+                    "inbound_active": True,
+                    "outbound_active": True,
+                    "capabilities_json": {"send_message": True},
+                    "last_state_observed_at": fields.Datetime.now(),
+                    "last_state_source": "health_job",
+                    "health_detail": "healthy",
+                }
+            )
+            cr.commit()  # pylint: disable=invalid-commit
+            return {
+                "user_id": user.id,
+                "partner_id": user.partner_id.id,
+                "company_id": env.company.id,
+                "account_id": account.id,
+                "connection_id": connection.id,
+                "phone": "+55119%08d" % (int(token[:8], 16) % 100000000),
+            }
+
+    def _api(self, cr, fixture):
+        return api.Environment(
+            cr, fixture["user_id"], {"allowed_company_ids": [fixture["company_id"]]}
+        )["contact.center.ui.api"]
+
+    def _cleanup(self, fixture):
+        with self.registry.cursor() as cr:
+            env = api.Environment(cr, SUPERUSER_ID, {})
+            bindings = env["contact.center.channel.binding"].search(
+                [("account_id", "=", fixture["account_id"])]
+            )
+            channels, identities = bindings.channel_id, bindings.identity_id
+            guests = identities.mail_guest_id
+            bindings.unlink()
+            channels.with_context(
+                contact_center_membership_token=CONTACT_CENTER_MEMBERSHIP_TOKEN,
+                contact_center_post_token=CONTACT_CENTER_POST_TOKEN,
+            ).unlink()
+            identities.alias_ids.unlink()
+            identities.unlink()
+            guests.with_context(
+                contact_center_membership_token=CONTACT_CENTER_MEMBERSHIP_TOKEN
+            ).unlink()
+            env["contact.center.provider.connection"].browse(
+                fixture["connection_id"]
+            ).unlink()
+            env["contact.center.account"].browse(fixture["account_id"]).unlink()
+            env["res.users"].browse(fixture["user_id"]).unlink()
+            env["res.partner"].browse(fixture["partner_id"]).unlink()
+            cr.commit()  # pylint: disable=invalid-commit
+
+    def test_concurrent_start_retries_to_one_identity_and_conversation(self):
+        fixture = self._fixture()
+        winner = {}
+
+        def lookup(_connection, phone):
+            if not winner:
+                # The first RPC has already authorized and pinned its snapshot;
+                # another RPC completes before the provider answers the first.
+                winner["pending"] = True
+                with self.registry.cursor() as winner_cr:
+                    winner_cr.execute("SET LOCAL statement_timeout = '10s'")
+                    winner.update(
+                        self._api(winner_cr, fixture).start_conversation(
+                            fixture["account_id"], fixture["phone"]
+                        )
+                    )
+                    winner_cr.commit()  # pylint: disable=invalid-commit
+            return direct_result(phone)
+
+        try:
+            with self.registry.cursor() as stale_cr:
+                stale_cr.execute("SET LOCAL lock_timeout = '2s'")
+                stale_cr.execute("SET LOCAL statement_timeout = '10s'")
+                with mock.patch.object(
+                    DirectStartTestAdapter, "resolve_direct_address", side_effect=lookup
+                ), mute_logger("odoo.sql_db"), self.assertRaises(SerializationFailure):
+                    self._api(stale_cr, fixture).start_conversation(
+                        fixture["account_id"], fixture["phone"]
+                    )
+                stale_cr.rollback()
+            with self.registry.cursor() as retry_cr:
+                service = self._api(retry_cr, fixture)
+                retried = service.start_conversation(
+                    fixture["account_id"], fixture["phone"]
+                )
+                self.assertEqual(retried["channel_id"], winner["channel_id"])
+                self.assertTrue(winner["created"])
+                self.assertFalse(retried["created"])
+                bindings = (
+                    service.env["contact.center.channel.binding"]
+                    .sudo()
+                    .search([("account_id", "=", fixture["account_id"])])
+                )
+                self.assertEqual(len(bindings), 1)
+                self.assertEqual(len(bindings.identity_id), 1)
+                self.assertFalse(
+                    service.env["contact.center.outbox.command"]
+                    .sudo()
+                    .search_count([("account_id", "=", fixture["account_id"])])
+                )
+        finally:
+            self._cleanup(fixture)

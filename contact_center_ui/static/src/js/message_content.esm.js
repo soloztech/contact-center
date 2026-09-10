@@ -4,6 +4,7 @@ import {Component, onMounted, onWillUnmount, useRef, useState} from "@odoo/owl";
 import {useChildRef, useOwnedDialogs} from "@web/core/utils/hooks";
 import {DeferredImage} from "./deferred_image.esm";
 import {Dialog} from "@web/core/dialog/dialog";
+import {MessageLinkPreviews} from "./link_preview.esm";
 import {formatFileSize} from "./contact_center_model.esm";
 import {structuredMessageCard} from "./structured_content.esm";
 
@@ -52,6 +53,8 @@ const CONTROL_TIMELINE_MESSAGE_META = Object.freeze({
 });
 
 let activeAudioElement = null;
+let activeVideoElement = null;
+let closeActiveVideoWindow = null;
 
 /**
  * Return the fixed presentation metadata for a provider-neutral control event.
@@ -197,6 +200,7 @@ export function downloadableMessageMedia(message) {
         return [
             {
                 id: media.id,
+                label: `Baixar ${MEDIA_LABELS[media.kind].toLocaleLowerCase()}`,
                 name:
                     typeof media.name === "string" && media.name.trim()
                         ? media.name.trim().slice(0, 240)
@@ -209,6 +213,90 @@ export function downloadableMessageMedia(message) {
         ];
     });
 }
+
+export function hasCompactAudio(message) {
+    const media = message && message.media;
+    return Boolean(
+        message &&
+            !message.is_deleted &&
+            !(message.body_text || "").trim() &&
+            !structuredMessageCard(message.structured_content) &&
+            Array.isArray(media) &&
+            media.length === 1 &&
+            media[0] &&
+            media[0].kind === "audio" &&
+            media[0].state === "ready" &&
+            localMediaContentId(media[0].content_url) === media[0].id
+    );
+}
+
+export class FloatingVideo extends Component {
+    setup() {
+        this.videoRef = useRef("video");
+        this.closeRef = useRef("close");
+        this.state = useState({error: "", ready: false});
+        onMounted(() => this.closeRef.el.focus());
+        onWillUnmount(() => {
+            const video = this.videoRef.el;
+            if (!video) {
+                return;
+            }
+            video.pause();
+            if (document.pictureInPictureElement === video) {
+                document.exitPictureInPicture().catch(() => false);
+            }
+            if (activeVideoElement === video) {
+                activeVideoElement = null;
+            }
+        });
+    }
+
+    get supportsPictureInPicture() {
+        return Boolean(
+            document.pictureInPictureEnabled &&
+                typeof HTMLVideoElement.prototype.requestPictureInPicture === "function"
+        );
+    }
+
+    onPlay() {
+        const video = this.videoRef.el;
+        if (activeVideoElement && activeVideoElement !== video) {
+            activeVideoElement.pause();
+        }
+        if (activeAudioElement) {
+            activeAudioElement.pause();
+        }
+        activeVideoElement = video;
+    }
+
+    onKeydown(event) {
+        if (event.key === "Escape") {
+            event.stopPropagation();
+            this.props.close();
+        }
+    }
+
+    async pictureInPicture() {
+        const video = this.videoRef.el;
+        if (!video || !this.state.ready || !this.supportsPictureInPicture) {
+            return false;
+        }
+        try {
+            if (document.pictureInPictureElement !== video) {
+                await video.requestPictureInPicture();
+            }
+            this.state.error = "";
+            return true;
+        } catch (_error) {
+            this.state.error =
+                "O navegador não abriu a janela externa. Continue assistindo aqui.";
+            return false;
+        }
+    }
+}
+
+FloatingVideo.props = {media: Object, close: Function};
+FloatingVideo.template = "contact_center_ui.FloatingVideo";
 
 export class MediaViewer extends Component {
     setup() {
@@ -361,10 +449,6 @@ export class AudioPlayer extends Component {
             : "cc-audio-wave__bar";
     }
 
-    formatTime(value) {
-        return formatAudioTime(value);
-    }
-
     async togglePlayback() {
         if (!this.audio || this.state.error) {
             return;
@@ -446,13 +530,20 @@ export class AudioPlayer extends Component {
     }
 }
 
-AudioPlayer.props = {media: Object};
+AudioPlayer.props = {media: Object, slots: {type: Object, optional: true}};
 AudioPlayer.template = "contact_center_ui.AudioPlayer";
 
 export class MessageContent extends Component {
     setup() {
         this.addDialog = useOwnedDialogs();
         this.imageLoad = useState({attempts: {}, failures: {}});
+        this.videoState = useState({media: false});
+        this.closeFloatingVideo = () => this.closeVideo();
+        onWillUnmount(() => {
+            if (closeActiveVideoWindow === this.closeFloatingVideo) {
+                closeActiveVideoWindow = null;
+            }
+        });
     }
 
     get message() {
@@ -559,6 +650,18 @@ export class MessageContent extends Component {
             return;
         }
         const opener = event && event.currentTarget;
+        if (media.kind === "video") {
+            if (
+                closeActiveVideoWindow &&
+                closeActiveVideoWindow !== this.closeFloatingVideo
+            ) {
+                closeActiveVideoWindow();
+            }
+            closeActiveVideoWindow = this.closeFloatingVideo;
+            this.videoOpener = opener;
+            this.videoState.media = items[startIndex];
+            return;
+        }
         this.addDialog(
             MediaViewer,
             {items, startIndex},
@@ -571,8 +674,23 @@ export class MessageContent extends Component {
             }
         );
     }
+
+    closeVideo() {
+        this.videoState.media = false;
+        if (closeActiveVideoWindow === this.closeFloatingVideo) {
+            closeActiveVideoWindow = null;
+        }
+        if (this.videoOpener && this.videoOpener.isConnected) {
+            this.videoOpener.focus();
+        }
+    }
 }
 
-MessageContent.components = {AudioPlayer, DeferredImage};
-MessageContent.props = {message: Object};
+MessageContent.components = {
+    AudioPlayer,
+    DeferredImage,
+    FloatingVideo,
+    MessageLinkPreviews,
+};
+MessageContent.props = {message: Object, slots: {type: Object, optional: true}};
 MessageContent.template = "contact_center_ui.MessageContent";

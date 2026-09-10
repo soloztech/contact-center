@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<templates xml:space="preserve">
+    <t t-name="contact_center_ui.MessageLinkPreviews" owl="1">
+        <div t-if="previews.length" class="cc-link-previews">
+            <a
+                t-foreach="previews"
+                t-as="preview"
+                t-key="preview.id"
+                class="cc-link-preview"
+                t-att-href="preview.url"
+                target="_blank"
+                rel="noopener noreferrer"
+            >
+                <img
+                    t-if="preview.image"
+                    t-att-src="preview.image"
+                    alt=""
+                    loading="lazy"
+                    referrerpolicy="no-referrer"
+                />
+                <div class="cc-link-preview__text">
+                    <strong t-if="preview.title" t-esc="preview.title" />
+                    <span t-if="preview.description" t-esc="preview.description" />
+                    <small t-esc="preview.hostname" />
+                </div>
+            </a>
+        </div>
+    </t>
+</templates>

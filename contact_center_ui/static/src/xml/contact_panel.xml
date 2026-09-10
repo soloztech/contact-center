@@ -224,15 +224,24 @@
                                                 t-esc="company.email"
                                             /></div>
                                     </dl>
+                                    <button
+                                        t-if="canManageCompany"
+                                        type="button"
+                                        class="cc-text-button cc-company-remove"
+                                        t-att-disabled="companyMutationPending"
+                                        t-on-click="() => this.unlinkCompany(company)"
+                                    >Desvincular empresa</button>
                                 </t>
                                 <p
                                     t-elif="companyProjectionUnavailable"
                                     class="cc-detail-copy"
                                 >Os dados da empresa vinculada não estão disponíveis neste painel.</p>
-                                <t t-elif="canLinkCompany">
-                                    <p
-                                        class="cc-detail-copy"
-                                    >Vincule a empresa principal desta pessoa. Ao selecionar uma empresa, o Odoo aplica imediatamente o vínculo comercial e sincroniza os dados fiscais e de endereço.</p>
+                                <t t-if="canLinkCompany">
+                                    <p class="cc-detail-copy"><t
+                                            t-if="company"
+                                        >Vínculos secundários não alteram a empresa principal nem o cliente padrão de novas cotações.</t><t
+                                            t-else=""
+                                        >Vincule a empresa principal desta pessoa. O Odoo usará essa empresa como referência comercial e sincronizará os dados fiscais e de endereço.</t></p>
                                     <div class="cc-inline-actions">
                                         <button
                                             t-ref="companyLinkTrigger"
@@ -242,7 +251,9 @@
                                             aria-controls="cc-company-linker"
                                             t-att-disabled="companyMutationPending"
                                             t-on-click="() => store.openCompanyLinker('search')"
-                                        >Vincular empresa</button>
+                                        ><t
+                                                t-esc="company ? 'Vincular outra empresa' : 'Vincular empresa'"
+                                            /></button>
                                         <button
                                             t-if="canCreateCompany"
                                             type="button"
@@ -253,11 +264,11 @@
                                     </div>
                                 </t>
                                 <p
-                                    t-elif="identity.partner.company_linking_allowed === true"
+                                    t-elif="!company &amp;&amp; identity.partner.company_linking_allowed === true"
                                     class="cc-detail-copy"
                                 >Solicite a um supervisor o vínculo da empresa deste contato.</p>
                                 <p
-                                    t-else=""
+                                    t-elif="!company &amp;&amp; !companyProjectionUnavailable"
                                     class="cc-detail-copy"
                                 >A empresa deste contato deve ser gerenciada no aplicativo Contatos.</p>
 
@@ -386,6 +397,56 @@
                                 </div>
                             </div>
                         </div>
+                        <div
+                            t-if="secondaryCompanies.length"
+                            class="cc-secondary-companies"
+                        >
+                            <div
+                                t-foreach="secondaryCompanies"
+                                t-as="secondaryCompany"
+                                t-key="secondaryCompany.id"
+                                class="cc-company-relation cc-company-relation--linked"
+                            >
+                                <span
+                                    class="cc-company-relation__rail"
+                                    aria-hidden="true"
+                                ><i class="fa fa-building-o" /></span>
+                                <div class="cc-company-relation__body">
+                                    <div class="cc-company-relation__heading"><span
+                                        >Empresa</span><small
+                                        >Vínculo secundário</small></div>
+                                    <button
+                                        type="button"
+                                        class="cc-company-relation__name"
+                                        t-on-click="() => this.openPartnerRecord(secondaryCompany.id)"
+                                    ><span t-esc="secondaryCompany.name" /><i
+                                            class="fa fa-external-link"
+                                            aria-hidden="true"
+                                        /></button>
+                                    <dl class="cc-company-relation__details">
+                                        <div t-if="secondaryCompany.vat"><dt
+                                            >CNPJ / VAT</dt><dd
+                                                t-esc="secondaryCompany.vat"
+                                            /></div>
+                                        <div t-if="secondaryCompany.phone"><dt
+                                            >Telefone</dt><dd
+                                                t-esc="secondaryCompany.phone"
+                                            /></div>
+                                        <div t-if="secondaryCompany.email"><dt
+                                            >E-mail</dt><dd
+                                                t-esc="secondaryCompany.email"
+                                            /></div>
+                                    </dl>
+                                    <button
+                                        t-if="canManageCompany"
+                                        type="button"
+                                        class="cc-text-button cc-company-remove"
+                                        t-att-disabled="companyMutationPending"
+                                        t-on-click="() => this.unlinkCompany(secondaryCompany, 'secondary')"
+                                    >Desvincular empresa</button>
+                                </div>
+                            </div>
+                        </div>
                         <button
                             t-if="canUnlinkIdentity"
                             type="button"
@@ -395,8 +456,15 @@
                         ><t
                                 t-esc="isLinkedCompany ? 'Desvincular empresa' : 'Desvincular pessoa'"
                             /></button>
+                        <button
+                            t-if="!isLinkedCompany &amp;&amp; hasCompanyRelationships"
+                            type="button"
+                            class="cc-text-button cc-correct-contact"
+                            t-att-disabled="companyMutationPending"
+                            t-on-click="correctLinkedContact"
+                        >Corrigir contato vinculado</button>
                         <p
-                            t-elif="isLinkedCompany"
+                            t-if="isLinkedCompany &amp;&amp; !canUnlinkIdentity"
                             class="cc-detail-copy cc-central-company-note"
                         ><i
                                 class="fa fa-lock"

@@ -4,13 +4,16 @@
 
 import {
     AudioPlayer,
+    FloatingVideo,
     downloadableMessageMedia,
+    hasCompactAudio,
 } from "@contact_center_ui/js/message_content.esm";
 import {click, getFixture, mount, nextTick} from "@web/../tests/helpers/utils";
 import {ContactCenterStore} from "@contact_center_ui/js/contact_center_store.esm";
 import {ConversationTimeline} from "@contact_center_ui/js/conversation_timeline.esm";
 import {makeFakeLocalizationService} from "@web/../tests/helpers/mock_services";
 import {makeTestEnv} from "@web/../tests/helpers/mock_env";
+import {reactive} from "@odoo/owl";
 import {registry} from "@web/core/registry";
 
 function readyMedia(overrides = {}) {
@@ -27,6 +30,76 @@ function readyMedia(overrides = {}) {
     };
 }
 
+async function mountedTimeline(messages) {
+    registry.category("services").add("action", {
+        start: () => ({doAction: async () => undefined}),
+    });
+    registry.category("services").add("dialog", {
+        start: () => ({add: () => () => undefined}),
+    });
+    makeFakeLocalizationService();
+    const env = await makeTestEnv();
+    const target = getFixture();
+    const originalStyle = target.style.cssText;
+    target.style.cssText =
+        "position:fixed;left:120px;top:16px;width:560px;height:280px;overflow:hidden;z-index:10000";
+    const store = new ContactCenterStore({
+        orm: {},
+        busService: new EventTarget(),
+        stateFactory: reactive,
+    });
+    Object.assign(store.state, {
+        bootstrap: {capabilities: {}},
+        selectedChannelId: 10,
+        timelineChannelId: 10,
+        conversations: [{channel_id: 10, state: "resolved"}],
+        timelinePhase: "ready",
+        messages,
+    });
+    store.markSeen = async () => false;
+    const timeline = await mount(ConversationTimeline, target, {
+        env,
+        props: {state: store.state, store},
+    });
+    timeline.viewportRef.el.parentElement.style.height = "280px";
+    async function settle() {
+        await nextTick();
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        await nextTick();
+    }
+    return {
+        target,
+        store,
+        timeline,
+        settle,
+        close: () => {
+            timeline.__owl__.app.destroy();
+            store.destroy();
+            target.style.cssText = originalStyle;
+        },
+    };
+}
+
+function timelineMessage(overrides = {}) {
+    return {
+        message_id: 84,
+        content_type: "media",
+        body_text: "",
+        date: "2026-09-09 12:00:00",
+        direction: "outbound",
+        origin: "external_device",
+        platform: "whatsapp",
+        provider: "wuzapi",
+        author: {id: 12, type: "partner", name: "Agente"},
+        actions: {},
+        reactions: [],
+        structured_content: {},
+        media: [readyMedia()],
+        ...overrides,
+    };
+}
+
 QUnit.module("contact_center_ui > media presentation", () => {
     QUnit.test(
         "downloads accept only ready local media for their exact id",
@@ -35,7 +108,21 @@ QUnit.module("contact_center_ui > media presentation", () => {
             for (const kind of ["image", "video", "audio", "document"]) {
                 assert.deepEqual(
                     downloadableMessageMedia({media: [{...media, kind}]}),
-                    [{id: 8, name: "voz.ogg", download_url: media.download_url}]
+                    [
+                        {
+                            id: 8,
+                            label: `Baixar ${
+                                {
+                                    image: "imagem",
+                                    video: "vídeo",
+                                    audio: "áudio",
+                                    document: "documento",
+                                }[kind]
+                            }`,
+                            name: "voz.ogg",
+                            download_url: media.download_url,
+                        },
+                    ]
                 );
             }
             const rejected = [
@@ -51,7 +138,12 @@ QUnit.module("contact_center_ui > media presentation", () => {
             ];
             assert.deepEqual(downloadableMessageMedia({media: rejected}), []);
             assert.deepEqual(downloadableMessageMedia({media: [media, media]}), [
-                {id: 8, name: "voz.ogg", download_url: media.download_url},
+                {
+                    id: 8,
+                    label: "Baixar áudio",
+                    name: "voz.ogg",
+                    download_url: media.download_url,
+                },
             ]);
             for (const download_url of [
                 "javascript:alert(1)", // eslint-disable-line no-script-url
@@ -201,6 +293,10 @@ QUnit.module("contact_center_ui > media presentation", () => {
                     links.map((link) => link.download),
                     ["voz.ogg", "proposta.docx"]
                 );
+                assert.deepEqual(
+                    links.map((link) => link.textContent.trim()),
+                    ["Baixar áudio", "Baixar documento"]
+                );
                 menu.dispatchEvent(
                     new KeyboardEvent("keydown", {key: "End", bubbles: true})
                 );
@@ -217,6 +313,184 @@ QUnit.module("contact_center_ui > media presentation", () => {
             } finally {
                 store.destroy();
             }
+        }
+    );
+
+    QUnit.test(
+        "audio-only messages share the player footer with timestamp and delivery",
+        async (assert) => {
+            const message = timelineMessage();
+            assert.ok(
+                hasCompactAudio(message),
+                "empty structured envelope is ordinary audio"
+            );
+            assert.notOk(hasCompactAudio({...message, media: [null]}));
+            assert.notOk(hasCompactAudio({...message, body_text: "Legenda"}));
+            assert.notOk(hasCompactAudio({...message, is_deleted: true}));
+            const fixture = await mountedTimeline([message]);
+            try {
+                await fixture.settle();
+                const audioFooter = fixture.target.querySelector(
+                    ".cc-audio-player__footer"
+                );
+                const times = audioFooter.querySelectorAll("time");
+                assert.strictEqual(
+                    times.length,
+                    2,
+                    "duration and sent time share one footer"
+                );
+                assert.notOk(
+                    fixture.target.querySelector(".cc-message__bubble > footer")
+                );
+                assert.ok(
+                    Math.abs(
+                        times[0].getBoundingClientRect().top -
+                            times[1].getBoundingClientRect().top
+                    ) < 5,
+                    "audio duration and sent time stay on the same row"
+                );
+            } finally {
+                fixture.close();
+            }
+        }
+    );
+
+    QUnit.test("outbound action menu stays inside the timeline", async (assert) => {
+        const fixture = await mountedTimeline([
+            timelineMessage({body_text: "Mensagem longa ".repeat(12)}),
+        ]);
+        try {
+            await fixture.settle();
+            await click(fixture.target, ".cc-message-actions__toggle");
+            await fixture.settle();
+            const menu = fixture.target.querySelector(".cc-message-menu");
+            const bounds = fixture.timeline.viewportRef.el.getBoundingClientRect();
+            const menuBounds = menu.getBoundingClientRect();
+            assert.strictEqual(getComputedStyle(menu).position, "fixed");
+            assert.ok(
+                menuBounds.left >= bounds.left - 1,
+                "no clipping behind the inbox list"
+            );
+            assert.ok(
+                menuBounds.right <= bounds.right + 1,
+                "no clipping behind the contact panel"
+            );
+            assert.ok(
+                menuBounds.top >= bounds.top - 1 &&
+                    menuBounds.bottom <= bounds.bottom + 1,
+                "native positioning flips above or below within the visible viewport"
+            );
+        } finally {
+            fixture.close();
+        }
+    });
+
+    QUnit.test(
+        "day headings remain visible while scrolling inside their day",
+        async (assert) => {
+            const messages = [];
+            for (let day = 7; day <= 9; day++) {
+                for (let index = 0; index < 6; index++) {
+                    messages.push(
+                        timelineMessage({
+                            message_id: day * 10 + index,
+                            date: `2026-09-0${day} 12:0${index}:00`,
+                            body_text: "Mensagem do dia ".repeat(8),
+                            media: [],
+                        })
+                    );
+                }
+            }
+            const fixture = await mountedTimeline(messages);
+            try {
+                await fixture.settle();
+                const viewport = fixture.timeline.viewportRef.el;
+                viewport.scrollTop = 150;
+                await fixture.settle();
+                const headings = fixture.target.querySelectorAll(".cc-day-divider");
+                const top = viewport.getBoundingClientRect().top;
+                assert.strictEqual(headings.length, 3);
+                assert.ok(
+                    Math.abs(headings[0].getBoundingClientRect().top - top) < 2,
+                    "first day stays pinned after its separator scrolls away"
+                );
+                viewport.scrollTop +=
+                    headings[1].getBoundingClientRect().top - top + 100;
+                await fixture.settle();
+                assert.ok(
+                    Math.abs(headings[1].getBoundingClientRect().top - top) < 2,
+                    "next day replaces the preceding heading"
+                );
+                assert.ok(
+                    headings[0].getBoundingClientRect().bottom <= top + 2,
+                    "preceding day is bounded by its own section"
+                );
+            } finally {
+                fixture.close();
+            }
+        }
+    );
+
+    QUnit.test(
+        "video opens in a non-modal floating player and closes cleanly",
+        async (assert) => {
+            const fixture = await mountedTimeline([
+                timelineMessage({media: [readyMedia({kind: "video"})]}),
+            ]);
+            try {
+                await fixture.settle();
+                await click(fixture.target, ".cc-media-video");
+                const player = document.querySelector(".cc-floating-video");
+                assert.ok(player, "player is outside the clipped timeline");
+                assert.notOk(fixture.target.contains(player));
+                assert.notOk(
+                    document.querySelector(".cc-media-viewer-dialog"),
+                    "chat remains available"
+                );
+                assert.ok(player.querySelector("video").controls);
+                await click(player, '[aria-label="Fechar vídeo"]');
+                assert.notOk(document.querySelector(".cc-floating-video"));
+                assert.strictEqual(
+                    document.activeElement,
+                    fixture.target.querySelector(".cc-media-video")
+                );
+            } finally {
+                fixture.close();
+            }
+        }
+    );
+
+    QUnit.test(
+        "native picture-in-picture failure preserves the floating video",
+        async (assert) => {
+            let calls = 0;
+            const component = {
+                supportsPictureInPicture: true,
+                state: {ready: true, error: ""},
+                videoRef: {
+                    el: {
+                        requestPictureInPicture: async () => {
+                            calls++;
+                            throw new Error("blocked");
+                        },
+                    },
+                },
+            };
+            assert.notOk(
+                await FloatingVideo.prototype.pictureInPicture.call(component)
+            );
+            assert.strictEqual(calls, 1);
+            assert.ok(component.state.error.includes("Continue assistindo aqui"));
+            component.videoRef.el.requestPictureInPicture = async () => {
+                calls++;
+            };
+            assert.ok(await FloatingVideo.prototype.pictureInPicture.call(component));
+            assert.strictEqual(component.state.error, "");
+            component.supportsPictureInPicture = false;
+            assert.notOk(
+                await FloatingVideo.prototype.pictureInPicture.call(component)
+            );
+            assert.strictEqual(calls, 2, "unsupported browsers keep the local player");
         }
     );
 

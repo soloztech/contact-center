@@ -2,6 +2,13 @@
 <templates xml:space="preserve">
     <t t-name="contact_center_ui.MessageContent" owl="1">
         <div class="cc-message-body">
+            <t t-if="videoState.media" t-portal="'body'">
+                <FloatingVideo
+                    t-key="videoState.media.id"
+                    media="videoState.media"
+                    close="() => this.closeVideo()"
+                />
+            </t>
             <div
                 t-if="message.is_deleted &amp;&amp; !message.deleted_content_visible"
                 class="cc-message-tombstone"
@@ -99,12 +106,14 @@
                         onLoadError="(attempt) => this.onImageLoadError(media, attempt)"
                     />
                 </button>
-                <AudioPlayer t-elif="media.kind === 'audio'" media="media" />
+                <AudioPlayer t-elif="media.kind === 'audio'" media="media">
+                    <t t-set-slot="metadata"><t t-slot="metadata" /></t>
+                </AudioPlayer>
                 <button
                     t-elif="media.kind === 'video'"
                     type="button"
                     class="cc-media-video"
-                    aria-haspopup="dialog"
+                    t-att-aria-expanded="videoState.media &amp;&amp; videoState.media.id === media.id ? 'true' : 'false'"
                     t-att-aria-label="'Reproduzir ' + fileLabel(media)"
                     t-on-click="(event) => this.openViewer(media, event)"
                 >
@@ -120,7 +129,7 @@
                     </video>
                     <span class="cc-media-video__overlay">
                         <i class="fa fa-play" aria-hidden="true" />
-                        <span>Abrir vídeo</span>
+                        <span>Abrir vídeo flutuante</span>
                     </span>
                 </button>
                 <button
@@ -152,6 +161,7 @@
             </div>
         </div>
         <p t-if="message.body_text" t-esc="message.body_text" />
+        <MessageLinkPreviews message="message" />
         <section
             t-if="structuredCard"
             t-attf-class="cc-structured-card cc-structured-card--#{structuredCard.type}"
@@ -367,6 +377,48 @@
         </Dialog>
     </t>
 
+    <t t-name="contact_center_ui.FloatingVideo" owl="1">
+        <section
+            class="cc-floating-video"
+            role="region"
+            aria-label="Vídeo flutuante"
+            t-on-keydown="onKeydown"
+        >
+            <header>
+                <strong t-esc="props.media.name" />
+                <button
+                    t-if="supportsPictureInPicture"
+                    type="button"
+                    t-att-disabled="!state.ready"
+                    title="Abrir picture-in-picture"
+                    aria-label="Abrir picture-in-picture"
+                    t-on-click="pictureInPicture"
+                ><i class="fa fa-clone" aria-hidden="true" /></button>
+                <button
+                    type="button"
+                    title="Fechar vídeo"
+                    aria-label="Fechar vídeo"
+                    t-ref="close"
+                    t-on-click="props.close"
+                ><i class="fa fa-times" aria-hidden="true" /></button>
+            </header>
+            <video
+                t-ref="video"
+                t-att-src="props.media.content_url"
+                controls="controls"
+                autoplay="autoplay"
+                playsinline="playsinline"
+                preload="metadata"
+                t-on-play="onPlay"
+                t-on-loadedmetadata="() => state.ready = true"
+                t-on-error="() => state.error = 'Este vídeo não pôde ser reproduzido.'"
+            >
+                Seu navegador não reproduz este vídeo.
+            </video>
+            <p t-if="state.error" role="status" t-esc="state.error" />
+        </section>
+    </t>
+
     <t t-name="contact_center_ui.AudioPlayer" owl="1">
         <div
             class="cc-audio-player"
@@ -417,11 +469,14 @@
                 </div>
                 <div class="cc-audio-player__footer">
                     <time t-att-aria-label="positionLabel" t-esc="timeLabel" />
-                    <i
-                        t-if="media.is_voice_note"
-                        class="fa fa-microphone"
-                        aria-hidden="true"
-                    />
+                    <div class="cc-audio-player__metadata">
+                        <i
+                            t-if="media.is_voice_note"
+                            class="fa fa-microphone"
+                            aria-hidden="true"
+                        />
+                        <t t-slot="metadata" />
+                    </div>
                 </div>
                 <span
                     t-if="state.error"

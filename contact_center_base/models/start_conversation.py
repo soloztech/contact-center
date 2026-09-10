@@ -12,7 +12,12 @@ from ..services.adapter import (
     TransientAdapterError,
     conversation_capabilities,
 )
-from ..services.dto import SCHEMA_VERSION, ActorDTO, DirectAddressResult
+from ..services.dto import (
+    SCHEMA_VERSION,
+    ActorDTO,
+    DirectAddressResult,
+    DTOValidationError,
+)
 from ..services.phone import normalize_start_phone
 from .application import IdentityConflictError
 
@@ -26,19 +31,19 @@ class ContactCenterStartConversation(models.AbstractModel):
         account = (
             self.env["contact.center.account"]
             .with_context(active_test=False)
-            .browse(self._positive_id(account_id, _("caixa de saída")))
+            .browse(self._positive_id(account_id, _("outgoing inbox")))
             .exists()
         )
         if not account:
-            raise ValidationError(_("A caixa de saída não está disponível."))
+            raise ValidationError(_("The outgoing inbox is unavailable."))
         if account.company_id not in self.env.companies:
-            raise AccessError(_("A empresa da caixa não está ativa nesta sessão."))
+            raise AccessError(_("The inbox company is not active in this session."))
         account.check_access_rights("read")
         account.check_access_rule("read")
         # Record rules alone are insufficient for administrators/sudo callers.
         account._contact_center_check_user_scope()
         if not account.active:
-            raise ValidationError(_("A caixa de saída está desativada."))
+            raise ValidationError(_("The outgoing inbox is inactive."))
         return account
 
     @api.model
@@ -77,7 +82,7 @@ class ContactCenterStartConversation(models.AbstractModel):
                 if required:
                     raise UserError(
                         _(
-                            "O provedor desta caixa está indisponível. Selecione outra caixa."
+                            "The provider for this inbox is unavailable. Select another inbox."
                         )
                     ) from None
                 return connections.browse()
@@ -94,9 +99,11 @@ class ContactCenterStartConversation(models.AbstractModel):
         if required:
             raise UserError(
                 _(
-                    "Esta caixa não está pronta para iniciar conversa por telefone. "
-                    "Selecione uma caixa WhatsApp conectada ou peça ao supervisor "
-                    "para verificar a conexão."
+                    (
+                        "This inbox is not ready to start a conversation by phone. Select "
+                        "a connected WhatsApp inbox or ask a supervisor to check the "
+                        "connection."
+                    )
                 )
             )
         return connections.browse()
@@ -164,7 +171,7 @@ class ContactCenterStartConversation(models.AbstractModel):
             return
         own_display = account._contact_center_display_address()
         if own_display == "+" + phone:
-            raise ValidationError(_("Informe o número do cliente, não o da caixa."))
+            raise ValidationError(_("Enter the customer number, not the inbox number."))
         own_local, separator, own_domain = own.partition("@")
         own_local = own_local.split(":", 1)[0].lstrip("+")
         own_domain = own_domain if separator else "s.whatsapp.net"
@@ -175,7 +182,9 @@ class ContactCenterStartConversation(models.AbstractModel):
             if address.namespace in ("whatsapp.pn", "whatsapp.lid") and (
                 address.value_normalized == own_key
             ):
-                raise ValidationError(_("Informe o número do cliente, não o da caixa."))
+                raise ValidationError(
+                    _("Enter the customer number, not the inbox number.")
+                )
 
     @api.model
     def _start_check_ignored(self, account, reference, addresses):
@@ -191,8 +200,10 @@ class ContactCenterStartConversation(models.AbstractModel):
         ):
             raise UserError(
                 _(
-                    "Este contato está ignorado nesta caixa. Peça ao supervisor "
-                    "para revisar a regra antes de iniciar a conversa."
+                    (
+                        "This contact is ignored in this inbox. Ask a supervisor to review"
+                        " the rule before starting the conversation."
+                    )
                 )
             )
 
@@ -210,24 +221,24 @@ class ContactCenterStartConversation(models.AbstractModel):
             resolved = adapter.resolve_direct_address(connection.sudo(), normalized)
         except ProviderRateLimitError as error:
             raise UserError(
-                _("O WhatsApp limitou as consultas. Aguarde e tente novamente.")
+                _("WhatsApp limited the requests. Wait and try again.")
             ) from error
         except ProviderPausedError as error:
             raise UserError(
-                _("A conexão precisa de atenção. Peça ao supervisor para verificá-la.")
+                _("The connection needs attention. Ask a supervisor to check it.")
             ) from error
         except TransientAdapterError as error:
             raise UserError(
-                _("Não foi possível consultar o WhatsApp agora. Tente novamente.")
+                _("WhatsApp could not be reached right now. Try again.")
             ) from error
-        except AdapterError as error:
+        except (AdapterError, DTOValidationError) as error:
             raise UserError(
-                _("O WhatsApp não confirmou um destinatário válido para este número.")
+                _("WhatsApp did not confirm a valid recipient for this number.")
             ) from error
         if not isinstance(resolved, DirectAddressResult):
-            raise ValidationError(_("A conexão retornou um destinatário inválido."))
+            raise ValidationError(_("The connection returned an invalid recipient."))
         if resolved.state == "not_registered":
-            raise UserError(_("Este número não está cadastrado no WhatsApp."))
+            raise UserError(_("This number is not registered on WhatsApp."))
         application = self._application()
         try:
             # A caller catching UserError must not accidentally commit a partial
@@ -246,7 +257,7 @@ class ContactCenterStartConversation(models.AbstractModel):
                 ):
                     raise UserError(
                         _(
-                            "A caixa mudou durante a consulta. Confira e tente novamente."
+                            "The inbox changed during the lookup. Check it and try again."
                         )
                     )
                 self._start_check_own_address(
@@ -279,7 +290,7 @@ class ContactCenterStartConversation(models.AbstractModel):
                 )
                 application._lock_inbound_projection_binding(binding, current_account)
                 if self.env["contact.center.conversation.ignore"]._for_binding(binding):
-                    raise UserError(_("Esta conversa está ignorada nesta caixa."))
+                    raise UserError(_("This conversation is ignored in this inbox."))
                 application._enrich_channel_aliases(binding, resolved.addresses)
                 channel, member = self._authorized_channel(binding.channel_id.id)
                 if not existing:
@@ -295,7 +306,9 @@ class ContactCenterStartConversation(models.AbstractModel):
         except IdentityConflictError as error:
             raise UserError(
                 _(
-                    "Este número tem identificações conflitantes. Peça ao supervisor "
-                    "para revisar os vínculos; nenhuma conversa foi criada."
+                    (
+                        "This number has conflicting identities. Ask a supervisor to "
+                        "review the links; no conversation was created."
+                    )
                 )
             ) from error

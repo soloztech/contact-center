@@ -2,6 +2,32 @@
 
 import {Component, onWillDestroy, useEffect, useRef, useState} from "@odoo/owl";
 
+export function validateTagCatalog(payload) {
+    const ids = new Set();
+    if (
+        !payload ||
+        typeof payload !== "object" ||
+        !Array.isArray(payload.items) ||
+        payload.items.some((tag) => {
+            if (
+                !tag ||
+                !Number.isSafeInteger(tag.id) ||
+                tag.id <= 0 ||
+                typeof tag.name !== "string" ||
+                !tag.name.trim() ||
+                ids.has(tag.id)
+            ) {
+                return true;
+            }
+            ids.add(tag.id);
+            return false;
+        })
+    ) {
+        throw new TypeError("Invalid conversation tag catalog.");
+    }
+    return payload;
+}
+
 export function conversationTagSelected(conversation, tagId) {
     return Boolean(
         conversation && (conversation.tags || []).some((tag) => tag.id === tagId)
@@ -44,7 +70,12 @@ export class ConversationTags extends Component {
                     }
                 };
                 document.addEventListener("pointerdown", onPointer);
-                return () => document.removeEventListener("pointerdown", onPointer);
+                const onKeydown = (event) => this.onKeydown(event);
+                document.addEventListener("keydown", onKeydown);
+                return () => {
+                    document.removeEventListener("pointerdown", onPointer);
+                    document.removeEventListener("keydown", onKeydown);
+                };
             },
             () => [this.local.open]
         );
@@ -118,6 +149,7 @@ export class ConversationTags extends Component {
             if (request !== this.request) {
                 return;
             }
+            validateTagCatalog(payload);
             this.local.items = payload.items;
             this.local.canCreate = payload.can_create === true;
             this.props.store.reconcileTagCatalog(payload.items);
@@ -164,10 +196,11 @@ export class ConversationTags extends Component {
                 channelId,
                 this.local.query.trim(),
             ]);
-            this.props.store.reconcileTagCatalog(payload.items);
             if (request !== this.request) {
                 return;
             }
+            validateTagCatalog(payload);
+            this.props.store.reconcileTagCatalog(payload.items);
             this.local.items = payload.items;
             this.local.query = "";
             this.local.notice =

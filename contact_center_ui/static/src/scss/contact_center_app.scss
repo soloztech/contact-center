@@ -2112,6 +2112,9 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
 }
 
 .cc-day-divider {
+    position: sticky;
+    z-index: 3;
+    top: 0;
     display: flex;
     align-items: center;
     margin: 1.2rem 0 0.8rem;
@@ -2123,6 +2126,13 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
     text-transform: uppercase;
     gap: 0.65rem;
 
+    > span {
+        padding: 0.3rem 0.65rem;
+        border-radius: 0.35rem;
+        background: var(--cc-canvas);
+        box-shadow: 0 1px 3px rgba(23, 39, 48, 0.08);
+    }
+
     &::before,
     &::after {
         height: 1px;
@@ -2130,6 +2140,13 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
         background: rgba(120, 140, 147, 0.24);
         content: "";
     }
+}
+
+.cc-timeline-day {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    min-width: 0;
 }
 
 .cc-unread-divider {
@@ -2695,6 +2712,74 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
     }
 }
 
+.cc-audio-player__metadata {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.cc-message__bubble .cc-audio-player__metadata footer {
+    margin-top: 0;
+    white-space: nowrap;
+}
+
+.cc-floating-video {
+    position: fixed;
+    z-index: 1050;
+    right: 1rem;
+    bottom: 1rem;
+    width: #{"min(25rem, calc(100vw - 2rem))"};
+    overflow: hidden;
+    border: 1px solid #52666f;
+    border-radius: 0.65rem;
+    background: #18272d;
+    color: #fff;
+    box-shadow: 0 0.6rem 2rem rgba(0, 0, 0, 0.35);
+
+    header {
+        display: flex;
+        align-items: center;
+        padding: 0.3rem 0.45rem 0.3rem 0.75rem;
+        gap: 0.3rem;
+    }
+
+    strong {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        font-size: 0.8rem;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    button {
+        width: 2.5rem;
+        height: 2.5rem;
+        border: 0;
+        border-radius: 0.35rem;
+        color: inherit;
+        background: transparent;
+
+        &:hover,
+        &:focus-visible {
+            background: #35505e;
+        }
+    }
+
+    video {
+        display: block;
+        width: 100%;
+        max-height: 60vh;
+        background: #000;
+    }
+
+    p {
+        margin: 0;
+        padding: 0.5rem 0.75rem;
+        font-size: 0.8rem;
+    }
+}
+
 .cc-audio-scrub {
     position: relative;
     height: 1.75rem;
@@ -3226,10 +3311,12 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
 .cc-message-menu,
 .cc-reaction-picker,
 .cc-delete-confirmation {
-    position: absolute;
+    position: fixed;
     z-index: 12;
-    bottom: calc(100% + 0.3rem);
+    bottom: auto;
+    right: auto;
     left: 0;
+    overflow: auto;
     border: 1px solid #c6d1d3;
     border-radius: 0.45rem;
     background: #fff;
@@ -3254,15 +3341,6 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
     .cc-message-actions {
         pointer-events: auto;
         opacity: 1;
-    }
-}
-
-.cc-message--outbound {
-    .cc-message-menu,
-    .cc-reaction-picker,
-    .cc-delete-confirmation {
-        right: 0;
-        left: auto;
     }
 }
 

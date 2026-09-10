@@ -18,16 +18,16 @@ _RESOLUTION_TRANSITION_TOKEN = object()
 
 class ContactCenterResolutionReason(models.Model):
     _name = "contact.center.resolution.reason"
-    _description = "Motivo de resolução da conversa"
+    _description = "Conversation Resolution Reason"
     _order = "sequence, name, id"
     _check_company_auto = True
 
-    name = fields.Char(string="Motivo", required=True)
-    active = fields.Boolean(string="Ativo", default=True)
-    sequence = fields.Integer(string="Ordem", default=10)
+    name = fields.Char(string="Reason", required=True)
+    active = fields.Boolean(default=True)
+    sequence = fields.Integer(default=10)
     company_id = fields.Many2one(
         "res.company",
-        string="Empresa",
+        string="Company",
         required=True,
         index=True,
         default=lambda self: self.env.company,
@@ -38,7 +38,7 @@ class ContactCenterResolutionReason(models.Model):
         (
             "name_company_unique",
             "unique(name, company_id)",
-            "O motivo já está cadastrado nesta empresa.",
+            "This reason already exists in this company.",
         ),
     ]
 
@@ -50,7 +50,7 @@ class ContactCenterResolutionReason(models.Model):
                 or not reason.name.strip()
                 or len(reason.name) > 120
             ):
-                raise ValidationError(_("Informe um motivo de até 120 caracteres."))
+                raise ValidationError(_("Enter a reason of up to 120 characters."))
 
     @api.model_create_multi
     def create(self, values_list):
@@ -67,9 +67,7 @@ class ContactCenterResolutionReason(models.Model):
         if "company_id" in values and any(
             reason.company_id.id != values["company_id"] for reason in self
         ):
-            raise ValidationError(
-                _("Um motivo de resolução não pode mudar de empresa.")
-            )
+            raise ValidationError(_("A resolution reason cannot change company."))
         if isinstance(values.get("name"), str):
             values["name"] = values["name"].strip()
         return super().write(values)
@@ -77,7 +75,7 @@ class ContactCenterResolutionReason(models.Model):
 
 class ContactCenterResolutionRequest(models.Model):
     _name = "contact.center.resolution.request"
-    _description = "Recibo de resolução da conversa"
+    _description = "Conversation Resolution Receipt"
     _order = "id desc"
 
     channel_id = fields.Many2one(
@@ -108,7 +106,7 @@ class ContactCenterResolutionRequest(models.Model):
         (
             "channel_request_unique",
             "unique(channel_id, ui_request_id)",
-            "Esta solicitação de resolução já foi processada.",
+            "This resolution request has already been processed.",
         ),
     ]
 
@@ -119,15 +117,15 @@ class ContactCenterResolutionRequest(models.Model):
             is not CONTACT_CENTER_PRODUCTIVITY_TOKEN
         ):
             raise AccessError(
-                _("Os recibos de resolução são criados pelo serviço de atendimento.")
+                _("Resolution receipts are created by the conversation service.")
             )
         return super().create(values_list)
 
     def write(self, values):  # pylint: disable=method-required-super
-        raise AccessError(_("O histórico de resolução é imutável."))
+        raise AccessError(_("Resolution history is immutable."))
 
     def unlink(self):  # pylint: disable=method-required-super
-        raise AccessError(_("O histórico de resolução é imutável."))
+        raise AccessError(_("Resolution history is immutable."))
 
 
 class ContactCenterApplicationResolution(models.AbstractModel):
@@ -141,7 +139,7 @@ class ContactCenterApplicationResolution(models.AbstractModel):
             # the new inbound message, and never advances customer activity.
             self.env["contact.center.ui.api"]._persist_internal_note(
                 binding.channel_id,
-                _("Conversa reaberta por nova mensagem do cliente."),
+                _("Conversation reopened by a new customer message."),
                 "inbound-reopen:%s" % uuid.uuid4(),
             )
         return reopened
@@ -186,21 +184,21 @@ class ContactCenterUiApiResolution(models.AbstractModel):
         self, channel_id, reason_id, justification, client_request_id, expected_revision
     ):
         channel, _member = self._authorized_channel(channel_id)
-        reason_id = self._positive_id(reason_id, _("motivo de resolução"))
+        reason_id = self._positive_id(reason_id, _("resolution reason"))
         if (
             not isinstance(justification, str)
             or not justification.strip()
             or len(justification.strip()) > 500
         ):
             raise ValidationError(
-                _("Informe uma justificativa breve, de até 500 caracteres.")
+                _("Enter a brief justification of up to 500 characters.")
             )
         justification = justification.strip()
         try:
             request_id = str(uuid.UUID(str(client_request_id)))
         except (ValueError, TypeError, AttributeError) as error:
             raise ValidationError(
-                _("A solicitação de resolução precisa de um UUID válido.")
+                _("The resolution request requires a valid UUID.")
             ) from error
         if (
             not isinstance(expected_revision, str)
@@ -208,7 +206,7 @@ class ContactCenterUiApiResolution(models.AbstractModel):
             or any(char not in "0123456789abcdef" for char in expected_revision)
         ):
             raise ValidationError(
-                _("Reabra o formulário para atualizar o estado da conversa.")
+                _("Reopen the form to refresh the conversation state.")
             )
         payload_sha256 = hashlib.sha256(
             json.dumps([reason_id, justification, expected_revision]).encode("utf-8")
@@ -231,7 +229,9 @@ class ContactCenterUiApiResolution(models.AbstractModel):
                 or receipt.payload_sha256 != payload_sha256
             ):
                 raise ValidationError(
-                    _("Esta solicitação já foi usada com outros dados de resolução.")
+                    _(
+                        "This request has already been used with different resolution data."
+                    )
                 )
             self._internal_note_message(channel, receipt.note_request_id)
             return {
@@ -245,8 +245,10 @@ class ContactCenterUiApiResolution(models.AbstractModel):
         ):
             raise ValidationError(
                 _(
-                    "A conversa foi atualizada. Cancele e reabra o formulário "
-                    "antes de resolver."
+                    (
+                        "The conversation changed. Cancel and reopen the form before "
+                        "resolving it."
+                    )
                 )
             )
         reason = self.env["contact.center.resolution.reason"].search(
@@ -258,12 +260,14 @@ class ContactCenterUiApiResolution(models.AbstractModel):
             limit=1,
         )
         if not reason:
-            raise ValidationError(_("Selecione um motivo ativo desta empresa."))
+            raise ValidationError(_("Select an active reason from this company."))
         reason.check_access_rights("read")
         reason.check_access_rule("read")
         body = _(
-            "%(actor)s resolveu a conversa.\nMotivo: %(reason)s\n"
-            "Justificativa: %(justification)s",
+            (
+                "%(actor)s resolved the conversation.\nReason: %(reason)s\n"
+                "Justification: %(justification)s"
+            ),
             actor=self.env.user.display_name,
             reason=reason.name,
             justification=justification,

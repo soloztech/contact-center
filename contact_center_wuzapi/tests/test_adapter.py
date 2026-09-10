@@ -335,6 +335,81 @@ class TestWuzapiAdapter(WuzapiCase):
             self.connection.wuzapi_api_token,
         )
 
+    @mock.patch(REQUEST_PATCH)
+    def test_failed_own_lid_probe_preserves_messaging_health_and_verified_pair(
+        self, request
+    ):
+        self._record_own_call_identity(
+            "5511888888888@s.whatsapp.net", "200000000000002@lid"
+        )
+        previous = dict(self.connection.wuzapi_own_identity_json)
+        for failure in (
+            FakeResponse(401, {}),
+            FakeResponse(404, {}),
+            FakeResponse(503, {}),
+            requests.Timeout(),
+            FakeResponse(
+                200,
+                {
+                    "code": 200,
+                    "success": True,
+                    "data": {"jid": "5511777777777@s.whatsapp.net", "lid": "3@lid"},
+                },
+            ),
+        ):
+            request.side_effect = [
+                FakeResponse(
+                    200,
+                    {
+                        "code": 200,
+                        "success": True,
+                        "data": {
+                            "connected": True,
+                            "loggedIn": True,
+                            "jid": "5511888888888@s.whatsapp.net",
+                        },
+                    },
+                ),
+                failure,
+            ]
+            health = self.adapter.get_health(self.connection)
+            self.assertEqual(health["state"], "connected")
+            self.assertNotIn("wuzapi_own_identity", health)
+            self.connection._apply_health_result(health, records_health_probe=True)
+            self.assertEqual(self.connection.wuzapi_own_identity_json, previous)
+
+    @mock.patch(REQUEST_PATCH)
+    def test_rate_limited_own_lid_probe_sets_core_health_cooldown(self, request):
+        self.account.own_external_identity = "5511888888888@s.whatsapp.net"
+        request.side_effect = [
+            FakeResponse(
+                200,
+                {
+                    "code": 200,
+                    "success": True,
+                    "data": {
+                        "connected": True,
+                        "loggedIn": True,
+                        "jid": "5511888888888@s.whatsapp.net",
+                    },
+                },
+            ),
+            FakeResponse(429, {}, headers={"Retry-After": "120"}),
+        ]
+        health = self.adapter.get_health(self.connection)
+        self.assertEqual(health["state"], "connected")
+        self.assertEqual(health["retry_after_seconds"], 120)
+        self.connection._apply_health_result(health, records_health_probe=True)
+        self.assertFalse(self.connection.wuzapi_own_identity_json)
+        self.assertEqual(
+            self.connection.health_retry_not_before,
+            self.connection.last_health_at + datetime.timedelta(seconds=120),
+        )
+        self.assertGreaterEqual(
+            self.connection.next_health_check_at,
+            self.connection.health_retry_not_before,
+        )
+
     def _command(
         self,
         reply_to=None,

@@ -24,6 +24,7 @@ msgstr "Central de Atendimento"
 #. module: contact_center_base
 #: model:ir.module.category,name:contact_center_base.module_category_contact_center
 #: model:ir.ui.menu,name:contact_center_base.menu_contact_center_root
+#: model_terms:ir.ui.view,arch_db:contact_center_base.res_config_settings_view_contact_center_companies
 msgid "Contact Center"
 msgstr "Central de Atendimento"
 
@@ -59,6 +60,8 @@ msgstr "Resposta do provedor"
 
 #. module: contact_center_base
 #: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_account_setup_wizard__step__inbox
+#: code:addons/contact_center_base/models/productivity.py:307
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_quick_reply_binding__scope__account
 msgid "Inbox"
 msgstr "Caixa"
 
@@ -90,6 +93,10 @@ msgstr "Nome da caixa"
 
 #. module: contact_center_base
 #: model:ir.model.fields,field_description:contact_center_base.field_contact_center_account_setup_wizard__company_id
+#: code:addons/contact_center_base/models/resolution.py:30
+#: code:addons/contact_center_base/models/productivity.py:305
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_resolution_reason__company_id
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_quick_reply_binding__scope__company
 msgid "Company"
 msgstr "Empresa"
 
@@ -261,7 +268,8 @@ msgstr "Configuração"
 
 #. module: contact_center_base
 msgid "Only Contact Center administrators can configure inboxes."
-msgstr "Somente administradores da Central de Atendimento podem configurar caixas."
+msgstr ""
+"Somente administradores da Central de Atendimento podem configurar caixas."
 
 #. module: contact_center_base
 msgid "This guided setup belongs to another user."
@@ -313,11 +321,14 @@ msgstr "A conexão preparada do provedor não existe mais."
 
 #. module: contact_center_base
 msgid "The staged provider connection is not eligible for guided repair."
-msgstr "A conexão preparada do provedor não pode ser corrigida por este assistente."
+msgstr ""
+"A conexão preparada do provedor não pode ser corrigida por este assistente."
 
 #. module: contact_center_base
-msgid "Choose a specific responsible user or a responsibility scope, not both."
-msgstr "Escolha um responsável específico ou um atalho de responsabilidade, não ambos."
+msgid "Choose a responsible user or a responsibility scope, not both."
+msgstr ""
+"Escolha um responsável específico ou um atalho de responsabilidade, não "
+"ambos."
 
 #. module: contact_center_base
 msgid "The responsible user is not available."
@@ -334,3 +345,387 @@ msgstr "Use apenas uma seleção de marcadores por filtro."
 #. module: contact_center_base
 msgid "Invalid tag IDs."
 msgstr "A seleção de marcadores é inválida."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/resolution.py:21
+#: model:ir.model,name:contact_center_base.model_contact_center_resolution_reason
+msgid "Conversation Resolution Reason"
+msgstr "Motivo de resolução da conversa"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/resolution.py:25
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_resolution_reason__name
+msgid "Reason"
+msgstr "Motivo"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/resolution.py:26
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_resolution_reason__active
+msgid "Active"
+msgstr "Ativo"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/resolution.py:27
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_resolution_reason__sequence
+msgid "Sequence"
+msgstr "Ordem"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/resolution.py:41
+#: model:ir.model.constraint,message:contact_center_base.constraint_contact_center_resolution_reason_name_company_unique
+msgid "This reason already exists in this company."
+msgstr "O motivo já está cadastrado nesta empresa."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/resolution.py:53
+msgid "Enter a reason of up to 120 characters."
+msgstr "Informe um motivo de até 120 caracteres."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/resolution.py:71
+msgid "A resolution reason cannot change company."
+msgstr "Um motivo de resolução não pode mudar de empresa."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/resolution.py:80
+#: model:ir.model,name:contact_center_base.model_contact_center_resolution_request
+msgid "Conversation Resolution Receipt"
+msgstr "Recibo de resolução da conversa"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/resolution.py:111
+#: model:ir.model.constraint,message:contact_center_base.constraint_contact_center_resolution_request_channel_request_unique
+msgid "This resolution request has already been processed."
+msgstr "Esta solicitação de resolução já foi processada."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/resolution.py:122
+msgid "Resolution receipts are created by the conversation service."
+msgstr "Os recibos de resolução são criados pelo serviço de atendimento."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/resolution.py:127
+#: code:addons/contact_center_base/models/resolution.py:130
+msgid "Resolution history is immutable."
+msgstr "O histórico de resolução é imutável."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/resolution.py:144
+msgid "Conversation reopened by a new customer message."
+msgstr "Conversa reaberta por nova mensagem do cliente."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/resolution.py:189
+msgid "resolution reason"
+msgstr "motivo de resolução"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/resolution.py:196
+msgid "Enter a brief justification of up to 500 characters."
+msgstr "Informe uma justificativa breve, de até 500 caracteres."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/resolution.py:203
+msgid "The resolution request requires a valid UUID."
+msgstr "A solicitação de resolução precisa de um UUID válido."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/resolution.py:211
+msgid "Reopen the form to refresh the conversation state."
+msgstr "Reabra o formulário para atualizar o estado da conversa."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/resolution.py:234
+msgid "This request has already been used with different resolution data."
+msgstr "Esta solicitação já foi usada com outros dados de resolução."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/resolution.py:248
+msgid ""
+"The conversation changed. Cancel and reopen the form before resolving it."
+msgstr ""
+"A conversa foi atualizada. Cancele e reabra o formulário antes de resolver."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/resolution.py:261
+msgid "Select an active reason from this company."
+msgstr "Selecione um motivo ativo desta empresa."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/resolution.py:265
+msgid ""
+"%(actor)s resolved the conversation.\n"
+"Reason: %(reason)s\n"
+"Justification: %(justification)s"
+msgstr ""
+"%(actor)s resolveu a conversa.\n"
+"Motivo: %(reason)s\n"
+"Justificativa: %(justification)s"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/start_conversation.py:34
+msgid "outgoing inbox"
+msgstr "caixa de saída"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/start_conversation.py:38
+msgid "The outgoing inbox is unavailable."
+msgstr "A caixa de saída não está disponível."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/start_conversation.py:40
+msgid "The inbox company is not active in this session."
+msgstr "A empresa da caixa não está ativa nesta sessão."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/start_conversation.py:46
+msgid "The outgoing inbox is inactive."
+msgstr "A caixa de saída está desativada."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/start_conversation.py:85
+msgid "The provider for this inbox is unavailable. Select another inbox."
+msgstr "O provedor desta caixa está indisponível. Selecione outra caixa."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/start_conversation.py:102
+msgid ""
+"This inbox is not ready to start a conversation by phone. Select a connected"
+" WhatsApp inbox or ask a supervisor to check the connection."
+msgstr ""
+"Esta caixa não está pronta para iniciar conversa por telefone. Selecione uma"
+" caixa WhatsApp conectada ou peça ao supervisor para verificar a conexão."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/start_conversation.py:172
+#: code:addons/contact_center_base/models/start_conversation.py:183
+msgid "Enter the customer number, not the inbox number."
+msgstr "Informe o número do cliente, não o da caixa."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/start_conversation.py:199
+msgid ""
+"This contact is ignored in this inbox. Ask a supervisor to review the rule "
+"before starting the conversation."
+msgstr ""
+"Este contato está ignorado nesta caixa. Peça ao supervisor para revisar a "
+"regra antes de iniciar a conversa."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/start_conversation.py:218
+msgid "WhatsApp limited the requests. Wait and try again."
+msgstr "O WhatsApp limitou as consultas. Aguarde e tente novamente."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/start_conversation.py:222
+msgid "The connection needs attention. Ask a supervisor to check it."
+msgstr "A conexão precisa de atenção. Peça ao supervisor para verificá-la."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/start_conversation.py:226
+msgid "WhatsApp could not be reached right now. Try again."
+msgstr "Não foi possível consultar o WhatsApp agora. Tente novamente."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/start_conversation.py:230
+msgid "WhatsApp did not confirm a valid recipient for this number."
+msgstr "O WhatsApp não confirmou um destinatário válido para este número."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/start_conversation.py:233
+msgid "The connection returned an invalid recipient."
+msgstr "A conexão retornou um destinatário inválido."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/start_conversation.py:235
+msgid "This number is not registered on WhatsApp."
+msgstr "Este número não está cadastrado no WhatsApp."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/start_conversation.py:254
+msgid "The inbox changed during the lookup. Check it and try again."
+msgstr "A caixa mudou durante a consulta. Confira e tente novamente."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/start_conversation.py:287
+msgid "This conversation is ignored in this inbox."
+msgstr "Esta conversa está ignorada nesta caixa."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/start_conversation.py:303
+msgid ""
+"This number has conflicting identities. Ask a supervisor to review the "
+"links; no conversation was created."
+msgstr ""
+"Este número tem identificações conflitantes. Peça ao supervisor para revisar"
+" os vínculos; nenhuma conversa foi criada."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/productivity.py:273
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_quick_reply_binding__shortcut
+msgid "Shortcut"
+msgstr "Atalho"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/productivity.py:279
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_quick_reply_binding__body
+msgid "Reply"
+msgstr "Resposta"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/productivity.py:285
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_quick_reply_binding__description
+msgid "Description"
+msgstr "Descrição"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/productivity.py:291
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_quick_reply_binding__owner_id
+msgid "Owner"
+msgstr "Proprietário"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/productivity.py:304
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_quick_reply_binding__scope__personal
+msgid "Personal"
+msgstr "Pessoal"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/productivity.py:306
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_quick_reply_binding__scope__team
+msgid "Team"
+msgstr "Equipe"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/productivity.py:308
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_quick_reply_binding__scope__channel
+msgid "Conversation"
+msgstr "Conversa"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/productivity.py:310
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_quick_reply_binding__scope
+msgid "Available To"
+msgstr "Disponível para"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/productivity.py:1219
+msgid "%s resolved the conversation."
+msgstr "%s resolveu a conversa."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/productivity.py:1221
+msgid "%s reopened the conversation."
+msgstr "%s reabriu a conversa."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/productivity.py:1225
+msgid "%s claimed the conversation."
+msgstr "%s assumiu a conversa."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/productivity.py:1229
+msgid "%(actor)s assigned the conversation to %(responsible)s."
+msgstr "%(actor)s atribuiu a conversa a %(responsible)s."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/productivity.py:1235
+msgid "%s removed the conversation assignee."
+msgstr "%s removeu o responsável pela conversa."
+
+#. module: contact_center_base
+#: model:ir.actions.act_window,name:contact_center_base.action_contact_center_resolution_reasons
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_resolution_reasons
+msgid "Resolution Reasons"
+msgstr "Motivos de resolução"
+
+#. module: contact_center_base
+#: model:ir.actions.act_window,name:contact_center_base.action_contact_center_quick_reply_bindings
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_quick_replies
+msgid "Quick Replies"
+msgstr "Respostas rápidas"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/partner_companies.py:35
+msgid "Only individual contacts may have secondary companies."
+msgstr "Somente contatos individuais podem ter empresas secundárias."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/partner_companies.py:46
+msgid ""
+"Select companies in the contact's Odoo company, different from its primary "
+"company."
+msgstr ""
+"Selecione empresas no mesmo escopo do contato, diferentes da empresa "
+"principal."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/ui_api.py:3367
+#: code:addons/contact_center_base/models/ui_api.py:3475
+msgid "Select a primary or secondary company relationship."
+msgstr "Selecione um vínculo principal ou secundário."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/ui_api.py:3375
+msgid ""
+"Secondary company relationships are disabled in Contact Center settings."
+msgstr ""
+"Os vínculos secundários estão desativados nas configurações da Central de "
+"Atendimento."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/ui_api.py:3402
+msgid "This company is already the primary company."
+msgstr "Esta empresa já é a empresa principal."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/ui_api.py:3504
+msgid "The primary company changed. Reopen the company editor."
+msgstr "A empresa principal foi alterada. Reabra o painel de empresas."
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_res_partner__contact_center_secondary_company_ids
+msgid "Secondary companies"
+msgstr "Empresas secundárias"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_res_company__contact_center_secondary_companies_enabled
+#: model:ir.model.fields,field_description:contact_center_base.field_res_config_settings__contact_center_secondary_companies_enabled
+msgid "Secondary company relationships"
+msgstr "Vínculos secundários de empresas"
+
+#. module: contact_center_base
+#: model:ir.model.fields,help:contact_center_base.field_res_partner__contact_center_secondary_company_ids
+msgid ""
+"Additional companies associated with this person. The primary company "
+"remains Odoo's commercial entity; these relationships do not alter "
+"documents."
+msgstr ""
+"Relações adicionais do contato. A empresa principal continua sendo a "
+"referência comercial do Odoo; estes vínculos não alteram documentos."
+
+#. module: contact_center_base
+#: model:ir.model.fields,help:contact_center_base.field_res_company__contact_center_secondary_companies_enabled
+#: model:ir.model.fields,help:contact_center_base.field_res_config_settings__contact_center_secondary_companies_enabled
+msgid ""
+"Allow agents to add secondary companies to contacts. Disabling prevents new "
+"relationships and preserves existing ones."
+msgstr ""
+"Permite adicionar empresas secundárias aos contatos no atendimento. "
+"Desativar impede novos vínculos e preserva os existentes."
+
+#. module: contact_center_base
+#: model_terms:ir.ui.view,arch_db:contact_center_base.res_config_settings_view_contact_center_companies
+#: model:ir.actions.act_window,name:contact_center_base.action_contact_center_relationship_settings
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_relationship_settings
+msgid "Contact relationships"
+msgstr "Relacionamentos dos contatos"
+
+#. module: contact_center_base
+#: model_terms:ir.ui.view,arch_db:contact_center_base.res_config_settings_view_contact_center_companies
+msgid ""
+"Allow multiple companies per contact. The primary company remains the "
+"commercial entity. Disabling preserves existing relationships."
+msgstr ""
+"Permitir várias empresas por contato. A principal permanece como referência "
+"comercial. Desativar preserva os vínculos existentes."

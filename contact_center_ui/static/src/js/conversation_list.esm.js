@@ -26,10 +26,6 @@ import {useOwnedDialogs} from "@web/core/utils/hooks";
 const {DateTime} = luxon;
 const LIST_VIEWS = new Set(["grouped", "flat"]);
 const LIST_PAGING_THRESHOLD = 200;
-const INBOX_NAME_COLLATOR = new Intl.Collator("pt-BR", {
-    numeric: true,
-    sensitivity: "base",
-});
 
 function positiveInteger(value) {
     return Number.isSafeInteger(value) && value > 0 ? value : false;
@@ -64,7 +60,10 @@ function safePlatform(value) {
 }
 
 function compareInboxGroups(left, right) {
-    const nameOrder = INBOX_NAME_COLLATOR.compare(left.name, right.name);
+    const nameOrder = left.name.localeCompare(right.name, DateTime.local().locale, {
+        numeric: true,
+        sensitivity: "base",
+    });
     return nameOrder || String(left.key).localeCompare(String(right.key));
 }
 
@@ -424,6 +423,9 @@ export class ConversationList extends Component {
     }
 
     toggleFilters() {
+        if (this.ui.startPending) {
+            return;
+        }
         if (this.ui.filtersOpen) {
             this.closeFilters();
         } else {
@@ -529,6 +531,9 @@ export class ConversationList extends Component {
     }
 
     closeStartConversation(restoreFocus = true) {
+        if (this.ui.startPending) {
+            return false;
+        }
         this.cancelStartPreview();
         this.startSession += 1;
         this.ui.startOpen = false;
@@ -631,6 +636,7 @@ export class ConversationList extends Component {
                 return false;
             }
             if (result) {
+                this.ui.startPending = false;
                 this.closeStartConversation();
             }
             return Boolean(result);

@@ -1,0 +1,44 @@
+.cc-link-previews {
+    display: grid;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+    min-width: 0;
+}
+
+.cc-link-preview {
+    display: flex;
+    align-items: stretch;
+    max-width: 28rem;
+    overflow: hidden;
+    color: inherit;
+    background: rgba(0, 0, 0, 0.045);
+    border-radius: 0.5rem;
+    text-decoration: none;
+
+    img {
+        width: 5.5rem;
+        max-height: 8rem;
+        object-fit: cover;
+        flex: 0 0 auto;
+    }
+
+    &__text {
+        display: grid;
+        gap: 0.2rem;
+        padding: 0.6rem;
+        min-width: 0;
+        overflow-wrap: anywhere;
+
+        strong,
+        span {
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
+            overflow: hidden;
+        }
+
+        small {
+            opacity: 0.75;
+        }
+    }
+}

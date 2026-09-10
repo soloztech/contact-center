@@ -234,6 +234,67 @@ class TestMultiAccessConversationUi(SavepointCase):
         )
         self.assertEqual(self.channel.contact_center_tag_ids, tags[:1])
 
+    def test_multi_tag_or_filter_paginates_distinct_conversations(self):
+        ui = self.env["contact.center.ui.api"].with_user(self.users[0])
+        tags = self.env["contact.center.tag"].create(
+            [
+                {"name": "OR pagination %s" % index, "company_id": self.env.company.id}
+                for index in range(2)
+            ]
+        )
+        ui.update_conversation(self.channel.id, {"tag_ids": tags[:1].ids})
+        expected_ids = set(self.channel.ids)
+        # One conversation matches only B, one matches A+B, one matches neither.
+        # The A+B row must occur once even with page size one and duplicate tags.
+        for selected_tags in (tags[1:], tags, self.env["contact.center.tag"]):
+            guest = self.env["mail.guest"].create({"name": "Tag pagination guest"})
+            identity = self.env["contact.center.identity"].create(
+                {
+                    "name": guest.name,
+                    "mail_guest_id": guest.id,
+                    "company_id": self.env.company.id,
+                }
+            )
+            channel = self.env["mail.channel"]._contact_center_create_channel(
+                account=self.account,
+                identity=identity,
+                teams=self.teams,
+                responsible=self.users[1],
+                guest_ids=guest.ids,
+            )
+            self.env["contact.center.channel.binding"].create(
+                {
+                    "channel_id": channel.id,
+                    "account_id": self.account.id,
+                    "identity_id": identity.id,
+                    "conversation_type": "direct",
+                    "conversation_ref": "or-pagination-%s" % uuid.uuid4(),
+                }
+            )
+            ui.update_conversation(channel.id, {"tag_ids": selected_tags.ids})
+            if selected_tags:
+                expected_ids.add(channel.id)
+        filters = {
+            "account_id": self.account.id,
+            "responsible_id": self.users[1].id,
+            "tag_ids": tags.ids + tags[:1].ids,
+        }
+        first = ui.list_conversations(filters=filters, limit=1)
+        self.assertEqual(first["total"], 3)
+        seen = [first["items"][0]["channel_id"]]
+        page = first
+        for _index in range(2):
+            self.assertTrue(page["has_more"])
+            page = ui.list_conversations(
+                filters=filters, limit=1, cursor=page["next_cursor"]
+            )
+            self.assertEqual(len(page["items"]), 1)
+            seen.append(page["items"][0]["channel_id"])
+        self.assertFalse(page["has_more"])
+        self.assertFalse(page["next_cursor"])
+        self.assertEqual(set(seen), expected_ids)
+        self.assertEqual(len(seen), len(set(seen)))
+
     def test_multi_tag_filters_reject_malformed_conflicting_and_foreign_company(self):
         ui = self.env["contact.center.ui.api"].with_user(self.users[0])
         foreign_company = self.env["res.company"].create(

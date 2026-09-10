@@ -19,6 +19,7 @@ import {
     normalizeConversationGroup,
     normalizePartnerCompany,
     partnerCompanyForIdentity,
+    secondaryCompaniesForIdentity,
     validateEnvelope,
 } from "./contact_center_model.esm";
 import {_t} from "@web/core/l10n/translation";
@@ -807,7 +808,12 @@ function replyMatches(replyTo, replyId) {
     return (!replyTo && !replyId) || (replyTo && replyTo.message_id === replyId);
 }
 
-function companyMutationIdentity(payload, partnerId, expectedCompanyId = false) {
+function companyMutationIdentity(
+    payload,
+    partnerId,
+    expectedCompanyId = false,
+    relationKind = "primary"
+) {
     if (!isPlainRecord(payload) || !isPlainRecord(payload.identity)) {
         throw new Error("O servidor não confirmou o vínculo da empresa.");
     }
@@ -817,14 +823,19 @@ function companyMutationIdentity(payload, partnerId, expectedCompanyId = false) 
         throw new Error("O servidor não confirmou o vínculo da empresa.");
     }
     const company = normalizePartnerCompany(payload.company);
-    const linkedCompany = partnerCompanyForIdentity(identity);
+    const linkedCompany =
+        relationKind === "secondary"
+            ? secondaryCompaniesForIdentity(identity).find(
+                  (item) => company && item.id === company.id
+              )
+            : partnerCompanyForIdentity(identity);
     if (!company || !linkedCompany) {
         throw new Error("O servidor não confirmou o vínculo da empresa.");
     }
     if (partner.id !== partnerId || partner.is_company !== false) {
         throw new Error("O servidor não confirmou o vínculo da empresa.");
     }
-    if (partner.company_linking_allowed !== false) {
+    if (relationKind === "primary" && partner.company_linking_allowed !== false) {
         throw new Error("O servidor não confirmou o vínculo da empresa.");
     }
     if (company.id !== linkedCompany.id) {
@@ -832,6 +843,27 @@ function companyMutationIdentity(payload, partnerId, expectedCompanyId = false) 
     }
     if (expectedCompanyId && company.id !== expectedCompanyId) {
         throw new Error("O servidor não confirmou o vínculo da empresa.");
+    }
+    return identity;
+}
+
+function companyRelationshipExists(identity, companyId, relationKind) {
+    return relationKind === "secondary"
+        ? secondaryCompaniesForIdentity(identity).some(
+              (company) => company.id === companyId
+          )
+        : (partnerCompanyForIdentity(identity) || {}).id === companyId;
+}
+
+function companyUnlinkIdentity(payload, partnerId, companyId, relationKind) {
+    const identity = payload.identity;
+    if (
+        !isPlainRecord(identity) ||
+        !isPlainRecord(identity.partner) ||
+        identity.partner.id !== partnerId ||
+        companyRelationshipExists(identity, companyId, relationKind)
+    ) {
+        throw new Error("O servidor não confirmou o desvínculo da empresa.");
     }
     return identity;
 }
@@ -987,6 +1019,7 @@ export class ContactCenterStore {
                 channelId: false,
                 partnerId: false,
                 mode: "search",
+                relationKind: "primary",
                 phase: "idle",
                 query: "",
                 results: [],
@@ -3336,14 +3369,8 @@ export class ContactCenterStore {
         if (pending) {
             return pending.promise;
         }
-        const conversation = this.selectedConversation || {};
         const confirmed = this.confirmedSeenPointer || {};
-        if (
-            confirmed.channelId === channelId &&
-            confirmed.messageId === messageId &&
-            !conversation.unread_count &&
-            !this.state.timelineFirstUnreadMessageId
-        ) {
+        if (confirmed.channelId === channelId && confirmed.messageId === messageId) {
             return Promise.resolve(true);
         }
         this.cancelSeenRetry();
@@ -4157,8 +4184,10 @@ export class ContactCenterStore {
                 this.capabilities[capability] === true &&
                 partner &&
                 partner.is_company === false &&
-                partner.company_linking_allowed === true &&
-                partner.company === false
+                ((partner.company_linking_allowed === true &&
+                    partner.company === false) ||
+                    (partner.company &&
+                        partner.secondary_company_linking_allowed === true))
         );
     }
 
@@ -4200,6 +4229,11 @@ export class ContactCenterStore {
         this.state.companyLinker.channelId = this.state.selectedChannelId;
         this.state.companyLinker.partnerId = partner.id;
         this.state.companyLinker.mode = mode;
+        this.state.companyLinker.relationKind = partnerCompanyForIdentity(
+            this.selectedConversation.identity
+        )
+            ? "secondary"
+            : "primary";
         return true;
     }
 
@@ -4213,6 +4247,7 @@ export class ContactCenterStore {
         this.state.companyLinker.channelId = false;
         this.state.companyLinker.partnerId = false;
         this.state.companyLinker.mode = "search";
+        this.state.companyLinker.relationKind = "primary";
         this.state.companyLinker.phase = "idle";
         this.state.companyLinker.query = "";
         this.state.companyLinker.results = [];
@@ -4254,6 +4289,7 @@ export class ContactCenterStore {
         const request = ++this.companyLinkerRequest;
         const channelId = linker.channelId;
         const partnerId = linker.partnerId;
+        const relationKind = linker.relationKind;
         linker.results = [];
         if (searchQuery.trim().length < 2) {
             linker.phase = "idle";
@@ -4267,6 +4303,7 @@ export class ContactCenterStore {
                     channelId,
                     partnerId,
                     searchQuery,
+                    ...(relationKind === "secondary" ? [12, "secondary"] : []),
                 ]);
                 validateEnvelope(payload);
                 if (!this.isCurrentCompanyLinker(request, channelId)) {
@@ -4325,6 +4362,7 @@ export class ContactCenterStore {
             request,
             channelId: this.state.companyLinker.channelId,
             partnerId: this.state.companyLinker.partnerId,
+            relationKind: this.state.companyLinker.relationKind,
             operationKey,
         };
     }
@@ -4712,6 +4750,7 @@ export class ContactCenterStore {
                 operation.channelId,
                 operation.partnerId,
                 companyPartnerId,
+                ...(operation.relationKind === "secondary" ? ["secondary"] : []),
             ]);
             validateEnvelope(payload);
             if (this.destroyed) {
@@ -4720,7 +4759,8 @@ export class ContactCenterStore {
             const identity = companyMutationIdentity(
                 payload,
                 operation.partnerId,
-                companyPartnerId
+                companyPartnerId,
+                operation.relationKind
             );
             const applied = this.applyIdentityForPartner(
                 operation.channelId,
@@ -4764,12 +4804,18 @@ export class ContactCenterStore {
                 operation.channelId,
                 operation.partnerId,
                 values,
+                ...(operation.relationKind === "secondary" ? ["secondary"] : []),
             ]);
             validateEnvelope(payload);
             if (this.destroyed) {
                 return false;
             }
-            const identity = companyMutationIdentity(payload, operation.partnerId);
+            const identity = companyMutationIdentity(
+                payload,
+                operation.partnerId,
+                false,
+                operation.relationKind
+            );
             const applied = this.applyIdentityForPartner(
                 operation.channelId,
                 operation.partnerId,
@@ -4798,6 +4844,63 @@ export class ContactCenterStore {
                 if (!this.destroyed) {
                     this.state.companyOperationsRevision += 1;
                 }
+            }
+        }
+    }
+
+    async unlinkPartnerCompany(companyId, relationKind = "primary") {
+        const channelId = this.state.selectedChannelId;
+        const identity =
+            this.selectedConversation && this.selectedConversation.identity;
+        const partner = identity && identity.partner;
+        const linked = companyRelationshipExists(identity, companyId, relationKind);
+        if (
+            !partner ||
+            !linked ||
+            !partner.company_management_allowed ||
+            !this.capabilities.link_company ||
+            this.companyOperationPending(channelId, partner.id)
+        ) {
+            return false;
+        }
+        const operationKey = this.companyOperationKey(channelId, partner.id);
+        this.pendingCompanyOperations.add(operationKey);
+        this.state.companyOperationsRevision += 1;
+        try {
+            const payload = await this.call("unlink_partner_company", [
+                channelId,
+                partner.id,
+                companyId,
+                relationKind,
+            ]);
+            validateEnvelope(payload);
+            if (this.destroyed) {
+                return false;
+            }
+            const updated = companyUnlinkIdentity(
+                payload,
+                partner.id,
+                companyId,
+                relationKind
+            );
+            this.applyIdentityForPartner(channelId, partner.id, updated);
+            if (
+                this.state.companyLinker.channelId === channelId &&
+                this.state.companyLinker.partnerId === partner.id
+            ) {
+                this.closeCompanyLinker();
+            }
+            this.notify("Empresa desvinculada. O contato foi mantido.", {
+                type: "success",
+            });
+            return true;
+        } catch (error) {
+            this.notify(errorMessage(error), {type: "danger"});
+            return false;
+        } finally {
+            this.pendingCompanyOperations.delete(operationKey);
+            if (!this.destroyed) {
+                this.state.companyOperationsRevision += 1;
             }
         }
     }

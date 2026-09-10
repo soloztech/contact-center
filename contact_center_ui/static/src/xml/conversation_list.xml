@@ -393,6 +393,7 @@
                             type="button"
                             class="cc-icon-button"
                             aria-label="Fechar iniciar conversa"
+                            t-att-disabled="ui.startPending"
                             t-on-click="() => this.closeStartConversation()"
                         ><i class="fa fa-times" aria-hidden="true" /></button>
                     </header>
@@ -475,6 +476,7 @@
                             type="button"
                             class="cc-inbox-filter-clear"
                             t-on-click="() => this.closeStartConversation()"
+                            t-att-disabled="ui.startPending"
                         >Cancelar</button>
                         <button
                             type="submit"

@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="res_config_settings_view_contact_center_companies" model="ir.ui.view">
+        <field name="name">res.config.settings.contact.center.companies</field>
+        <field name="model">res.config.settings</field>
+        <field name="inherit_id" ref="base.res_config_settings_view_form" />
+        <field name="arch" type="xml">
+            <xpath expr="//div[hasclass('settings')]" position="inside">
+                <div
+                    class="app_settings_block"
+                    data-string="Contact Center"
+                    string="Contact Center"
+                    data-key="contact_center_base"
+                    groups="base.group_system"
+                >
+                    <h2>Contact relationships</h2>
+                    <div class="row mt16 o_settings_container">
+                        <div class="col-12 col-lg-6 o_setting_box">
+                            <div class="o_setting_left_pane"><field
+                                    name="contact_center_secondary_companies_enabled"
+                                /></div>
+                            <div class="o_setting_right_pane">
+                                <label
+                                    for="contact_center_secondary_companies_enabled"
+                                />
+                                <div
+                                    class="text-muted"
+                                >Allow multiple companies per contact. The primary company remains the commercial entity. Disabling preserves existing relationships.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </xpath>
+        </field>
+    </record>
+    <record
+        id="action_contact_center_relationship_settings"
+        model="ir.actions.act_window"
+    >
+        <field name="name">Contact relationships</field>
+        <field name="res_model">res.config.settings</field>
+        <field name="view_mode">form</field>
+        <field name="target">inline</field>
+        <field name="context">{'module': 'contact_center_base'}</field>
+    </record>
+    <menuitem
+        id="menu_contact_center_relationship_settings"
+        name="Contact relationships"
+        parent="menu_contact_center_configuration"
+        action="action_contact_center_relationship_settings"
+        sequence="60"
+        groups="base.group_system"
+    />
+</odoo>

@@ -582,6 +582,22 @@ export function partnerCompanyForIdentity(identity) {
     return normalizePartnerCompany(identity.partner.company);
 }
 
+export function secondaryCompaniesForIdentity(identity) {
+    const values = identity && identity.partner && identity.partner.secondary_companies;
+    const primary = partnerCompanyForIdentity(identity);
+    const seen = new Set(primary ? [primary.id] : []);
+    if (!Array.isArray(values)) {
+        return [];
+    }
+    return values.map(normalizePartnerCompany).filter((company) => {
+        if (!company || seen.has(company.id)) {
+            return false;
+        }
+        seen.add(company.id);
+        return true;
+    });
+}
+
 function groupCount(value) {
     if (value === false) {
         return false;

@@ -11,11 +11,13 @@ import {
     initials,
     isGroupConversation,
     partnerCompanyForIdentity,
+    secondaryCompaniesForIdentity,
 } from "./contact_center_model.esm";
 import {AttributionTouchpoints} from "./attribution_touchpoints.esm";
 import {DeferredImage} from "./deferred_image.esm";
 import {deserializeDateTime} from "@web/core/l10n/dates";
 import {useService} from "@web/core/utils/hooks";
+import {ConfirmationDialog} from "@web/core/confirmation_dialog/confirmation_dialog";
 
 export function effectiveAgentsForConversation(conversation, teams, agents) {
     if (!Array.isArray(agents)) {
@@ -47,6 +49,7 @@ export function effectiveAgentsForConversation(conversation, teams, agents) {
 export class ContactPanel extends Component {
     setup() {
         this.action = useService("action");
+        this.dialog = useService("dialog");
         this.renameInputRef = useRef("renameInput");
         this.companyInputRef = useRef("companyInput");
         this.companyLinkTriggerRef = useRef("companyLinkTrigger");
@@ -153,6 +156,22 @@ export class ContactPanel extends Component {
         return (this.identity && this.identity.partner) || false;
     }
 
+    get secondaryCompanies() {
+        return secondaryCompaniesForIdentity(this.identity);
+    }
+
+    get hasCompanyRelationships() {
+        return Boolean(this.company || this.secondaryCompanies.length);
+    }
+
+    get canManageCompany() {
+        return Boolean(
+            this.partner &&
+                this.partner.company_management_allowed &&
+                this.store.capabilities.link_company
+        );
+    }
+
     get isLinkedCompany() {
         return Boolean(this.partner && this.identity.link_kind === "central_company");
     }
@@ -194,7 +213,10 @@ export class ContactPanel extends Component {
 
     get canUnlinkIdentity() {
         return Boolean(
-            this.partner && (!this.isLinkedCompany || this.canLinkCentralCompany)
+            this.partner &&
+                (this.isLinkedCompany
+                    ? this.canLinkCentralCompany
+                    : !this.hasCompanyRelationships)
         );
     }
 
@@ -209,8 +231,11 @@ export class ContactPanel extends Component {
                 this.identity.partner &&
                 this.identity.link_kind === "person" &&
                 this.identity.partner.is_company === false &&
-                this.identity.partner.company === false &&
-                this.identity.partner.company_linking_allowed === true &&
+                ((this.identity.partner.company === false &&
+                    this.identity.partner.company_linking_allowed === true) ||
+                    (this.company &&
+                        this.identity.partner.secondary_company_linking_allowed ===
+                            true)) &&
                 this.store.capabilities.link_company === true
         );
     }
@@ -442,7 +467,11 @@ export class ContactPanel extends Component {
     }
 
     async openPartnerRecord(partnerId) {
-        const candidates = [this.partner, this.company].filter(Boolean);
+        const candidates = [
+            this.partner,
+            this.company,
+            ...(this.secondaryCompanies || []),
+        ].filter(Boolean);
         const current = candidates.find(
             (candidate) =>
                 Number.isSafeInteger(candidate.id) &&
@@ -477,6 +506,24 @@ export class ContactPanel extends Component {
         if (this.store.openCompanyLinker("create") && shouldReset) {
             this.resetCompanyForm();
         }
+    }
+
+    unlinkCompany(company, relationKind = "primary") {
+        this.dialog.add(ConfirmationDialog, {
+            title: "Desvincular empresa",
+            body: `Remover o vínculo de ${this.partner.name} com ${company.name}? O contato será mantido. Esta alteração vale para o cadastro do contato em todas as conversas; documentos existentes serão preservados.`,
+            confirmLabel: "Desvincular empresa",
+            confirm: () => this.store.unlinkPartnerCompany(company.id, relationKind),
+        });
+    }
+
+    correctLinkedContact() {
+        this.dialog.add(ConfirmationDialog, {
+            title: "Corrigir contato vinculado",
+            body: "Desvincular este perfil do contato? O cadastro da pessoa e seus vínculos com empresas serão preservados. Depois, você poderá selecionar a pessoa correta.",
+            confirmLabel: "Desvincular pessoa",
+            confirm: () => this.store.unlinkPartner(),
+        });
     }
 
     async createCompany() {

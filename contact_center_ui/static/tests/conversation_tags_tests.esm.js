@@ -5,6 +5,7 @@
 import {
     ConversationTags,
     conversationTagSelected,
+    validateTagCatalog,
 } from "@contact_center_ui/js/conversation_tags.esm";
 import {click, getFixture, mount, nextTick} from "@web/../tests/helpers/utils";
 import {MessageComposer} from "@contact_center_ui/js/message_composer.esm";
@@ -18,6 +19,46 @@ QUnit.module("contact_center_ui > conversation tags and reply management", (hook
             (banner.parentElement || banner).remove();
         }
     });
+
+    QUnit.test(
+        "malformed tag catalogs are rejected before changing render state",
+        async (assert) => {
+            for (const payload of [
+                null,
+                {},
+                {items: {}},
+                {items: [null]},
+                {items: [{id: 1}]},
+                {
+                    items: [
+                        {id: 1, name: "A"},
+                        {id: 1, name: "B"},
+                    ],
+                },
+            ]) {
+                assert.throws(() => validateTagCatalog(payload), TypeError);
+            }
+            const env = await makeTestEnv();
+            const target = getFixture();
+            await mount(ConversationTags, target, {
+                env,
+                props: {
+                    conversation: {channel_id: 10, tags: []},
+                    store: {
+                        call: async () => ({items: {}}),
+                        reconcileTagCatalog: () =>
+                            assert.ok(false, "malformed data must not enter the store"),
+                    },
+                },
+            });
+            await click(target, ".cc-conversation-tags__trigger");
+            assert.ok(target.querySelector('[role="alert"]'));
+            assert.strictEqual(
+                target.querySelectorAll(".cc-conversation-tags__items button").length,
+                0
+            );
+        }
+    );
 
     QUnit.test(
         "conversation tag selection follows the current conversation",

@@ -27,7 +27,6 @@ class MailShortcodeContactCenter(models.Model):
         """A native RPC must not bypass the audience/ownership controls."""
         if self.env.su:
             return
-        user = self.env.user
         bindings = (
             self.env["contact.center.quick.reply.binding"]
             .sudo()
@@ -35,14 +34,6 @@ class MailShortcodeContactCenter(models.Model):
             .search([("shortcode_id", "in", self.ids)])
         )
         bindings.with_env(self.env)._check_management()
-        if user.has_group(
-            "contact_center_base.group_contact_center_agent"
-        ) and not user.has_group("contact_center_base.group_contact_center_admin"):
-            unbound = self - bindings.shortcode_id
-            if any(shortcode.create_uid != user for shortcode in unbound):
-                raise AccessError(
-                    _("You can only modify your own native quick replies.")
-                )
 
     def write(self, values):
         if "contact_center_binding_ids" in values:
@@ -68,3 +59,20 @@ class MailShortcodeContactCenter(models.Model):
         if not personal_cleanup:
             self._contact_center_check_content_management()
         return super().unlink()
+
+
+class ResUsersContactCenterQuickReplies(models.Model):
+    _inherit = "res.users"
+
+    def _init_messaging(self):
+        values = super()._init_messaging()
+        # Odoo loads this collection with sudo. Rebuild it for the recipient so
+        # personal bodies cannot escape through Discuss, including for employees
+        # who have no Contact Center role. Preserve the native response contract.
+        values["shortcodes"] = (
+            self.env["mail.shortcode"]
+            .with_user(self)
+            .sudo(False)
+            .search_read([], ["source", "substitution"])
+        )
+        return values

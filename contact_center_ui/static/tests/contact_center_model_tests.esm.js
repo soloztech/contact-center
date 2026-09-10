@@ -6583,6 +6583,51 @@ QUnit.module("contact_center_ui > model", (hooks) => {
     );
 
     QUnit.test(
+        "covered timelines wait for the modal or overlay to close before marking read",
+        async (assert) => {
+            const fixture = await mountedUnreadTimeline({focused: false});
+            const {timeline, target, calls, visibility, settle, close} = fixture;
+            const overlay = document.createElement("div");
+            overlay.style.cssText =
+                "position:fixed;inset:0;z-index:20000;background:white";
+            document.body.append(overlay);
+            try {
+                await settle();
+                visibility.focused = true;
+                window.dispatchEvent(new Event("focus"));
+                await settle();
+                assert.strictEqual(
+                    calls.length,
+                    0,
+                    "occlusion does not count as reading even with a geometric intersection"
+                );
+                overlay.remove();
+                const modal = document.createElement("div");
+                target.append(modal);
+                timeline.uiService.activateElement(modal);
+                window.dispatchEvent(new Event("focus"));
+                await settle();
+                assert.strictEqual(
+                    calls.length,
+                    0,
+                    "a native modal outside the timeline owns user attention"
+                );
+                timeline.uiService.deactivateElement(modal);
+                modal.remove();
+                await settle();
+                assert.deepEqual(
+                    calls,
+                    [{method: "mark_seen", args: [10, 100]}],
+                    "closing the modal acknowledges visible messages without a scroll"
+                );
+            } finally {
+                overlay.remove();
+                close();
+            }
+        }
+    );
+
+    QUnit.test(
         "visible-tail observation respects unread history gaps and reacts to layout changes",
         async (assert) => {
             const fixture = await mountedUnreadTimeline({focused: false});
@@ -9471,6 +9516,14 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 store.selectedConversation.unread_count = 1;
                 store.selectedConversation.first_unread_message_id = 100;
                 store.state.timelineFirstUnreadMessageId = 100;
+                assert.ok(await store.markSeen(100));
+                assert.strictEqual(
+                    pending.length,
+                    1,
+                    "delayed counters do not repeat a confirmed write"
+                );
+                // The real mark-unread action invalidates the acknowledgement.
+                store.cancelSeenRetry();
                 const obsolete = store.markSeen(100);
                 assert.strictEqual(
                     pending.length,

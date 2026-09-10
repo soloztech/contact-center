@@ -472,7 +472,7 @@
         id="action_contact_center_quick_reply_bindings"
         model="ir.actions.act_window"
     >
-        <field name="name">Respostas rápidas</field>
+        <field name="name">Quick Replies</field>
         <field name="res_model">contact.center.quick.reply.binding</field>
         <field name="view_mode">tree,form</field>
         <field name="context">{'search_default_active': 1}</field>

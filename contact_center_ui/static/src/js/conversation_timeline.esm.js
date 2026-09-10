@@ -5,6 +5,7 @@ import {
     MessageContent,
     controlTimelineMessageMeta,
     downloadableMessageMedia,
+    hasCompactAudio,
 } from "./message_content.esm";
 import {
     compareTimelineItems,
@@ -17,9 +18,10 @@ import {
     sourceWebhookActionEnabled,
 } from "./contact_center_model.esm";
 import {deserializeDateTime, formatDate} from "@web/core/l10n/dates";
+import {useBus, useService} from "@web/core/utils/hooks";
 import {_t} from "@web/core/l10n/translation";
 import {browser} from "@web/core/browser/browser";
-import {useService} from "@web/core/utils/hooks";
+import {reposition} from "@web/core/position_hook";
 
 const {DateTime} = luxon;
 const QUICK_REACTIONS = Object.freeze(["👍", "❤️", "😂", "😮", "😢", "🙏"]);
@@ -212,6 +214,7 @@ export function timelineScrollDecision({
 export class ConversationTimeline extends Component {
     setup() {
         this.action = useService("action");
+        this.uiService = useService("ui");
         this.viewportRef = useRef("viewport");
         this.tailRef = useRef("tail");
         this.editInputRef = useRef("editInput");
@@ -237,8 +240,16 @@ export class ConversationTimeline extends Component {
         this.tailObserverChannelId = false;
         this.tailVisible = false;
         this.onReadVisibilityChange = () => this.markVisibleTailSeen();
+        useBus(this.uiService.bus, "active-element-changed", () => {
+            browser.requestAnimationFrame(this.onReadVisibilityChange);
+        });
+        this.onViewportResize = () => {
+            this.positionActions();
+            this.markVisibleTailSeen();
+        };
         document.addEventListener("visibilitychange", this.onReadVisibilityChange);
         window.addEventListener("focus", this.onReadVisibilityChange);
+        window.addEventListener("resize", this.onViewportResize);
         this.followLatest = true;
         this.observedChannelId = false;
         this.observedLastMessageId = 0;
@@ -252,6 +263,7 @@ export class ConversationTimeline extends Component {
                 this.onReadVisibilityChange
             );
             window.removeEventListener("focus", this.onReadVisibilityChange);
+            window.removeEventListener("resize", this.onViewportResize);
         });
         useEffect(
             () => this.observeVisibleTail(),
@@ -272,6 +284,7 @@ export class ConversationTimeline extends Component {
             () => this.resetInteraction(),
             () => [this.state.selectedChannelId]
         );
+        useEffect(() => this.positionActions());
         useEffect(
             () => {
                 this.markVisibleTailSeen();
@@ -282,6 +295,7 @@ export class ConversationTimeline extends Component {
                 this.latestMessageId,
                 this.state.timelineHasMoreForward,
                 this.state.mobilePane,
+                this.state.detailsOpen,
                 this.store.selectedConversation,
                 this.store.selectedConversation &&
                     this.store.selectedConversation.unread_count,
@@ -448,6 +462,27 @@ export class ConversationTimeline extends Component {
             deserializeDateTime(previous.date),
             "day"
         );
+    }
+
+    get dayGroups() {
+        const groups = [];
+        this.state.messages.forEach((message, index) => {
+            if (this.startsDay(message, index)) {
+                groups.push({
+                    id: message.date
+                        ? deserializeDateTime(message.date).toISODate()
+                        : `undated:${message.message_id}`,
+                    date: message.date,
+                    items: [],
+                });
+            }
+            groups[groups.length - 1].items.push({message, index});
+        });
+        return groups;
+    }
+
+    hasCompactAudio(message) {
+        return hasCompactAudio(message);
     }
 
     delivery(message) {
@@ -660,6 +695,7 @@ export class ConversationTimeline extends Component {
         if (!viewport || this.destroyed) {
             return;
         }
+        this.closeActions();
         const movedUp = viewport.scrollTop < this.lastScrollTop;
         const movedDown = viewport.scrollTop > this.lastScrollTop;
         if (this.paginationRequest && this.state.timelinePhase === "loading_more") {
@@ -731,12 +767,24 @@ export class ConversationTimeline extends Component {
         };
     }
 
+    isReadSurfaceActive() {
+        return Boolean(
+            !this.uiService.isBlocked &&
+                this.uiService.activeElement.contains(this.viewportRef.el) &&
+                !(
+                    this.state.detailsOpen &&
+                    window.matchMedia("(max-width: 1199px)").matches
+                )
+        );
+    }
+
     visibleTailReady() {
         const channelId = this.state.selectedChannelId;
         return Boolean(
             !this.destroyed &&
                 !document.hidden &&
                 document.hasFocus() &&
+                this.isReadSurfaceActive() &&
                 channelId &&
                 this.state.timelineChannelId === channelId &&
                 this.tailObserverChannelId === channelId &&
@@ -769,8 +817,72 @@ export class ConversationTimeline extends Component {
         ) {
             return false;
         }
+        if (!this.lastBubbleUnobscured(viewport, bounds)) {
+            return false;
+        }
         this.ui.unseenMessages = 0;
         return this.store.markSeen(this.latestMessageId);
+    }
+
+    lastBubbleUnobscured(viewport, bounds) {
+        // IntersectionObserver measures clipping, not another surface covering
+        // the message. Check the visible edge of the actual last bubble too.
+        const lastMessage = viewport.querySelector(
+            `[data-message-id="${this.latestMessageId}"] .cc-message__bubble`
+        );
+        if (!lastMessage) {
+            return false;
+        }
+        const messageBounds = lastMessage.getBoundingClientRect();
+        const y = Math.min(messageBounds.bottom - 6, bounds.bottom - 6);
+        const left = Math.max(messageBounds.left + 2, bounds.left + 2);
+        const right = Math.min(messageBounds.right - 2, bounds.right - 2);
+        if (y < Math.max(messageBounds.top, bounds.top) || left > right) {
+            return false;
+        }
+        for (const ratio of [0.25, 0.5, 0.75]) {
+            const x = left + (right - left) * ratio;
+            const covering = document.elementFromPoint(x, y);
+            if (!covering || !lastMessage.contains(covering)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    positionActions() {
+        const viewport = this.viewportRef.el;
+        if (!viewport || this.destroyed) {
+            return;
+        }
+        for (const popper of viewport.querySelectorAll(
+            ".cc-message-menu, .cc-reaction-picker, .cc-delete-confirmation"
+        )) {
+            const target = popper
+                .closest(".cc-message-actions")
+                .querySelector(".cc-message-actions__toggle");
+            popper.style.maxWidth = `${Math.max(0, viewport.clientWidth - 16)}px`;
+            popper.style.maxHeight = `${Math.max(0, viewport.clientHeight - 16)}px`;
+            reposition(target, popper, {
+                container: viewport,
+                position: "top-start",
+                margin: 5,
+            });
+            // Native positioning falls back to its preference if no side fits.
+            // Keep that last-resort placement inside a narrow chat as well.
+            const bounds = viewport.getBoundingClientRect();
+            const placed = popper.getBoundingClientRect();
+            const dx = Math.max(
+                bounds.left + 8 - placed.left,
+                Math.min(0, bounds.right - 8 - placed.right)
+            );
+            const dy = Math.max(
+                bounds.top + 8 - placed.top,
+                Math.min(0, bounds.bottom - 8 - placed.bottom)
+            );
+            popper.style.left = `${parseFloat(popper.style.left) + dx}px`;
+            popper.style.top = `${parseFloat(popper.style.top) + dy}px`;
+        }
     }
 
     toggleMenu(message) {

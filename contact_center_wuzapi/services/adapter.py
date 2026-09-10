@@ -4237,6 +4237,12 @@ class WuzapiAdapter(WuzapiDirectStartMixin, WuzapiGroupMetadataMixin, ProviderAd
             except AdapterError as error:
                 # A profile lookup failure must not block ordinary messages.
                 # Calls requiring the missing proof remain in the durable queue.
+                if isinstance(error, ProviderRateLimitError):
+                    # Reuse the core health deadline without declaring a healthy
+                    # messaging session disconnected because profile reads lag.
+                    health["retry_after_seconds"] = getattr(
+                        error, "retry_after_seconds", 60
+                    )
                 _logger.info(
                     "Own LID mapping unavailable for connection %s (%s)",
                     connection.id,

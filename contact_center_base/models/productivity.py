@@ -270,25 +270,25 @@ class ContactCenterQuickReplyBinding(models.Model):
     )
     shortcut = fields.Char(
         related="shortcode_id.source",
-        string="Atalho",
+        string="Shortcut",
         readonly=False,
         compute_sudo=False,
     )
     body = fields.Text(
         related="shortcode_id.substitution",
-        string="Resposta",
+        string="Reply",
         readonly=False,
         compute_sudo=False,
     )
     description = fields.Char(
         related="shortcode_id.description",
-        string="Descrição",
+        string="Description",
         readonly=False,
         compute_sudo=False,
     )
     owner_id = fields.Many2one(
         "res.users",
-        string="Proprietário",
+        string="Owner",
         index=True,
         ondelete="restrict",
     )
@@ -301,13 +301,13 @@ class ContactCenterQuickReplyBinding(models.Model):
     )
     scope = fields.Selection(
         [
-            ("personal", "Pessoal"),
-            ("company", "Empresa"),
-            ("team", "Equipe"),
-            ("account", "Caixa de entrada"),
-            ("channel", "Conversa"),
+            ("personal", "Personal"),
+            ("company", "Company"),
+            ("team", "Team"),
+            ("account", "Inbox"),
+            ("channel", "Conversation"),
         ],
-        string="Disponível para",
+        string="Available To",
         required=True,
         default="personal",
         index=True,
@@ -1216,23 +1216,23 @@ class ContactCenterUiApiProductivity(models.AbstractModel):
         lines = []
         if channel.contact_center_state != previous_state:
             if channel.contact_center_state == "resolved":
-                lines.append(_("%s resolveu a conversa.", actor))
+                lines.append(_("%s resolved the conversation.", actor))
             elif channel.contact_center_state == "open":
-                lines.append(_("%s reabriu a conversa.", actor))
+                lines.append(_("%s reopened the conversation.", actor))
         responsible = channel.contact_center_responsible_id
         if responsible != previous_responsible:
             if claimed:
-                lines.append(_("%s assumiu a conversa.", actor))
+                lines.append(_("%s claimed the conversation.", actor))
             elif responsible:
                 lines.append(
                     _(
-                        "%(actor)s atribuiu a conversa a %(responsible)s.",
+                        "%(actor)s assigned the conversation to %(responsible)s.",
                         actor=actor,
                         responsible=responsible.display_name,
                     )
                 )
             else:
-                lines.append(_("%s removeu o responsável pela conversa.", actor))
+                lines.append(_("%s removed the conversation assignee.", actor))
         if not lines:
             return self.env["mail.message"]
         # The lifecycle mutation and its note share one transaction and channel

@@ -49,33 +49,38 @@
                     <strong>A conversa ainda não possui mensagens.</strong>
                 </div>
                 <t t-else="">
-                    <t
-                            t-foreach="state.messages"
-                            t-as="message"
-                            t-key="message.message_id"
+                    <section
+                            t-foreach="dayGroups"
+                            t-as="day"
+                            t-key="day.id"
+                            class="cc-timeline-day"
                         >
-                        <div
-                                t-if="startsDay(message, message_index)"
-                                class="cc-day-divider"
+                        <div class="cc-day-divider"><span
+                                    t-esc="dayLabel(day.date)"
+                                /></div>
+                        <t
+                                t-foreach="day.items"
+                                t-as="item"
+                                t-key="item.message.message_id"
                             >
-                            <span t-esc="dayLabel(message.date)" />
-                        </div>
+                            <t t-set="message" t-value="item.message" />
+                            <t t-set="message_index" t-value="item.index" />
                         <div
-                                t-if="state.timelineFirstUnreadMessageId === message.message_id"
-                                class="cc-unread-divider"
-                                t-att-data-unread-boundary="message.message_id"
-                                role="separator"
-                                aria-label="Mensagens não lidas"
-                            >
+                                    t-if="state.timelineFirstUnreadMessageId === message.message_id"
+                                    class="cc-unread-divider"
+                                    t-att-data-unread-boundary="message.message_id"
+                                    role="separator"
+                                    aria-label="Mensagens não lidas"
+                                >
                             <span>Mensagens não lidas</span>
                         </div>
                         <article
-                                t-if="isControlMessage(message)"
-                                t-att-class="messageClass(message, message_index)"
-                                t-att-data-message-id="message.message_id"
-                                role="note"
-                                t-att-aria-label="controlAriaLabel(message)"
-                            >
+                                    t-if="isControlMessage(message)"
+                                    t-att-class="messageClass(message, message_index)"
+                                    t-att-data-message-id="message.message_id"
+                                    role="note"
+                                    t-att-aria-label="controlAriaLabel(message)"
+                                >
                             <div class="cc-message__content">
                                 <div class="cc-message__lane">
                                     <div class="cc-message__stack">
@@ -87,193 +92,187 @@
                                         </div>
                                     </div>
                                     <t
-                                            t-call="contact_center_ui.TimelineMessageActions"
-                                        />
+                                                t-call="contact_center_ui.TimelineMessageActions"
+                                            />
                                 </div>
                             </div>
                         </article>
                         <article
-                                t-else=""
-                                t-att-class="messageClass(message, message_index)"
-                                t-att-data-message-id="message.message_id"
-                            >
+                                    t-else=""
+                                    t-att-class="messageClass(message, message_index)"
+                                    t-att-data-message-id="message.message_id"
+                                >
                             <span
-                                    t-if="isRunContinuation(message, message_index)"
-                                    class="sr-only"
-                                >Mensagem de <t t-esc="authorLabel(message)" /> às <t
-                                        t-esc="time(message.date)"
-                                    /></span>
+                                        t-if="isRunContinuation(message, message_index)"
+                                        class="sr-only"
+                                    >Mensagem de <t
+                                            t-esc="authorLabel(message)"
+                                        /> às <t t-esc="time(message.date)" /></span>
                             <t t-if="message.direction === 'inbound'">
                                 <span
-                                        t-if="!isRunContinuation(message, message_index)"
-                                        class="cc-message__avatar cc-avatar"
-                                        t-esc="initials(authorLabel(message))"
-                                        aria-hidden="true"
-                                    />
+                                            t-if="!isRunContinuation(message, message_index)"
+                                            class="cc-message__avatar cc-avatar"
+                                            t-esc="initials(authorLabel(message))"
+                                            aria-hidden="true"
+                                        />
                                 <span
-                                        t-else=""
-                                        class="cc-message__avatar-spacer"
-                                        aria-hidden="true"
-                                    />
+                                            t-else=""
+                                            class="cc-message__avatar-spacer"
+                                            aria-hidden="true"
+                                        />
                             </t>
                             <div class="cc-message__content">
                                 <div
-                                        t-if="!isRunContinuation(message, message_index)"
-                                        class="cc-message__source"
-                                    >
+                                            t-if="!isRunContinuation(message, message_index)"
+                                            class="cc-message__source"
+                                        >
                                     <span t-esc="authorLabel(message)" />
                                     <small
-                                            t-if="isGroupConversation &amp;&amp; message.direction === 'inbound'"
-                                            class="cc-message__participant"
-                                        >Participante</small>
+                                                t-if="isGroupConversation &amp;&amp; message.direction === 'inbound'"
+                                                class="cc-message__participant"
+                                            >Participante</small>
                                     <small
-                                            t-if="message.direction === 'internal'"
-                                            class="cc-message__internal-label"
-                                        ><i
-                                                class="fa fa-lock"
-                                                aria-hidden="true"
-                                            /> Nota interna</small>
+                                                t-if="message.direction === 'internal'"
+                                                class="cc-message__internal-label"
+                                            ><i
+                                                    class="fa fa-lock"
+                                                    aria-hidden="true"
+                                                /> Nota interna</small>
                                     <small t-else="">
                                         <span t-esc="message.platform" />
                                         <t
-                                                t-if="message.provider &amp;&amp; message.provider !== 'internal'"
-                                            > · <span t-esc="message.provider" /></t>
+                                                    t-if="message.provider &amp;&amp; message.provider !== 'internal'"
+                                                > · <span
+                                                        t-esc="message.provider"
+                                                    /></t>
                                     </small>
                                 </div>
                                 <div class="cc-message__lane">
                                     <div class="cc-message__stack">
                                         <div class="cc-message__bubble">
                                             <div
-                                                    t-if="isForwarded(message)"
-                                                    class="cc-message-forwarded"
-                                                >
+                                                        t-if="isForwarded(message)"
+                                                        class="cc-message-forwarded"
+                                                    >
                                                 <i
-                                                        class="fa fa-share"
-                                                        aria-hidden="true"
-                                                    />
+                                                            class="fa fa-share"
+                                                            aria-hidden="true"
+                                                        />
                                                 <span>Encaminhada</span>
                                             </div>
                                             <blockquote
-                                                    t-if="message.reply_to"
-                                                    class="cc-reply-preview"
-                                                >
+                                                        t-if="message.reply_to"
+                                                        class="cc-reply-preview"
+                                                    >
                                                 <strong
-                                                        t-esc="authorLabel(message.reply_to)"
-                                                    />
+                                                            t-esc="authorLabel(message.reply_to)"
+                                                        />
                                                 <span
-                                                        t-esc="preview(message.reply_to)"
-                                                    />
+                                                            t-esc="preview(message.reply_to)"
+                                                        />
                                             </blockquote>
                                             <div
-                                                    t-if="ui.editingId === message.message_id"
-                                                    class="cc-message-edit"
-                                                    t-on-click.stop="() => {}"
-                                                >
+                                                        t-if="ui.editingId === message.message_id"
+                                                        class="cc-message-edit"
+                                                        t-on-click.stop="() => {}"
+                                                    >
                                                 <label>
                                                     <span
-                                                            class="sr-only"
-                                                        >Editar mensagem</span>
+                                                                class="sr-only"
+                                                            >Editar mensagem</span>
                                                     <textarea
-                                                            t-ref="editInput"
-                                                            rows="3"
-                                                            t-att-value="ui.editBody"
-                                                            t-on-input="onEditInput"
-                                                            t-on-keydown="(event) => this.onEditKeydown(event, message)"
-                                                            t-att-disabled="isBusy(message)"
-                                                        />
+                                                                t-ref="editInput"
+                                                                rows="3"
+                                                                t-att-value="ui.editBody"
+                                                                t-on-input="onEditInput"
+                                                                t-on-keydown="(event) => this.onEditKeydown(event, message)"
+                                                                t-att-disabled="isBusy(message)"
+                                                            />
                                                 </label>
                                                 <div class="cc-message-edit__actions">
                                                     <button
-                                                            type="button"
-                                                            class="cc-message-action-button"
-                                                            t-on-click="cancelEdit"
-                                                            t-att-disabled="isBusy(message)"
-                                                        >Cancelar</button>
+                                                                type="button"
+                                                                class="cc-message-action-button"
+                                                                t-on-click="cancelEdit"
+                                                                t-att-disabled="isBusy(message)"
+                                                            >Cancelar</button>
                                                     <button
-                                                            type="button"
-                                                            class="cc-message-action-button is-primary"
-                                                            t-on-click="() => this.saveEdit(message)"
-                                                            t-att-disabled="!ui.editBody.trim() || ui.editBody.trim() === message.body_text.trim() || isBusy(message)"
-                                                        >Salvar</button>
+                                                                type="button"
+                                                                class="cc-message-action-button is-primary"
+                                                                t-on-click="() => this.saveEdit(message)"
+                                                                t-att-disabled="!ui.editBody.trim() || ui.editBody.trim() === message.body_text.trim() || isBusy(message)"
+                                                            >Salvar</button>
                                                 </div>
                                             </div>
-                                            <MessageContent
-                                                    t-else=""
-                                                    message="message"
-                                                />
-                                            <footer>
-                                                <span
-                                                        t-if="message.edited_at &amp;&amp; !message.is_deleted"
-                                                        class="cc-message-edited"
-                                                    >editada</span>
-                                                <span
-                                                        t-if="isGroupConversation &amp;&amp; message.direction === 'outbound' &amp;&amp; groupDelivery(message)"
-                                                        class="cc-group-delivery"
-                                                        t-att-title="groupDelivery(message)"
-                                                        t-esc="groupDelivery(message)"
+                                            <MessageContent t-else="" message="message">
+                                                <t
+                                                            t-set-slot="metadata"
+                                                            t-if="hasCompactAudio(message)"
+                                                        >
+                                                    <t
+                                                                t-call="contact_center_ui.TimelineMessageMetadata"
+                                                            />
+                                                </t>
+                                            </MessageContent>
+                                            <t
+                                                        t-if="!hasCompactAudio(message)"
+                                                        t-call="contact_center_ui.TimelineMessageMetadata"
                                                     />
-                                                <time t-esc="time(message.date)" />
-                                                <span
-                                                        t-if="message.direction === 'outbound'"
-                                                        t-attf-class="cc-delivery-state cc-delivery-state--#{delivery(message).state || 'queued'}"
-                                                        t-att-title="delivery(message).label"
-                                                        t-esc="delivery(message).icon"
-                                                    />
-                                            </footer>
                                         </div>
                                         <div
-                                                t-if="message.reactions &amp;&amp; message.reactions.length"
-                                                class="cc-message-reactions"
-                                                aria-label="Reações"
-                                            >
-                                            <button
-                                                    t-foreach="message.reactions"
-                                                    t-as="reaction"
-                                                    t-key="reaction.emoji"
-                                                    type="button"
-                                                    t-att-class="reaction.reacted_by_me ? 'cc-reaction-chip is-mine' : 'cc-reaction-chip'"
-                                                    t-att-disabled="!messageActionAllowed(message, 'react') || isBusy(message)"
-                                                    t-att-aria-label="reactionLabel(message, reaction)"
-                                                    t-on-click.stop="() => this.react(message, reaction.emoji)"
+                                                    t-if="message.reactions &amp;&amp; message.reactions.length"
+                                                    class="cc-message-reactions"
+                                                    aria-label="Reações"
                                                 >
+                                            <button
+                                                        t-foreach="message.reactions"
+                                                        t-as="reaction"
+                                                        t-key="reaction.emoji"
+                                                        type="button"
+                                                        t-att-class="reaction.reacted_by_me ? 'cc-reaction-chip is-mine' : 'cc-reaction-chip'"
+                                                        t-att-disabled="!messageActionAllowed(message, 'react') || isBusy(message)"
+                                                        t-att-aria-label="reactionLabel(message, reaction)"
+                                                        t-on-click.stop="() => this.react(message, reaction.emoji)"
+                                                    >
                                                 <span
-                                                        t-esc="reaction.emoji"
-                                                        aria-hidden="true"
-                                                    />
+                                                            t-esc="reaction.emoji"
+                                                            aria-hidden="true"
+                                                        />
                                                 <small t-esc="reaction.count" />
                                             </button>
                                         </div>
                                         <div
-                                                t-if="dispatchReason(message).label"
-                                                t-attf-class="cc-message-dispatch-reason cc-message-dispatch-reason--#{dispatchReason(message).tone}"
-                                            >
-                                            <span
-                                                    t-esc="dispatchReason(message).label"
-                                                />
-                                            <button
-                                                    t-if="messageActionAllowed(message, 'resend')"
-                                                    type="button"
-                                                    class="cc-message-resend"
-                                                    t-att-disabled="isBusy(message)"
-                                                    t-on-click.stop="() => this.resend(message)"
+                                                    t-if="dispatchReason(message).label"
+                                                    t-attf-class="cc-message-dispatch-reason cc-message-dispatch-reason--#{dispatchReason(message).tone}"
                                                 >
+                                            <span
+                                                        t-esc="dispatchReason(message).label"
+                                                    />
+                                            <button
+                                                        t-if="messageActionAllowed(message, 'resend')"
+                                                        type="button"
+                                                        class="cc-message-resend"
+                                                        t-att-disabled="isBusy(message)"
+                                                        t-on-click.stop="() => this.resend(message)"
+                                                    >
                                                 <i
-                                                        class="fa fa-repeat"
-                                                        aria-hidden="true"
-                                                    />
+                                                            class="fa fa-repeat"
+                                                            aria-hidden="true"
+                                                        />
                                                 <t
-                                                        t-esc="isBusy(message) ? resendingLabel : resendLabel"
-                                                    />
+                                                            t-esc="isBusy(message) ? resendingLabel : resendLabel"
+                                                        />
                                             </button>
                                         </div>
                                     </div>
                                     <t
-                                            t-call="contact_center_ui.TimelineMessageActions"
-                                        />
+                                                t-call="contact_center_ui.TimelineMessageActions"
+                                            />
                                 </div>
                             </div>
                         </article>
-                    </t>
+                        </t>
+                    </section>
                     <button
                             t-if="state.timelineHasMoreForward"
                             type="button"
@@ -315,6 +314,27 @@
                 <t t-else="">Ir ao fim</t>
             </button>
         </div>
+    </t>
+    <t t-name="contact_center_ui.TimelineMessageMetadata" owl="1">
+                                            <footer>
+                                                <span
+                t-if="message.edited_at &amp;&amp; !message.is_deleted"
+                class="cc-message-edited"
+            >editada</span>
+                                                <span
+                t-if="isGroupConversation &amp;&amp; message.direction === 'outbound' &amp;&amp; groupDelivery(message)"
+                class="cc-group-delivery"
+                t-att-title="groupDelivery(message)"
+                t-esc="groupDelivery(message)"
+            />
+                                                <time t-esc="time(message.date)" />
+                                                <span
+                t-if="message.direction === 'outbound'"
+                t-attf-class="cc-delivery-state cc-delivery-state--#{delivery(message).state || 'queued'}"
+                t-att-title="delivery(message).label"
+                t-esc="delivery(message).icon"
+            />
+                                            </footer>
     </t>
     <t t-name="contact_center_ui.TimelineMessageActions" owl="1">
         <div
@@ -382,11 +402,11 @@
                     class="cc-message-menu__download"
                     t-att-href="media.download_url"
                     t-att-download="media.name"
-                    t-att-title="'Baixar ' + media.name"
+                    t-att-title="media.name"
                     t-on-click="closeActions"
                 >
                     <i class="fa fa-download" aria-hidden="true" />
-                    <span>Baixar <t t-esc="media.name" /></span>
+                    <span t-esc="media.label" />
                 </a>
                 <button
                     t-if="messageActionAllowed(message, 'delete')"
