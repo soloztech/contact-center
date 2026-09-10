@@ -289,7 +289,14 @@ class TestContactCenterStartConversation(SavepointCase):
         self.assertEqual(before, self._footprint())
 
     def test_inactive_account_has_no_lookup(self):
-        self.connection.write({"outbound_active": False, "inbound_active": False})
+        self.connection.write(
+            {
+                "active": False,
+                "role": "historical",
+                "outbound_active": False,
+                "inbound_active": False,
+            }
+        )
         self.account.active = False
         with mock.patch.object(
             DirectStartTestAdapter, "resolve_direct_address"

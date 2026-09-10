@@ -217,9 +217,7 @@ class TestMultiAccessConversationUi(SavepointCase):
                 for _index in range(2)
             ]
         )
-        self.channel.write(
-            {"contact_center_tag_ids": [fields.Command.set(tags[:1].ids)]}
-        )
+        ui.update_conversation(self.channel.id, {"tag_ids": tags[:1].ids})
         filters = {"account_id": self.account.id, "responsible_id": self.users[1].id}
         for selector in (
             {"tag_ids": tags.ids},
