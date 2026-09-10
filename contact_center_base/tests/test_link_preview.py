@@ -221,6 +221,20 @@ class TestContactCenterLinkPreview(SavepointCase):
         self.assertFalse(self.message.link_preview_ids)
         self.assertFalse(self.message._contact_center_request_link_previews())
 
+    def test_url_extraction_preserves_balanced_parentheses_and_limits_duplicates(self):
+        self.assertEqual(
+            preview_urls(
+                "(https://example.com/topic_(detail)). https://example.com/topic_(detail) "
+                "https://example.com/two! https://example.com/three; "
+                "https://example.com/four"
+            ),
+            [
+                "https://example.com/topic_(detail)",
+                "https://example.com/two",
+                "https://example.com/three",
+            ],
+        )
+
     def test_public_transport_rejects_local_and_mixed_dns_answers(self):
         for address in ("127.0.0.1", "10.0.0.1", "169.254.169.254", "::1", "224.0.0.1"):
             with self.subTest(address=address), patch(

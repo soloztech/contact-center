@@ -1,4 +1,4 @@
-"""Exercise the real 1.0 -> 1.1 Odoo upgrade in a disposable GitHub CI database.
+"""Exercise 1.0 -> production baseline -> candidate upgrades in disposable CI.
 
 The old checkout must be outside the candidate workspace before oca_install_addons.
 Every Odoo process selects and verifies its addon source explicitly; installed
@@ -21,7 +21,7 @@ import uuid
 from pathlib import Path
 
 OLD_COMMIT = "33e662b1d95ba34a879c5f652719911c8902969f"
-INSTALLED_COMMIT = "9660986fb530c07de7fd3c44b1007b6a3a12b56f"
+INSTALLED_COMMIT = "5bd6381eb93809a25629e13ce0f03d6b92677fd7"
 MODULES = (
     "contact_center_base",
     "contact_center_ui",
@@ -312,32 +312,25 @@ def registry_phase(env, phase, source, candidate, output):
         .with_user(users[2])
         .get_conversation(channel.id)["item"]
     )
-    # Both verification phases use the same shell entry point. Select the
-    # expected contract from the source already verified by get_module_path,
-    # never by whether the response happens to contain the new capability.
-    restricted_access_projection = source.resolve() == candidate.resolve()
-    if restricted_access_projection:
-        assert item["capabilities"]["view_inbox_access"] is False
-        assert item["access_users"] == item["access_teams"] == []
-        assert item["responsible"]["id"] == users[0].id
-        for group_name in ("supervisor", "admin"):
-            group = env.ref("contact_center_base.group_contact_center_" + group_name)
-            users[0].write({"groups_id": [(4, group.id)]})
-            manager_item = (
-                env["contact.center.ui.api"]
-                .with_user(users[0])
-                .get_conversation(channel.id)["item"]
-            )
-            assert manager_item["capabilities"]["view_inbox_access"] is True
-            assert {row["id"] for row in manager_item["access_users"]} == set(
-                users[:2].ids
-            )
-            assert {row["id"] for row in manager_item["access_teams"]} == set(teams.ids)
-            assert manager_item["responsible"]["id"] == users[0].id
-    else:
-        assert "view_inbox_access" not in item["capabilities"]
-        assert {row["id"] for row in item["access_users"]} == set(users[:2].ids)
-        assert {row["id"] for row in item["access_teams"]} == set(teams.ids)
+    # Both the pinned production baseline and the candidate restrict this
+    # projection by role. Assert the contract instead of inferring it from
+    # whether the response happens to contain the capability.
+    is_candidate_source = source.resolve() == candidate.resolve()
+    assert item["capabilities"]["view_inbox_access"] is False
+    assert item["access_users"] == item["access_teams"] == []
+    assert item["responsible"]["id"] == users[0].id
+    for group_name in ("supervisor", "admin"):
+        group = env.ref("contact_center_base.group_contact_center_" + group_name)
+        users[0].write({"groups_id": [(4, group.id)]})
+        manager_item = (
+            env["contact.center.ui.api"]
+            .with_user(users[0])
+            .get_conversation(channel.id)["item"]
+        )
+        assert manager_item["capabilities"]["view_inbox_access"] is True
+        assert {row["id"] for row in manager_item["access_users"]} == set(users[:2].ids)
+        assert {row["id"] for row in manager_item["access_teams"]} == set(teams.ids)
+        assert manager_item["responsible"]["id"] == users[0].id
     account.write({"access_user_ids": [(3, users[1].id)]})
     assert users[1].partner_id in channel.channel_member_ids.partner_id
     account.write({"access_team_ids": [(3, teams[0].id)]})
@@ -358,8 +351,7 @@ def registry_phase(env, phase, source, candidate, output):
         model: env[model].search_count([]) for model in business_models
     } == side_effect_counts
     _write(
-        output
-        / ("after.json" if restricted_access_projection else "after-installed.json"),
+        output / ("after.json" if is_candidate_source else "after-installed.json"),
         dict(
             result,
             state="done",
@@ -367,16 +359,12 @@ def registry_phase(env, phase, source, candidate, output):
             idempotent=True,
             multiple_grants_verified=True,
             grants_rollback_verified=True,
-            access_visibility_contract=(
-                "role_restricted"
-                if restricted_access_projection
-                else "legacy_operator_projection"
-            ),
-            access_visibility_roles_verified=(
-                ["operator", "supervisor", "administrator"]
-                if restricted_access_projection
-                else ["operator"]
-            ),
+            access_visibility_contract="role_restricted",
+            access_visibility_roles_verified=[
+                "operator",
+                "supervisor",
+                "administrator",
+            ],
         ),
     )
 
@@ -447,7 +435,7 @@ def main():
         installed == root or installed in root.parents or root in installed.parents
         for root in (old, candidate)
     ):
-        parser.error("The installed 1.1 checkout must be pinned and isolated.")
+        parser.error("The installed production checkout must be pinned and isolated.")
     if (
         old_commit != OLD_COMMIT
         or old == candidate

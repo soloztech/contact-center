@@ -1,3 +1,6 @@
+# Contact relationships and their setting form one feature across native models.
+# pylint: disable=consider-merging-classes-inherited
+
 from odoo import _, api, fields, models
 from odoo.exceptions import ValidationError
 

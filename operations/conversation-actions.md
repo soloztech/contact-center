@@ -67,57 +67,55 @@ e não aumentam o contador de mensagens não lidas.
 
 ## Iniciar conversa e resolver com motivo
 
-O botão ao lado da pesquisa abre uma conversa por telefone na caixa escolhida.
-O provedor confirma o número, e uma conversa existente é reutilizada. Essa ação
-não envia mensagem. Durante a confirmação, o painel permanece aberto para
-apresentar o resultado ou o erro; fechar com Escape ou clicar fora não descarta
-uma operação em andamento.
+O botão ao lado da pesquisa abre uma conversa por telefone na caixa escolhida. O
+provedor confirma o número, e uma conversa existente é reutilizada. Essa ação não envia
+mensagem. Durante a confirmação, o painel permanece aberto para apresentar o resultado
+ou o erro; fechar com Escape ou clicar fora não descarta uma operação em andamento.
 
-Resolver exige selecionar um motivo e informar a justificativa. A decisão é
-registrada em nota interna. Se a conversa mudar durante a decisão, confira-a e
-reabra o diálogo; não se aceita silenciosamente uma revisão mais recente.
-Os motivos são específicos de cada empresa operadora e podem ser mantidos pelo
-supervisor. Os três motivos iniciais pertencem à empresa principal da instalação;
-outras empresas configuram seus próprios motivos, sem cópia automática.
+Resolver exige selecionar um motivo e informar a justificativa. A decisão é registrada
+em nota interna. Se a conversa mudar durante a decisão, confira-a e reabra o diálogo;
+não se aceita silenciosamente uma revisão mais recente. Os motivos são específicos de
+cada empresa operadora e podem ser mantidos pelo supervisor. Os três motivos iniciais
+pertencem à empresa principal da instalação; outras empresas configuram seus próprios
+motivos, sem cópia automática.
 
 ## Contato, empresa principal e empresas secundárias
 
-Agentes podem criar e vincular contatos e empresas nas conversas às quais têm
-acesso, inclusive números centrais. Essa autorização não concede administração
-geral de Contatos nem acesso a caixas de outra equipe/empresa.
+Agentes podem criar e vincular contatos e empresas nas conversas às quais têm acesso,
+inclusive números centrais. Essa autorização não concede administração geral de Contatos
+nem acesso a caixas de outra equipe/empresa.
 
-O painel apresenta a empresa principal e, abaixo, as secundárias. A principal
-continua sendo a referência comercial para novas cotações. Adicionar uma
-secundária não troca o cliente de documentos existentes nem amplia permissões.
-Cada empresa tem sua própria ação de desvinculação. Remover uma empresa altera
-o cadastro do contato e é informado na confirmação; a pessoa continua vinculada
-ao atendimento. Para corrigir uma pessoa associada por engano, **Corrigir contato
-vinculado** remove somente o vínculo com o atendimento, preservando seu cadastro
-e suas relações com empresas.
+O painel apresenta a empresa principal e, abaixo, as secundárias. A principal continua
+sendo a referência comercial para novas cotações. Adicionar uma secundária não troca o
+cliente de documentos existentes nem amplia permissões. Cada empresa tem sua própria
+ação de desvinculação. Remover uma empresa altera o cadastro do contato e é informado na
+confirmação; a pessoa continua vinculada ao atendimento. Para corrigir uma pessoa
+associada por engano, **Corrigir contato vinculado** remove somente o vínculo com o
+atendimento, preservando seu cadastro e suas relações com empresas.
 
-Em **Configuração → Relacionamentos dos contatos**, o administrador pode
-desativar novos vínculos secundários sem apagar os existentes.
+Em **Configuração → Relacionamentos dos contatos**, o administrador pode desativar novos
+vínculos secundários sem apagar os existentes.
 
 ## Mídias, datas e prévias
 
-O dia em leitura permanece no topo da área de mensagens ao rolar. O menu de uma
-mensagem usa rótulos curtos para download. Vídeos abrem em uma janela flutuante
-com controles; o Picture-in-Picture do navegador fica disponível quando suportado.
+O dia em leitura permanece no topo da área de mensagens ao rolar. O menu de uma mensagem
+usa rótulos curtos para download. Vídeos abrem em uma janela flutuante com controles; o
+Picture-in-Picture do navegador fica disponível quando suportado.
 
 Prévias de links reutilizam `mail.link.preview` e sua configuração nativa
-`mail.link_preview_throttle`. A fila gera metadados para até três URLs públicas
-por mensagem, sem modificar o conteúdo enviado ao cliente. Páginas sem Open Graph,
-indisponíveis ou fora dos limites continuam como links normais. A consulta usa
-DNS validado, IP fixado durante a conexão, TLS verificado, redirecionamentos
-validados e corpo limitado; a resolução DNS segue os limites do resolver do SO.
+`mail.link_preview_throttle`. A fila gera metadados para até três URLs públicas por
+mensagem, sem modificar o conteúdo enviado ao cliente. Páginas sem Open Graph,
+indisponíveis ou fora dos limites continuam como links normais. A consulta usa DNS
+validado, IP fixado durante a conexão, TLS verificado, redirecionamentos validados e
+corpo limitado; a resolução DNS segue os limites do resolver do SO.
 
 ## Identidade própria em chamadas WuzAPI
 
-A saúde da conexão registra o par telefone/LID da própria caixa. Em um aceite
-feito pelo celular da caixa, `From` pode ser essa identidade local; o adaptador
-seleciona então o participante remoto em `CallCreator`.
+A saúde da conexão registra o par telefone/LID da própria caixa. Em um aceite feito pelo
+celular da caixa, `From` pode ser essa identidade local; o adaptador seleciona então o
+participante remoto em `CallCreator`.
 
 Prova ausente/obsoleta ou bloqueio por identidade divergente mantém chamadas em
-tentativa posterior, até o limite normal da fila. Corrija a sessão e confirme
-novamente sua saúde antes de reprocessar os eventos que esgotaram tentativas.
-HTTP 429 na consulta complementar ao LID agora alimenta o cooldown já existente.
+tentativa posterior, até o limite normal da fila. Corrija a sessão e confirme novamente
+sua saúde antes de reprocessar os eventos que esgotaram tentativas. HTTP 429 na consulta
+complementar ao LID agora alimenta o cooldown já existente.

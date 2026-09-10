@@ -99,11 +99,9 @@ class ContactCenterStartConversation(models.AbstractModel):
         if required:
             raise UserError(
                 _(
-                    (
-                        "This inbox is not ready to start a conversation by phone. Select "
-                        "a connected WhatsApp inbox or ask a supervisor to check the "
-                        "connection."
-                    )
+                    "This inbox is not ready to start a conversation by phone. Select "
+                    "a connected WhatsApp inbox or ask a supervisor to check the "
+                    "connection."
                 )
             )
         return connections.browse()
@@ -200,10 +198,8 @@ class ContactCenterStartConversation(models.AbstractModel):
         ):
             raise UserError(
                 _(
-                    (
-                        "This contact is ignored in this inbox. Ask a supervisor to review"
-                        " the rule before starting the conversation."
-                    )
+                    "This contact is ignored in this inbox. Ask a supervisor to review"
+                    " the rule before starting the conversation."
                 )
             )
 
@@ -306,9 +302,7 @@ class ContactCenterStartConversation(models.AbstractModel):
         except IdentityConflictError as error:
             raise UserError(
                 _(
-                    (
-                        "This number has conflicting identities. Ask a supervisor to "
-                        "review the links; no conversation was created."
-                    )
+                    "This number has conflicting identities. Ask a supervisor to "
+                    "review the links; no conversation was created."
                 )
             ) from error

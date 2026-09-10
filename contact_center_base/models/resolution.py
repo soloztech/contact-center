@@ -245,10 +245,8 @@ class ContactCenterUiApiResolution(models.AbstractModel):
         ):
             raise ValidationError(
                 _(
-                    (
-                        "The conversation changed. Cancel and reopen the form before "
-                        "resolving it."
-                    )
+                    "The conversation changed. Cancel and reopen the form before "
+                    "resolving it."
                 )
             )
         reason = self.env["contact.center.resolution.reason"].search(

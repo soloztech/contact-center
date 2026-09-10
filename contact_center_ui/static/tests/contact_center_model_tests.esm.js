@@ -6591,7 +6591,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
         "covered timelines wait for the modal or overlay to close before marking read",
         async (assert) => {
             const fixture = await mountedUnreadTimeline({focused: false});
-            const {timeline, target, calls, visibility, settle, close} = fixture;
+            const {store, timeline, target, calls, visibility, settle, close} = fixture;
             const overlay = document.createElement("div");
             overlay.style.cssText =
                 "position:fixed;inset:0;z-index:20000;background:white";
@@ -6624,6 +6624,35 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                     calls,
                     [{method: "mark_seen", args: [10, 100]}],
                     "closing the modal acknowledges visible messages without a scroll"
+                );
+                document.body.append(overlay);
+                const next = {
+                    ...store.state.messages[0],
+                    message_id: 101,
+                    date: "2026-09-09 12:01:00",
+                };
+                store.selectedConversation.last_message = next;
+                store.state.messages = [...store.state.messages, next];
+                await settle();
+                assert.strictEqual(
+                    calls.length,
+                    1,
+                    "the new message waits behind a non-modal overlay"
+                );
+                overlay.remove();
+                target.dispatchEvent(new FocusEvent("focusin", {bubbles: true}));
+                await settle();
+                assert.deepEqual(
+                    calls.map((call) => call.args[1]),
+                    [100, 101],
+                    "returning focus after a floating player closes acknowledges the visible tail without scroll"
+                );
+                timeline.onReadVisibilityChange();
+                timeline.__owl__.app.destroy();
+                assert.strictEqual(
+                    timeline.readVisibilityFrame,
+                    null,
+                    "destroy cancels the scheduled visibility check"
                 );
             } finally {
                 overlay.remove();

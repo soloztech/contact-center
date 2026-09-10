@@ -17,7 +17,9 @@ def preview_urls(text):
     """Keep the first three distinct explicit URLs; never guess a scheme."""
     urls = []
     for match in URL_PATTERN.finditer(text or ""):
-        url = match.group(0).rstrip(".,;!?)")
+        url = match.group(0).rstrip(".,;!?")
+        while url.endswith(")") and url.count(")") > url.count("("):
+            url = url[:-1]
         if len(url) <= 2048 and url not in urls:
             urls.append(url)
         if len(urls) == 3:

@@ -1,5 +1,8 @@
 """Native link preview records shared with the Contact Center timeline."""
 
+# Keep the preview lifecycle together instead of spreading it across core models.
+# pylint: disable=consider-merging-classes-inherited
+
 import hashlib
 import logging
 from urllib.parse import urljoin

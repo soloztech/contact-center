@@ -1,3 +1,6 @@
+# Native content and recipient filtering belong to the same privacy boundary.
+# pylint: disable=consider-merging-classes-inherited
+
 from odoo import _, api, fields, models
 from odoo.exceptions import AccessError
 

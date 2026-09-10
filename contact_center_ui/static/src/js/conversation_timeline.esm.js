@@ -239,15 +239,27 @@ export class ConversationTimeline extends Component {
         this.tailObserver = false;
         this.tailObserverChannelId = false;
         this.tailVisible = false;
-        this.onReadVisibilityChange = () => this.markVisibleTailSeen();
-        useBus(this.uiService.bus, "active-element-changed", () => {
-            browser.requestAnimationFrame(this.onReadVisibilityChange);
-        });
+        this.readVisibilityFrame = null;
+        this.onReadVisibilityChange = () => {
+            if (this.destroyed || this.readVisibilityFrame !== null) {
+                return;
+            }
+            this.readVisibilityFrame = browser.requestAnimationFrame(() => {
+                this.readVisibilityFrame = null;
+                this.markVisibleTailSeen();
+            });
+        };
+        useBus(
+            this.uiService.bus,
+            "active-element-changed",
+            this.onReadVisibilityChange
+        );
         this.onViewportResize = () => {
             this.positionActions();
             this.markVisibleTailSeen();
         };
         document.addEventListener("visibilitychange", this.onReadVisibilityChange);
+        document.addEventListener("focusin", this.onReadVisibilityChange);
         window.addEventListener("focus", this.onReadVisibilityChange);
         window.addEventListener("resize", this.onViewportResize);
         this.followLatest = true;
@@ -258,10 +270,15 @@ export class ConversationTimeline extends Component {
         onWillDestroy(() => {
             this.destroyed = true;
             this.cancelPagination();
+            if (this.readVisibilityFrame !== null) {
+                browser.cancelAnimationFrame(this.readVisibilityFrame);
+                this.readVisibilityFrame = null;
+            }
             document.removeEventListener(
                 "visibilitychange",
                 this.onReadVisibilityChange
             );
+            document.removeEventListener("focusin", this.onReadVisibilityChange);
             window.removeEventListener("focus", this.onReadVisibilityChange);
             window.removeEventListener("resize", this.onViewportResize);
         });
@@ -296,6 +313,9 @@ export class ConversationTimeline extends Component {
                 this.state.timelineHasMoreForward,
                 this.state.mobilePane,
                 this.state.detailsOpen,
+                this.ui.openMenuId,
+                this.ui.reactionPickerId,
+                this.ui.deletingId,
                 this.store.selectedConversation,
                 this.store.selectedConversation &&
                     this.store.selectedConversation.unread_count,
