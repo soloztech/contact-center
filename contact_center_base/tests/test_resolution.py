@@ -20,6 +20,9 @@ class ResolutionTestAdapter(ProviderAdapter):
     def normalize_event(self, connection, envelope):
         return EventDTO.from_dict(envelope)
 
+    def prepare_request_snapshot(self, connection, command):
+        raise AssertionError("Resolution must not prepare customer traffic")
+
     def execute_command(self, connection, command):
         raise AssertionError("Resolution must not contact a customer")
 
