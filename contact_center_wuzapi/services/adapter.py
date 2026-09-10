@@ -767,7 +767,9 @@ def _configured_own_identity(connection):
 
 
 def _validated_own_lid_pair(data, own_identity):
-    if not isinstance(data, dict):
+    if not isinstance(data, dict) or not all(
+        isinstance(data.get(key), str) for key in ("jid", "lid")
+    ):
         raise AdapterError("WuzAPI own LID mapping is invalid")
     pn = _normalize_session_identity(data.get("jid"))
     lid = _normalize_session_identity(data.get("lid"))
@@ -782,6 +784,10 @@ def _validated_own_lid_pair(data, own_identity):
 
 
 def _call_own_identities(connection, participants):
+    if connection.identity_mismatch_latched:
+        raise TransientAdapterError(
+            "WuzAPI call routing awaits session identity verification"
+        )
     own = _configured_own_identity(connection)
     identities = {own} if own else set()
     if own.endswith("@s.whatsapp.net") and any(

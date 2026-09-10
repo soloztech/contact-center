@@ -247,6 +247,24 @@ class TestWuzapiAdapter(WuzapiCase):
                 records_health_probe=True,
             )
 
+    def test_call_cannot_use_cached_own_lid_after_session_identity_mismatch(self):
+        self._record_own_call_identity(
+            "5511888888888@s.whatsapp.net", "200000000000002@lid"
+        )
+        self.connection._apply_health_result(
+            {
+                "state": "degraded",
+                "reason": "identity_mismatch",
+                "identity_matches": False,
+            },
+            records_health_probe=True,
+        )
+        self.assertTrue(self.connection.wuzapi_own_identity_json)
+        with self.assertRaises(TransientAdapterError):
+            self.adapter.normalize_event(
+                self.connection, self.load_fixture("call_accept.json")
+            )
+
     def test_stale_health_probe_cannot_overwrite_session_identity(self):
         self._record_own_call_identity(
             "5511888888888@s.whatsapp.net", "200000000000002@lid"
