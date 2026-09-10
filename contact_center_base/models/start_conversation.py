@@ -52,15 +52,22 @@ class ContactCenterStartConversation(models.AbstractModel):
 
     @api.model
     def _start_connection(self, account, required=True):
-        connections = self.env["contact.center.provider.connection"].search(
-            [
-                ("account_id", "=", account.id),
-                ("company_id", "=", account.company_id.id),
-                ("active", "=", True),
-                ("role", "=", "primary"),
-                ("outbound_active", "=", True),
-            ],
-            limit=2,
+        # Phone addressing is offered only for WhatsApp. Do not instantiate
+        # unrelated channel adapters while bootstrapping the shared inbox.
+        connection_model = self.env["contact.center.provider.connection"]
+        connections = (
+            connection_model.search(
+                [
+                    ("account_id", "=", account.id),
+                    ("company_id", "=", account.company_id.id),
+                    ("active", "=", True),
+                    ("role", "=", "primary"),
+                    ("outbound_active", "=", True),
+                ],
+                limit=2,
+            )
+            if account.platform == "whatsapp"
+            else connection_model.browse()
         )
         if len(connections) == 1:
             connection = connections

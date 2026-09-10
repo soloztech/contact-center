@@ -339,6 +339,18 @@ class TestContactCenterStartConversation(SavepointCase):
                 self._start()
         lookup.assert_not_called()
 
+    def test_other_platform_never_instantiates_phone_adapter(self):
+        self.account.platform = "telegram"
+        with mock.patch.object(type(self.connection), "get_adapter") as get_adapter:
+            bootstrap = self._api().bootstrap()
+            item = next(
+                row for row in bootstrap["accounts"] if row["id"] == self.account.id
+            )
+            self.assertFalse(item["can_start_conversation"])
+            with self.assertRaises(UserError):
+                self._start()
+        get_adapter.assert_not_called()
+
     def test_unavailable_adapter_does_not_break_bootstrap(self):
         with mock.patch.object(
             type(self.connection),
