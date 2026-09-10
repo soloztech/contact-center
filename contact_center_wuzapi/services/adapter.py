@@ -5,6 +5,7 @@ import datetime
 import hashlib
 import hmac
 import json
+import logging
 import math
 import mimetypes
 import re
@@ -55,6 +56,8 @@ from .structured_content import (
     normalize_structured_content,
     validate_outbound_content,
 )
+
+_logger = logging.getLogger(__name__)
 
 WUZAPI_VERSION = "v1.0.8"
 WUZAPI_COMMIT = "9487eca"
@@ -763,10 +766,50 @@ def _configured_own_identity(connection):
     return _normalize_session_identity(connection.account_id.own_external_identity)
 
 
-def _call_direction(connection, remote, creators):
-    own_identity = _configured_own_identity(connection)
-    if own_identity and any(
-        _same_participant(candidate, own_identity) for candidate in creators
+def _validated_own_lid_pair(data, own_identity):
+    if not isinstance(data, dict):
+        raise AdapterError("WuzAPI own LID mapping is invalid")
+    pn = _normalize_session_identity(data.get("jid"))
+    lid = _normalize_session_identity(data.get("lid"))
+    if (
+        pn != own_identity
+        or not pn.endswith("@s.whatsapp.net")
+        or not lid.endswith("@lid")
+        or not _STRICT_NORMALIZED_PARTICIPANT_JID_PATTERN.fullmatch(lid)
+    ):
+        raise AdapterError("WuzAPI own LID mapping does not match the account")
+    return {"jid": pn, "lid": lid}
+
+
+def _call_own_identities(connection, participants):
+    own = _configured_own_identity(connection)
+    identities = {own} if own else set()
+    if own.endswith("@s.whatsapp.net") and any(
+        _normalize_session_identity(value).endswith("@lid") for value in participants
+    ):
+        # The health job records this proof using the same authenticated session.
+        # Ingress/routing must remain free of network requests and guest aliases
+        # from other inboxes cannot prove the identity of this session.
+        snapshot = connection.sudo().wuzapi_own_identity_json or {}
+        if (
+            snapshot.get("configuration_revision")
+            != connection.health_configuration_revision
+        ):
+            raise TransientAdapterError("WuzAPI own LID mapping awaits a health check")
+        try:
+            pair = _validated_own_lid_pair(snapshot, own)
+        except AdapterError as error:
+            raise TransientAdapterError(
+                "WuzAPI own LID mapping awaits a health check"
+            ) from error
+        identities.add(pair["lid"])
+    return identities
+
+
+def _call_direction(own_identities, remote, creators):
+    if any(
+        _normalize_session_identity(candidate) in own_identities
+        for candidate in creators
     ):
         return "outbound"
     if any(_same_participant(candidate, remote) for candidate in creators):
@@ -780,13 +823,8 @@ def _call_remote_addresses(connection, raw_event):
         raise UnsupportedEventError("WuzAPI group calls are not implemented")
 
     remote = _lookup(raw_event, "From")
-    primary = _strict_direct_participant(remote, "primary", "event.From")
-    own_identity = _configured_own_identity(connection)
-    if own_identity and _same_participant(remote, own_identity):
-        raise UnsupportedEventError(
-            "WuzAPI call event remote participant resolves to the account identity"
-        )
-
+    remote_source = "event.From"
+    _strict_direct_participant(remote, "primary", remote_source)
     creator_specs = (
         (_lookup(raw_event, "CallCreator"), "event.CallCreator"),
         (_lookup(raw_event, "CallCreatorAlt"), "event.CallCreatorAlt"),
@@ -794,7 +832,17 @@ def _call_remote_addresses(connection, raw_event):
     creators = tuple(
         value for value, _source_field in creator_specs if _jid_string(value)
     )
-    logical_direction = _call_direction(connection, remote, creators)
+    own_identities = _call_own_identities(connection, (remote,) + creators)
+    if _normalize_session_identity(remote) in own_identities:
+        creator = creator_specs[0][0]
+        if (
+            not _jid_string(creator)
+            or _normalize_session_identity(creator) in own_identities
+        ):
+            raise UnsupportedEventError("WuzAPI call event has no remote participant")
+        remote, remote_source = creator_specs[0]
+    primary = _strict_direct_participant(remote, "primary", remote_source)
+    logical_direction = _call_direction(own_identities, remote, creators)
 
     # CallCreator/CallCreatorAlt are safe alternate-identity evidence only when
     # one side anchors the pair to From. For outbound calls they describe the
@@ -805,16 +853,18 @@ def _call_remote_addresses(connection, raw_event):
         for value, source_field in creator_specs:
             if not _jid_string(value) or _same_participant(value, remote):
                 continue
-            if own_identity and _same_participant(value, own_identity):
-                continue
+            if _normalize_session_identity(value) in own_identities:
+                raise AdapterError(
+                    "WuzAPI call creator aliases contradict the account identity"
+                )
             candidate = _strict_direct_participant(value, "alternate", source_field)
             if candidate.namespace == primary.namespace:
                 continue
             alternate_spec = (value, source_field)
             break
 
-    conversation_specs = [(remote, "primary", "event.From")]
-    actor_specs = [(remote, "sender", "event.From")]
+    conversation_specs = [(remote, "primary", remote_source)]
+    actor_specs = [(remote, "sender", remote_source)]
     if alternate_spec:
         alternate, source_field = alternate_spec
         conversation_specs.append((alternate, "alternate", source_field))
@@ -4166,4 +4216,24 @@ class WuzapiAdapter(WuzapiDirectStartMixin, WuzapiGroupMetadataMixin, ProviderAd
         if terminal:
             return terminal
         configured_identity = str(account.own_external_identity or "").strip()
-        return self._health_payload_values(baseline, payload, configured_identity)
+        health = self._health_payload_values(baseline, payload, configured_identity)
+        own = _normalize_session_identity(configured_identity)
+        if health.get("identity_matches") is True and own.endswith("@s.whatsapp.net"):
+            try:
+                data = self._identity_profile_request(
+                    connection,
+                    "GET",
+                    "/user/lid/%s" % own,
+                    "own LID mapping",
+                    maximum_bytes=8192,
+                )
+                health["wuzapi_own_identity"] = _validated_own_lid_pair(data, own)
+            except AdapterError as error:
+                # A profile lookup failure must not block ordinary messages.
+                # Calls requiring the missing proof remain in the durable queue.
+                _logger.info(
+                    "Own LID mapping unavailable for connection %s (%s)",
+                    connection.id,
+                    error.__class__.__name__,
+                )
+        return health

@@ -16,7 +16,13 @@ from odoo.addons.contact_center_base.services.adapter import (
 from odoo.addons.contact_center_base.services.job import provider_paused_retry_seconds
 from odoo.addons.queue_job.exception import RetryableJobError
 
-from ..services.adapter import WUZAPI_COMMIT, WUZAPI_VERSION, WUZAPI_WEBHOOK_EVENT_TYPES
+from ..services.adapter import (
+    WUZAPI_COMMIT,
+    WUZAPI_VERSION,
+    WUZAPI_WEBHOOK_EVENT_TYPES,
+    _configured_own_identity,
+    _validated_own_lid_pair,
+)
 
 # Configuration and guided onboarding are separate service boundaries on purpose.
 # pylint: disable=consider-merging-classes-inherited
@@ -51,6 +57,7 @@ _WUZAPI_HMAC_JOB_ATTEMPT_CEILING = 9
 _WUZAPI_HMAC_JOB_PRIORITY = 35
 _WUZAPI_HMAC_INTERNAL_CONTEXT = "contact_center_wuzapi_hmac_internal"
 _WUZAPI_HMAC_INTERNAL_TOKEN = object()
+_WUZAPI_OWN_IDENTITY_TOKEN = object()
 _WUZAPI_ONBOARDING_IDENTITY_CONTEXT = "contact_center_wuzapi_onboarding_identity"
 _WUZAPI_ONBOARDING_IDENTITY_TOKEN = object()
 _WUZAPI_HMAC_DRAIN_WINDOW = datetime.timedelta(minutes=5)
@@ -127,6 +134,50 @@ class ContactCenterWuzapiWebhookEvent(models.Model):
 
 class ContactCenterProviderConnection(models.Model):
     _inherit = "contact.center.provider.connection"
+
+    wuzapi_own_identity_json = fields.Json(
+        string="Verified Session Identity",
+        readonly=True,
+        copy=False,
+        groups="contact_center_base.group_contact_center_admin",
+        help="Own PN/LID pair verified by the health job for this connection revision.",
+    )
+
+    def _normalize_health_result(self, health):
+        normalized = super()._normalize_health_result(health)
+        if health.get("wuzapi_own_identity") is not None:
+            if (
+                self.adapter_key != "wuzapi"
+                or health.get("identity_matches") is not True
+            ):
+                raise ValidationError(
+                    _("Session identity requires a matching WuzAPI health probe.")
+                )
+            normalized["wuzapi_own_identity"] = _validated_own_lid_pair(
+                health["wuzapi_own_identity"], _configured_own_identity(self)
+            )
+        return normalized
+
+    def _apply_normalized_health(self, normalized, **kwargs):
+        guarded = self.with_context(
+            wuzapi_own_identity_token=_WUZAPI_OWN_IDENTITY_TOKEN
+        )
+        return super(ContactCenterProviderConnection, guarded)._apply_normalized_health(
+            normalized, **kwargs
+        )
+
+    def _health_probe_values(self, normalized, **kwargs):
+        values = super()._health_probe_values(normalized, **kwargs)
+        if self.adapter_key == "wuzapi" and normalized.get("wuzapi_own_identity"):
+            # Called under the core health lock, after job/revision and probe
+            # freshness checks. Never learn a session identity from a webhook.
+            pair = _validated_own_lid_pair(
+                normalized["wuzapi_own_identity"], _configured_own_identity(self)
+            )
+            values["wuzapi_own_identity_json"] = dict(
+                pair, configuration_revision=self.health_configuration_revision
+            )
+        return values
 
     def _default_wuzapi_webhook_event_ids(self):
         return self.env["contact.center.wuzapi.webhook.event"].search(
@@ -333,6 +384,8 @@ class ContactCenterProviderConnection(models.Model):
     def create(self, vals_list):
         prepared_values = []
         for original_values in vals_list:
+            if "wuzapi_own_identity_json" in original_values:
+                raise AccessError(_("Session identity is managed by health checks."))
             if _WUZAPI_HMAC_MANAGED_FIELDS.intersection(original_values) and (
                 self.env.context.get(_WUZAPI_HMAC_INTERNAL_CONTEXT)
                 is not _WUZAPI_HMAC_INTERNAL_TOKEN
@@ -459,6 +512,11 @@ class ContactCenterProviderConnection(models.Model):
 
     def write(self, values):
         values = dict(values)
+        if "wuzapi_own_identity_json" in values and (
+            self.env.context.get("wuzapi_own_identity_token")
+            is not _WUZAPI_OWN_IDENTITY_TOKEN
+        ):
+            raise AccessError(_("Session identity is managed by health checks."))
         self._wuzapi_lock_topology_for_write(values)
         if "wuzapi_base_url" in values:
             values["wuzapi_base_url"] = self._normalize_wuzapi_base_url(

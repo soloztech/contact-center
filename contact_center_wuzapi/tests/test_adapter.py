@@ -11,7 +11,7 @@ from unittest import mock
 import requests
 from urllib3.exceptions import MaxRetryError, NewConnectionError
 
-from odoo.exceptions import UserError, ValidationError
+from odoo.exceptions import AccessError, UserError, ValidationError
 
 from odoo.addons.contact_center_base.services.adapter import (
     AdapterError,
@@ -135,6 +135,137 @@ class TestWuzapiAdapter(WuzapiCase):
     def setUpClass(cls):
         super().setUpClass()
         cls.adapter = WuzapiAdapter(cls.env)
+
+    def _record_own_call_identity(self, pn, lid):
+        self.account.own_external_identity = pn
+        self.connection._apply_health_result(
+            {
+                "state": "connected",
+                "identity_matches": True,
+                "wuzapi_own_identity": {"jid": pn, "lid": lid},
+            },
+            records_health_probe=True,
+            expected_configuration_revision=self.connection.health_configuration_revision,
+        )
+
+    def test_call_accepted_on_own_device_routes_to_creator_without_provider_io(self):
+        self._record_own_call_identity(
+            "5511888888888:12@s.whatsapp.net", "200000000000002:12@lid"
+        )
+        envelope = self.load_fixture("call_accept.json")
+        envelope["event"].update(
+            From="200000000000002@lid",
+            CallCreator="100000000000001@lid",
+            CallCreatorAlt="5511999999999@s.whatsapp.net",
+        )
+        with mock.patch(REQUEST_PATCH, side_effect=AssertionError("Ingress did I/O")):
+            event = self.adapter.normalize_event(self.connection, envelope)
+            route = self.adapter.conversation_route(self.connection, envelope)
+        self.assertEqual(event.conversation_ref, "100000000000001@lid")
+        self.assertEqual(route["conversation_ref"], event.conversation_ref)
+        self.assertEqual(event.extensions["call"]["direction"], "inbound")
+        self.assertEqual(event.actor.addresses[0].source_field, "event.CallCreator")
+        self.assertEqual(len(event.conversation.addresses), 2)
+        self.assertNotIn("200000000000002", json.dumps(event.to_dict()))
+
+        offer = copy.deepcopy(envelope)
+        offer["type"] = "CallOffer"
+        offer["event"]["From"] = offer["event"]["CallCreator"]
+        application = self.env["contact.center.application"]
+        first = application._process_event(
+            self.connection, self.adapter.normalize_event(self.connection, offer)
+        )
+        accepted = application._process_event(self.connection, event)
+        replayed = application._process_event(self.connection, event)
+        self.assertEqual(first.res_id, accepted.res_id)
+        self.assertEqual(accepted, replayed)
+        self.assertFalse(
+            self.env["contact.center.identity.alias"].search_count(
+                [
+                    ("account_id", "=", self.account.id),
+                    ("value_normalized", "=", "200000000000002@lid"),
+                ]
+            )
+        )
+
+    def test_outbound_call_uses_remote_from_and_excludes_own_creator_lid(self):
+        self._record_own_call_identity(
+            "5511888888888@s.whatsapp.net", "200000000000002@lid"
+        )
+        envelope = self.load_fixture("call_accept.json")
+        envelope["event"].update(
+            From="100000000000001@lid",
+            CallCreator="200000000000002@lid",
+            CallCreatorAlt="",
+        )
+        event = self.adapter.normalize_event(self.connection, envelope)
+        self.assertEqual(event.conversation_ref, "100000000000001@lid")
+        self.assertEqual(event.extensions["call"]["direction"], "outbound")
+        self.assertEqual(len(event.conversation.addresses), 1)
+        self.assertNotIn("200000000000002", json.dumps(event.to_dict()))
+
+    def test_call_routing_requires_current_session_proof_not_cross_inbox_aliases(self):
+        self.account.own_external_identity = "5511888888888@s.whatsapp.net"
+        envelope = self.load_fixture("call_accept.json")
+        with self.assertRaises(TransientAdapterError):
+            self.adapter.normalize_event(self.connection, envelope)
+        self.assertIsNone(self.adapter.conversation_route(self.connection, envelope))
+        self._record_own_call_identity(
+            "5511888888888@s.whatsapp.net", "200000000000002@lid"
+        )
+        self.connection.wuzapi_api_token = "changed-session-token"
+        with self.assertRaises(TransientAdapterError):
+            self.adapter.normalize_event(self.connection, envelope)
+
+    def test_call_creator_pair_cannot_merge_remote_and_own_identities(self):
+        self._record_own_call_identity(
+            "5511888888888@s.whatsapp.net", "200000000000002@lid"
+        )
+        envelope = self.load_fixture("call_accept.json")
+        envelope["event"].update(
+            From="200000000000002@lid",
+            CallCreator="100000000000001@lid",
+            CallCreatorAlt="5511888888888@s.whatsapp.net",
+        )
+        with self.assertRaises(AdapterError):
+            self.adapter.normalize_event(self.connection, envelope)
+
+    def test_session_identity_snapshot_is_internal_and_rejects_other_phone(self):
+        self.account.own_external_identity = "5511888888888@s.whatsapp.net"
+        with self.assertRaises(AccessError):
+            self.connection.write({"wuzapi_own_identity_json": {"lid": "1@lid"}})
+        with self.assertRaises(AdapterError):
+            self.connection._apply_health_result(
+                {
+                    "state": "connected",
+                    "identity_matches": True,
+                    "wuzapi_own_identity": {
+                        "jid": "5511777777777@s.whatsapp.net",
+                        "lid": "200000000000002@lid",
+                    },
+                },
+                records_health_probe=True,
+            )
+
+    def test_stale_health_probe_cannot_overwrite_session_identity(self):
+        self._record_own_call_identity(
+            "5511888888888@s.whatsapp.net", "200000000000002@lid"
+        )
+        before = dict(self.connection.wuzapi_own_identity_json)
+        self.connection._apply_health_result(
+            {
+                "state": "connected",
+                "identity_matches": True,
+                "wuzapi_own_identity": {
+                    "jid": "5511888888888@s.whatsapp.net",
+                    "lid": "300000000000003@lid",
+                },
+            },
+            expected_configuration_revision=self.connection.health_configuration_revision
+            - 1,
+            records_health_probe=True,
+        )
+        self.assertEqual(self.connection.wuzapi_own_identity_json, before)
 
     def _command(
         self,
@@ -565,7 +696,9 @@ class TestWuzapiAdapter(WuzapiCase):
         self.assertEqual(len(event_ids), 3)
 
     def test_call_direction_never_projects_the_accounts_own_identity_as_guest(self):
-        self.account.own_external_identity = "5511888888888@s.whatsapp.net"
+        self._record_own_call_identity(
+            "5511888888888@s.whatsapp.net", "200000000000002@lid"
+        )
         envelope = self.load_fixture("call_offer.json")
         envelope["event"].update(
             {
@@ -600,7 +733,9 @@ class TestWuzapiAdapter(WuzapiCase):
         with self.assertRaises(UnsupportedEventError):
             self.adapter.normalize_event(self.connection, group)
 
-        self.account.own_external_identity = "5511999999999@s.whatsapp.net"
+        self._record_own_call_identity(
+            "5511999999999@s.whatsapp.net", "100000000000001@lid"
+        )
         own_remote = self.load_fixture("call_offer.json")
         with self.assertRaises(UnsupportedEventError):
             self.adapter.normalize_event(self.connection, own_remote)
@@ -4513,7 +4648,7 @@ class TestWuzapiAdapter(WuzapiCase):
         self.assertNotIn("jid", health)
         self.assertNotIn(self.connection.wuzapi_api_token, repr(health))
         self.assertNotIn(self.connection.wuzapi_hmac_secret, repr(health))
-        args, kwargs = request.call_args
+        args, kwargs = request.call_args_list[0]
         self.assertEqual(args, ("GET", "https://wuzapi.invalid/session/status"))
         self.assertEqual(kwargs["headers"]["Token"], self.connection.wuzapi_api_token)
         self.assertEqual(kwargs["timeout"], (3, 10))
