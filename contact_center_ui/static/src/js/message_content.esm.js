@@ -242,9 +242,15 @@ export class FloatingVideo extends Component {
         this.videoRef = useRef("video");
         this.closeRef = useRef("close");
         this.state = useState({error: "", ready: false});
-        onMounted(() => this.closeRef.el.focus());
+        onMounted(() => {
+            // Owl's portal may clear refs before its child unmount hooks run.
+            // Keep the mounted element until playback and native PiP are closed.
+            this.videoElement = this.videoRef.el;
+            this.closeRef.el.focus();
+        });
         onWillUnmount(() => {
-            const video = this.videoRef.el;
+            const video = this.videoElement;
+            this.videoElement = null;
             if (!video) {
                 return;
             }
