@@ -1543,6 +1543,9 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             registry.category("services").add("action", {
                 start: () => ({doAction: async () => undefined}),
             });
+            registry.category("services").add("dialog", {
+                start: () => ({add: () => () => undefined}),
+            });
             makeFakeLocalizationService();
             const env = await makeTestEnv();
             const target = getFixture();

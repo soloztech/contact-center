@@ -250,12 +250,13 @@ QUnit.module("contact_center_ui > conversation tags and reply management", (hook
             });
             const calls = [];
             let catalog = [];
+            let serverCatalog = [];
             let selectedExplicitly = false;
             const store = {
                 call: async (method, args) => {
                     calls.push([method, args]);
                     return method === "conversation_tag_catalog"
-                        ? {items: catalog, can_create: true}
+                        ? {items: serverCatalog, can_create: true}
                         : pendingCreate;
                 },
                 reconcileTagCatalog: (items) => {
@@ -296,6 +297,7 @@ QUnit.module("contact_center_ui > conversation tags and reply management", (hook
             assert.ok(target.querySelector(".cc-conversation-tags__create").disabled);
             await click(target, ".cc-conversation-tags__panel header button");
             assert.notOk(component.local.open);
+            serverCatalog = [created];
             resolveCreate({
                 items: [created],
                 created_id: 3,
@@ -313,13 +315,18 @@ QUnit.module("contact_center_ui > conversation tags and reply management", (hook
             );
             assert.deepEqual(
                 catalog,
-                [created],
-                "registration refreshes the reusable catalog"
+                [],
+                "a stale response does not replace the current catalog after the picker closes"
             );
             assert.notOk(target.querySelector(".cc-conversation-tags__panel"));
             assert.notOk(target.querySelector(".cc-conversation-tags__count"));
             assert.notOk(component.local.saving);
             await click(target, ".cc-conversation-tags__trigger");
+            assert.deepEqual(
+                catalog,
+                [created],
+                "reopening fetches the registered tag from the server catalog"
+            );
             const existingTag = target.querySelector(
                 ".cc-conversation-tags__items button"
             );
