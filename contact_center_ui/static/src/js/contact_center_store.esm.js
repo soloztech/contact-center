@@ -3609,34 +3609,38 @@ export class ContactCenterStore {
         return true;
     }
 
+    async applyConversationUpdate(payload, channelId) {
+        validateEnvelope(payload);
+        if (
+            (payload.item && payload.item.channel_id !== channelId) ||
+            (!payload.item && payload.removed_from_conversation !== true)
+        ) {
+            throw new TypeError("A conversa retornada pelo servidor é inválida.");
+        }
+        const targetIsSelected = this.state.selectedChannelId === channelId;
+        if (payload.removed_from_conversation === true) {
+            this.state.conversations = this.state.conversations.filter(
+                (item) => item.channel_id !== channelId
+            );
+            if (targetIsSelected) {
+                this.clearConversationSelection({closePanes: true});
+            }
+        } else if (!this.replaceConversation(payload.item)) {
+            throw new TypeError("A conversa retornada pelo servidor é inválida.");
+        }
+        if (targetIsSelected && !this.state.selectedChannelId) {
+            await this.loadConversations({reset: true, selectFirst: true});
+        }
+        return true;
+    }
+
     async updateConversation(patch, channelId = this.state.selectedChannelId) {
         if (!this.loadedConversation(channelId)) {
             return false;
         }
         try {
             const payload = await this.call("update_conversation", [channelId, patch]);
-            validateEnvelope(payload);
-            if (
-                (payload.item && payload.item.channel_id !== channelId) ||
-                (!payload.item && payload.removed_from_conversation !== true)
-            ) {
-                throw new TypeError("A conversa retornada pelo servidor é inválida.");
-            }
-            const targetIsSelected = this.state.selectedChannelId === channelId;
-            if (payload.removed_from_conversation === true) {
-                this.state.conversations = this.state.conversations.filter(
-                    (item) => item.channel_id !== channelId
-                );
-                if (targetIsSelected) {
-                    this.clearConversationSelection({closePanes: true});
-                }
-            } else if (!this.replaceConversation(payload.item)) {
-                throw new TypeError("A conversa retornada pelo servidor é inválida.");
-            }
-            if (targetIsSelected && !this.state.selectedChannelId) {
-                await this.loadConversations({reset: true, selectFirst: true});
-            }
-            return true;
+            return await this.applyConversationUpdate(payload, channelId);
         } catch (error) {
             this.notify(errorMessage(error), {
                 type: "danger",
@@ -3648,6 +3652,20 @@ export class ContactCenterStore {
 
     async setConversationState(state, channelId = this.state.selectedChannelId) {
         return this.updateConversation({state}, channelId);
+    }
+
+    async resolveConversation(channelId, values) {
+        const payload = await this.call("resolve_conversation", [
+            channelId,
+            values.reasonId,
+            values.justification,
+            values.requestId,
+            values.revision,
+        ]);
+        if (!payload || !payload.item || payload.item.channel_id !== channelId) {
+            throw new TypeError("A conversa retornada pelo servidor é inválida.");
+        }
+        return this.applyConversationUpdate(payload, channelId);
     }
 
     canManageConversation(channelId, capability) {

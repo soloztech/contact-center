@@ -106,13 +106,13 @@ class TestContactCenterQuickReplyManagement(SavepointCase):
 
     def test_agent_can_create_reply_from_native_management_form(self):
         model = self.env["contact.center.quick.reply.binding"].with_user(self.agent)
-        with Form(
+        form = Form(
             model,
             view="contact_center_base.view_contact_center_quick_reply_binding_form",
-        ) as form:
-            form.shortcut = "form-reply"
-            form.body = "Created in the quick reply form"
-        reply = form.record
+        )
+        form.shortcut = "form-reply"
+        form.body = "Created in the quick reply form"
+        reply = form.save()
         self.assertEqual(reply.owner_id, self.agent)
         self.assertEqual(reply.shortcode_id.source, "form-reply")
         self.assertEqual(reply.body, "Created in the quick reply form")
@@ -375,7 +375,7 @@ class TestContactCenterQuickReplyManagement(SavepointCase):
             {"name": "Not a Contact Center conversation"}
         )
         name = "Wrong conversation tag %s" % uuid.uuid4()
-        with self.assertRaises((AccessError, ValidationError)):
+        with self.assertRaises(ValidationError):
             self.env["contact.center.ui.api"].with_user(
                 self.supervisor
             ).create_conversation_tag(channel.id, name)

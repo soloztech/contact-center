@@ -1564,6 +1564,9 @@ export class MessageComposer extends Component {
     }
 
     onShortcut(event) {
+        if (event.defaultPrevented || document.querySelector(".o_dialog")) {
+            return false;
+        }
         const shortcut = composerShortcut(event);
         if (!shortcut || !this.conversation || this.switchHasBlockingWork) {
             return false;

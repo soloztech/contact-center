@@ -27,6 +27,7 @@ from . import (
     test_productivity,
     test_quick_reply_management,
     test_queue_recovery,
+    test_resolution,
     test_source_webhook_link,
     test_structured_content,
     test_technical_menus,

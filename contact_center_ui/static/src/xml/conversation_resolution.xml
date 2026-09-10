@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<templates xml:space="preserve">
+    <t t-name="contact_center_ui.ConversationResolution" owl="1">
+        <Dialog
+            title="'Resolver conversa'"
+            size="'md'"
+            contentClass="'cc-resolution-dialog'"
+        >
+            <p class="cc-resolution-dialog__contact" t-esc="conversationName" />
+            <p class="cc-resolution-dialog__notice">
+                <i class="fa fa-lock" aria-hidden="true" />
+                O motivo e a justificativa ficarão em uma nota interna. O cliente não receberá essa nota.
+            </p>
+            <p t-if="local.loading" role="status">Carregando motivos…</p>
+            <div t-else="" class="cc-resolution-dialog__fields">
+                <label for="cc-resolution-reason">Motivo</label>
+                <select
+                    id="cc-resolution-reason"
+                    class="form-control"
+                    t-model="local.reasonId"
+                    t-att-disabled="local.saving || submittedValues"
+                    required="required"
+                >
+                    <option value="">Selecione um motivo cadastrado</option>
+                    <option
+                        t-foreach="local.items"
+                        t-as="item"
+                        t-key="item.id"
+                        t-att-value="item.id"
+                        t-esc="item.name"
+                    />
+                </select>
+                <p t-if="!local.items.length" class="text-muted">
+                    Nenhum motivo disponível. Peça a um supervisor para cadastrar um motivo antes de resolver.
+                </p>
+                <button
+                    t-if="local.canManage"
+                    type="button"
+                    class="btn btn-link cc-resolution-dialog__manage"
+                    t-att-disabled="local.saving || submittedValues"
+                    t-on-click="manageReasons"
+                >
+                    <i class="fa fa-list-alt" aria-hidden="true" /> Gerenciar motivos
+                </button>
+                <label for="cc-resolution-justification">Breve justificativa</label>
+                <textarea
+                    id="cc-resolution-justification"
+                    class="form-control"
+                    rows="3"
+                    maxlength="500"
+                    required="required"
+                    t-model="local.justification"
+                    t-att-disabled="local.saving || submittedValues"
+                    placeholder="Explique por que este atendimento está sendo encerrado."
+                />
+                <small class="text-muted">Até 500 caracteres.</small>
+            </div>
+            <p
+                t-if="local.error"
+                class="alert alert-danger mt-3 mb-0"
+                role="alert"
+                t-esc="local.error"
+            />
+            <t t-set-slot="footer">
+                <button
+                    type="button"
+                    class="btn btn-primary cc-resolution-dialog__confirm"
+                    t-att-disabled="!canConfirm"
+                    t-on-click="confirm"
+                >
+                    <t t-if="local.saving">Registrando…</t>
+                    <t t-else="">Resolver e registrar nota</t>
+                </button>
+                <button
+                    type="button"
+                    class="btn btn-secondary"
+                    t-att-disabled="local.saving"
+                    t-on-click="props.close"
+                >Cancelar</button>
+            </t>
+        </Dialog>
+    </t>
+</templates>

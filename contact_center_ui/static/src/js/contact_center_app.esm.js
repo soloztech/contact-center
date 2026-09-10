@@ -9,17 +9,18 @@ import {
     conversationUiPolicy,
     initials,
 } from "./contact_center_model.esm";
+import {useOwnedDialogs, useService} from "@web/core/utils/hooks";
 import {BrowserAttention} from "./browser_attention.esm";
 import {ContactCenterStore} from "./contact_center_store.esm";
 import {ContactPanel} from "./contact_panel.esm";
 import {ConversationList} from "./conversation_list.esm";
+import {ConversationResolution} from "./conversation_resolution.esm";
 import {ConversationTags} from "./conversation_tags.esm";
 import {ConversationTimeline} from "./conversation_timeline.esm";
 import {DeferredImage} from "./deferred_image.esm";
 import {MessageComposer} from "./message_composer.esm";
 import {browser} from "@web/core/browser/browser";
 import {registry} from "@web/core/registry";
-import {useService} from "@web/core/utils/hooks";
 
 export function conversationComposerAvailable(policy, capabilities) {
     return Boolean(
@@ -31,6 +32,7 @@ export function conversationComposerAvailable(policy, capabilities) {
 export class ContactCenterApp extends Component {
     setup() {
         this.ui = useState({stateChanging: false, failedHeaderAvatarUrl: false});
+        this.addDialog = useOwnedDialogs();
         this.attention = new BrowserAttention();
         this.store = new ContactCenterStore({
             orm: useService("orm"),
@@ -143,6 +145,18 @@ export class ContactCenterApp extends Component {
             return false;
         }
         this.ui.stateChanging = true;
+        if (action.target === "resolved") {
+            this.addDialog(
+                ConversationResolution,
+                {store: this.store, conversation: this.selectedConversation},
+                {
+                    onClose: () => {
+                        this.ui.stateChanging = false;
+                    },
+                }
+            );
+            return true;
+        }
         try {
             return await this.store.setConversationState(action.target);
         } finally {

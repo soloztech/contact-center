@@ -592,6 +592,9 @@ export class ConversationList extends Component {
     }
 
     onShortcut(event) {
+        if (event.defaultPrevented || document.querySelector(".o_dialog")) {
+            return false;
+        }
         if (this.ui.filtersOpen) {
             if (event.key === "Escape") {
                 event.preventDefault();

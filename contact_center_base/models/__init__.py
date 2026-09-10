@@ -21,3 +21,4 @@ from . import productivity
 from . import quick_reply
 from . import followup
 from . import conversation_actions
+from . import resolution
