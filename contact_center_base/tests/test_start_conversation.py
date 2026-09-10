@@ -340,15 +340,25 @@ class TestContactCenterStartConversation(SavepointCase):
         lookup.assert_not_called()
 
     def test_other_platform_never_instantiates_phone_adapter(self):
-        self.account.platform = "telegram"
+        other = self.env["contact.center.account"].create(
+            {
+                "name": "Non-phone inbox",
+                "company_id": self.env.company.id,
+                "platform": "telegram",
+                "external_ref": "non-phone-%s" % uuid.uuid4(),
+                "access_user_ids": [(6, 0, self.outsider.ids)],
+            }
+        )
+        self.connection.copy(
+            {"account_id": other.id, "external_ref": "non-phone-%s" % uuid.uuid4()}
+        )
+        api = self._api(self.outsider)
         with mock.patch.object(type(self.connection), "get_adapter") as get_adapter:
-            bootstrap = self._api().bootstrap()
-            item = next(
-                row for row in bootstrap["accounts"] if row["id"] == self.account.id
-            )
+            bootstrap = api.bootstrap()
+            item = next(row for row in bootstrap["accounts"] if row["id"] == other.id)
             self.assertFalse(item["can_start_conversation"])
             with self.assertRaises(UserError):
-                self._start()
+                api.start_conversation(other.id, "(11) 99876-5432")
         get_adapter.assert_not_called()
 
     def test_unavailable_adapter_does_not_break_bootstrap(self):
