@@ -865,6 +865,43 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
     background: #f4f7f6;
 }
 
+.cc-inbox-search-row {
+    display: flex;
+    align-items: stretch;
+    gap: 7px;
+
+    .cc-search-field {
+        min-width: 0;
+        flex: 1;
+        margin: 0;
+    }
+}
+
+.cc-start-conversation-toggle {
+    position: relative;
+    width: 36px;
+    flex: 0 0 36px;
+    border: 1px solid var(--cc-cobalt);
+    border-radius: 5px;
+    color: #fff;
+    background: var(--cc-cobalt);
+
+    .fa-commenting-o {
+        font-size: 18px;
+    }
+    .fa-plus {
+        position: absolute;
+        top: 5px;
+        right: 4px;
+        font-size: 8px;
+    }
+
+    &:focus-visible {
+        outline: 2px solid var(--cc-cobalt-deep);
+        outline-offset: 2px;
+    }
+}
+
 .cc-inbox-filter-toolbar {
     display: flex;
     min-width: 0;
@@ -945,7 +982,8 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
     }
 
     button:focus-visible,
-    select:focus-visible {
+    select:focus-visible,
+    input:focus-visible {
         outline: 2px solid var(--cc-cobalt);
         outline-offset: 2px;
     }
@@ -1061,6 +1099,7 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
     }
 
     .cc-account-filter,
+    .cc-responsible-filter,
     .cc-tag-filter,
     .cc-activity-filter {
         display: flex;
@@ -1074,6 +1113,96 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
             font-size: 12px;
         }
     }
+}
+
+.cc-responsible-filter {
+    margin-top: 7px !important;
+
+    select {
+        min-width: 0;
+        padding: 6px;
+        border: 1px solid var(--cc-line);
+        border-radius: 4px;
+        color: var(--cc-ink-soft);
+        background: #fff;
+    }
+}
+
+.cc-tag-filter-options {
+    max-height: 160px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.cc-tag-filter-option {
+    display: flex;
+    min-height: 32px;
+    align-items: center;
+    margin: 0;
+    font-size: 12px;
+    gap: 8px;
+    cursor: pointer;
+
+    input {
+        width: 15px;
+        height: 15px;
+        flex: 0 0 auto;
+        accent-color: var(--cc-cobalt);
+    }
+    span {
+        overflow-wrap: anywhere;
+    }
+}
+
+.cc-start-field {
+    display: flex;
+    flex-direction: column;
+    margin: 0 0 10px;
+    gap: 5px;
+
+    > span {
+        font-size: 12px;
+        font-weight: 650;
+    }
+    input,
+    select {
+        width: 100%;
+        min-width: 0;
+        min-height: 36px;
+        padding: 7px;
+        border: 1px solid var(--cc-line);
+        border-radius: 4px;
+        color: var(--cc-ink);
+        background: #fff;
+        font-size: 13px;
+    }
+}
+
+.cc-start-phone-result {
+    margin: 10px 0;
+    color: var(--cc-steel);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.cc-start-phone-preview {
+    color: var(--cc-signal);
+
+    strong {
+        font-family: "SFMono-Regular", Consolas, monospace;
+    }
+}
+
+.cc-start-error {
+    margin-bottom: 10px;
+    color: var(--cc-danger);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.cc-start-conversation-panel button:disabled {
+    opacity: 0.55;
+    cursor: default;
 }
 
 .cc-inbox-filter-hint {

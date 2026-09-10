@@ -913,7 +913,15 @@ class WuzapiGroupMetadataMixin:
         )
 
     def _identity_profile_request(
-        self, connection, method, endpoint, label, *, payload=None, maximum_bytes
+        self,
+        connection,
+        method,
+        endpoint,
+        label,
+        *,
+        payload=None,
+        maximum_bytes,
+        allow_not_found=False,
     ):
         headers = dict(self._provider_headers(connection))
         if method == "GET":
@@ -936,6 +944,8 @@ class WuzapiGroupMetadataMixin:
             status = response.status_code
             retry_after_seconds = self._provider_retry_after(response)
             self._group_bounded_provider_error(response)
+            if status == 404 and allow_not_found:
+                return None
             self._group_raise_read_error(status, label, retry_after_seconds)
         response_payload = self._group_limited_json_object(
             response, maximum_bytes, "WuzAPI %s" % label

@@ -53,17 +53,34 @@
             </header>
 
             <div id="cc-inbox-tools" class="cc-inbox-tools">
+                <div class="cc-inbox-search-row">
                 <label class="cc-search-field">
                     <i class="fa fa-search" aria-hidden="true" />
                     <span class="sr-only">Buscar conversas</span>
                     <input
-                        t-ref="search"
-                        type="search"
-                        placeholder="Nome, contato ou número"
-                        t-att-value="state.filters.query"
-                        t-on-input="onSearchInput"
-                    />
+                            t-ref="search"
+                            type="search"
+                            placeholder="Nome, contato ou número"
+                            t-att-value="state.filters.query"
+                            t-on-input="onSearchInput"
+                        />
                 </label>
+                <button
+                        t-if="startAccounts.length"
+                        t-ref="startToggle"
+                        type="button"
+                        class="cc-start-conversation-toggle"
+                        aria-label="Iniciar conversa"
+                        title="Iniciar conversa"
+                        aria-haspopup="dialog"
+                        aria-controls="cc-start-conversation-panel"
+                        t-att-aria-expanded="ui.startOpen ? 'true' : 'false'"
+                        t-on-click="toggleStartConversation"
+                    ><i class="fa fa-commenting-o" aria-hidden="true" /><i
+                            class="fa fa-plus"
+                            aria-hidden="true"
+                        /></button>
+                </div>
 
                 <div class="cc-inbox-filter-toolbar">
                     <button
@@ -170,8 +187,8 @@
                             >
                         <button
                                     type="button"
-                                    t-att-class="state.filters.responsibility === 'all' ? 'is-active' : ''"
-                                    t-att-aria-pressed="state.filters.responsibility === 'all' ? 'true' : 'false'"
+                                    t-att-class="state.filters.responsibility === 'all' &amp;&amp; !state.filters.responsibleId ? 'is-active' : ''"
+                                    t-att-aria-pressed="state.filters.responsibility === 'all' &amp;&amp; !state.filters.responsibleId ? 'true' : 'false'"
                                     t-on-click="() => this.setResponsibility('all')"
                                 >Todas</button>
                         <button
@@ -187,6 +204,25 @@
                                     t-on-click="() => this.setResponsibility('unassigned')"
                                 >Não atribuídas</button>
                     </div>
+                    <label class="cc-responsible-filter">
+                        <span class="sr-only">Selecionar responsável</span>
+                        <select
+                                    aria-label="Selecionar responsável"
+                                    t-on-change="onResponsibleChange"
+                                >
+                            <option
+                                        value=""
+                                        t-att-selected="!state.filters.responsibleId"
+                                    >Selecionar responsável...</option>
+                            <option
+                                        t-foreach="store.agents"
+                                        t-as="agent"
+                                        t-key="agent.id"
+                                        t-att-value="agent.id"
+                                        t-att-selected="state.filters.responsibleId === agent.id"
+                                    ><t t-esc="agent.name" /></option>
+                        </select>
+                    </label>
                     </fieldset>
 
                     <fieldset class="cc-inbox-filter-section">
@@ -255,28 +291,38 @@
                             </select>
                         </label>
                     </fieldset>
-                    <fieldset t-if="store.tags.length" class="cc-inbox-filter-section">
+                    <fieldset class="cc-inbox-filter-section">
                         <legend><i
                                     class="fa fa-tag"
                                     aria-hidden="true"
-                                />Marcador</legend>
-                    <label class="cc-tag-filter">
-                        <span class="sr-only">Filtrar por marcador</span>
-                        <i class="fa fa-tag" aria-hidden="true" />
-                        <select
-                                    aria-label="Filtrar por marcador"
-                                    t-on-change="onTagChange"
+                                />Marcadores</legend>
+                    <div
+                                class="cc-tag-filter-options"
+                                role="group"
+                                aria-label="Filtrar por marcadores"
+                            >
+                        <label
+                                    t-foreach="store.tags"
+                                    t-as="tag"
+                                    t-key="tag.id"
+                                    class="cc-tag-filter-option"
                                 >
-                            <option value="">Todos os marcadores</option>
-                            <option
-                                        t-foreach="store.tags"
-                                        t-as="tag"
-                                        t-key="tag.id"
-                                        t-att-value="tag.id"
-                                        t-att-selected="state.filters.tagId === tag.id"
-                                    ><t t-esc="tag.name" /></option>
-                        </select>
-                    </label>
+                            <input
+                                        type="checkbox"
+                                        t-att-checked="selectedFilterTagIds.includes(tag.id)"
+                                        t-on-change="() => this.toggleFilterTag(tag.id)"
+                                    />
+                            <span t-esc="tag.name" />
+                        </label>
+                    </div>
+                    <p
+                                t-if="store.tags.length"
+                                class="cc-inbox-filter-hint"
+                            >Mostra conversas com qualquer marcador selecionado.</p>
+                    <p
+                                t-else=""
+                                class="cc-inbox-filter-hint"
+                            >Nenhum marcador cadastrado. Peça ao supervisor para cadastrar.</p>
                     </fieldset>
                     <fieldset
                             t-if="store.capabilities.followups === true"
@@ -331,6 +377,118 @@
                         >Concluir</button>
                     </footer>
                 </section>
+
+                <form
+                    t-if="ui.startOpen"
+                    t-ref="startPanel"
+                    id="cc-start-conversation-panel"
+                    class="cc-inbox-filter-panel cc-start-conversation-panel"
+                    role="dialog"
+                    aria-labelledby="cc-start-conversation-title"
+                    t-on-submit="submitStartConversation"
+                >
+                    <header class="cc-inbox-filter-panel__header">
+                        <h2 id="cc-start-conversation-title">Iniciar conversa</h2>
+                        <button
+                            type="button"
+                            class="cc-icon-button"
+                            aria-label="Fechar iniciar conversa"
+                            t-on-click="() => this.closeStartConversation()"
+                        ><i class="fa fa-times" aria-hidden="true" /></button>
+                    </header>
+                    <div class="cc-inbox-filter-panel__body">
+                        <label class="cc-start-field">
+                            <span>Caixa de saída</span>
+                            <select
+                                t-ref="startAccount"
+                                t-att-disabled="ui.startPending"
+                                t-on-change="onStartAccountChange"
+                                required="required"
+                            >
+                                <option
+                                    value=""
+                                    t-att-selected="!ui.startAccountId"
+                                >Selecione a caixa</option>
+                                <option
+                                    t-foreach="startAccounts"
+                                    t-as="account"
+                                    t-key="account.id"
+                                    t-att-value="account.id"
+                                    t-att-selected="ui.startAccountId === account.id"
+                                ><t t-esc="account.name" /></option>
+                            </select>
+                        </label>
+                        <label class="cc-start-field">
+                            <span>Número do WhatsApp</span>
+                            <input
+                                t-ref="startPhone"
+                                type="tel"
+                                inputmode="tel"
+                                autocomplete="tel"
+                                maxlength="64"
+                                placeholder="DDD + número"
+                                t-att-value="ui.startPhone"
+                                t-att-disabled="ui.startPending"
+                                t-att-aria-invalid="ui.startError ? 'true' : 'false'"
+                                aria-describedby="cc-start-phone-hint cc-start-phone-result"
+                                t-on-input="onStartPhoneInput"
+                                t-on-blur="previewStartPhone"
+                                required="required"
+                            />
+                        </label>
+                        <p
+                            id="cc-start-phone-hint"
+                            class="cc-inbox-filter-hint"
+                            t-esc="startPhoneHint"
+                        />
+                        <div
+                            id="cc-start-phone-result"
+                            class="cc-start-phone-result"
+                            aria-live="polite"
+                        >
+                            <span t-if="ui.startPreviewPending"><i
+                                    class="fa fa-spinner fa-spin"
+                                    aria-hidden="true"
+                                /> Conferindo formato...</span>
+                            <span
+                                t-elif="ui.startPreview"
+                                class="cc-start-phone-preview"
+                            ><i
+                                    class="fa fa-check"
+                                    aria-hidden="true"
+                                /> Número: <strong
+                                    t-esc="ui.startPreview.formatted_phone"
+                                /></span>
+                        </div>
+                        <p
+                            t-if="ui.startError"
+                            class="cc-start-error"
+                            role="alert"
+                            t-esc="ui.startError"
+                        />
+                        <p
+                            class="cc-inbox-filter-hint"
+                        >Uma conversa existente será reutilizada. Os filtros serão ajustados para mostrar a caixa selecionada. Nenhuma mensagem será enviada ao abrir.</p>
+                    </div>
+                    <footer class="cc-inbox-filter-panel__footer">
+                        <button
+                            type="button"
+                            class="cc-inbox-filter-clear"
+                            t-on-click="() => this.closeStartConversation()"
+                        >Cancelar</button>
+                        <button
+                            type="submit"
+                            class="cc-inbox-filter-done"
+                            t-att-disabled="!canSubmitStart"
+                        >
+                            <t t-if="ui.startPending"><i
+                                    class="fa fa-spinner fa-spin"
+                                    aria-hidden="true"
+                                /> Abrindo...</t>
+                            <t t-else="">Abrir conversa</t>
+                        </button>
+                    </footer>
+                </form>
             </div>
 
             <div

@@ -86,6 +86,12 @@ function normalizeConversationStateFilters(value) {
     return CONVERSATION_STATE_KEYS.filter((state) => selected.has(state));
 }
 
+function positiveFilterIds(value) {
+    return [...new Set((Array.isArray(value) ? value : []).map(Number))]
+        .filter((id) => Number.isSafeInteger(id) && id > 0)
+        .slice(0, 50);
+}
+
 function timelineLoadingPhase(mode) {
     if (mode === "reset") {
         return "loading";
@@ -951,9 +957,11 @@ export class ContactCenterStore {
                 accountId: false,
                 query: "",
                 responsibility: "all",
+                responsibleId: false,
                 unreadOnly: false,
                 conversationType: false,
                 tagId: false,
+                tagIds: [],
                 activityTiming: false,
             },
             productivity: productivityProjection(),
@@ -987,6 +995,7 @@ export class ContactCenterStore {
             companyOperationsRevision: 0,
         });
         this.listRequest = 0;
+        this.startConversationPending = false;
         this.preservedConversationChannelId = false;
         this.timelineRequest = 0;
         this.timelineForwardChannelId = false;
@@ -1192,6 +1201,43 @@ export class ContactCenterStore {
             this.state.conversations,
             this.state.filters.responsibility,
             this.currentUserId
+        ).filter((item) => this.conversationMatchesPeopleAndTags(item));
+    }
+
+    get selectedFilterTagIds() {
+        const ids = positiveFilterIds(this.state.filters.tagIds);
+        return ids.length ? ids : positiveFilterIds([this.state.filters.tagId]);
+    }
+
+    get hasPeopleOrTagFilters() {
+        return (
+            this.state.filters.responsibility !== "all" ||
+            Boolean(this.state.filters.responsibleId) ||
+            this.selectedFilterTagIds.length > 0
+        );
+    }
+
+    conversationMatchesPeopleAndTags(item) {
+        if (
+            !filterConversationsByResponsibility(
+                [item],
+                this.state.filters.responsibility,
+                this.currentUserId
+            ).length
+        ) {
+            return false;
+        }
+        const responsibleId = this.state.filters.responsibleId;
+        if (
+            responsibleId &&
+            (!item.responsible || item.responsible.id !== responsibleId)
+        ) {
+            return false;
+        }
+        const tags = this.selectedFilterTagIds;
+        return (
+            !tags.length ||
+            (Array.isArray(item.tags) && item.tags.some((tag) => tags.includes(tag.id)))
         );
     }
 
@@ -1649,17 +1695,17 @@ export class ContactCenterStore {
         if (this.state.filters.responsibility !== "all") {
             filters.responsibility = this.state.filters.responsibility;
         }
+        if (this.state.filters.responsibleId) {
+            filters.responsible_id = this.state.filters.responsibleId;
+        }
         if (this.state.filters.unreadOnly) {
             filters.unread_only = true;
         }
         if (["direct", "group"].includes(this.state.filters.conversationType)) {
             filters.conversation_type = this.state.filters.conversationType;
         }
-        if (
-            Number.isSafeInteger(this.state.filters.tagId) &&
-            this.state.filters.tagId > 0
-        ) {
-            filters.tag_id = this.state.filters.tagId;
+        if (this.selectedFilterTagIds.length) {
+            filters.tag_ids = this.selectedFilterTagIds;
         }
         if (
             ["all", "due", "overdue", "today", "planned"].includes(
@@ -1702,7 +1748,9 @@ export class ContactCenterStore {
 
     applyConversationPage(payload, {reset, silent, previousConversation}) {
         const items = normalizedConversationItems(payload.items).filter(
-            (item) => !this.deletedConversationIds.has(item.channel_id)
+            (item) =>
+                !this.deletedConversationIds.has(item.channel_id) &&
+                this.conversationMatchesPeopleAndTags(item)
         );
         if (reset) {
             this.state.conversations = items;
@@ -1716,7 +1764,7 @@ export class ContactCenterStore {
                 silent &&
                 previousIsMissing &&
                 !this.deletedConversationIds.has(previousConversation.channel_id) &&
-                this.state.filters.responsibility === "all"
+                !this.hasPeopleOrTagFilters
             ) {
                 this.state.conversations.push(previousConversation);
                 this.preservedConversationChannelId = previousConversation.channel_id;
@@ -1724,7 +1772,11 @@ export class ContactCenterStore {
         } else {
             const byId = new Map(
                 this.state.conversations
-                    .filter(isRenderableConversation)
+                    .filter(
+                        (item) =>
+                            isRenderableConversation(item) &&
+                            this.conversationMatchesPeopleAndTags(item)
+                    )
                     .map((item) => [item.channel_id, item])
             );
             for (const item of items) {
@@ -1761,8 +1813,7 @@ export class ContactCenterStore {
         const selectedConversationWasRemoved =
             Boolean(previousSelected) && !selectedStillVisible;
         const responsibilitySelectionChanged =
-            this.state.filters.responsibility !== "all" &&
-            selectedConversationWasRemoved;
+            this.hasPeopleOrTagFilters && selectedConversationWasRemoved;
         if (
             !selectedStillVisible &&
             reset &&
@@ -1941,6 +1992,7 @@ export class ContactCenterStore {
                 return false;
             }
             this.state.filters.responsibility = value;
+            this.state.filters.responsibleId = false;
             return this.loadConversations({reset: true, selectFirst: true});
         }
         let normalizedValue = value;
@@ -1948,9 +2000,17 @@ export class ContactCenterStore {
             normalizedValue = value === true;
         } else if (name === "conversationType") {
             normalizedValue = ["direct", "group"].includes(value) ? value : false;
+        } else if (name === "responsibleId") {
+            const id = Number(value);
+            normalizedValue = Number.isSafeInteger(id) && id > 0 ? id : false;
+            this.state.filters.responsibility = "all";
+        } else if (name === "tagIds") {
+            normalizedValue = positiveFilterIds(value);
+            this.state.filters.tagId = false;
         } else if (name === "tagId") {
             const tagId = Number(value);
             normalizedValue = Number.isSafeInteger(tagId) && tagId > 0 ? tagId : false;
+            this.state.filters.tagIds = normalizedValue ? [normalizedValue] : [];
         } else if (name === "activityTiming") {
             normalizedValue = ["all", "due", "overdue", "today", "planned"].includes(
                 value
@@ -1969,7 +2029,7 @@ export class ContactCenterStore {
             }, 260);
             return;
         }
-        this.loadConversations({reset: true, selectFirst: true});
+        return this.loadConversations({reset: true, selectFirst: true});
     }
 
     clearConversationFilters() {
@@ -1981,9 +2041,11 @@ export class ContactCenterStore {
             states: [],
             accountId: false,
             responsibility: "all",
+            responsibleId: false,
             unreadOnly: false,
             conversationType: false,
             tagId: false,
+            tagIds: [],
             activityTiming: false,
         });
         return this.loadConversations({reset: true, selectFirst: true});
@@ -2004,6 +2066,103 @@ export class ContactCenterStore {
         this.state.inboxDensity = density;
         saveInboxDensityPreference(density, this.inboxDensityStorage);
         return density;
+    }
+
+    async normalizeStartPhone(accountId, phone) {
+        const payload = await this.call("normalize_start_phone", [accountId, phone]);
+        validateEnvelope(payload);
+        if (!payload.normalized_phone || !payload.formatted_phone) {
+            throw new TypeError("O número retornado pelo servidor é inválido.");
+        }
+        return payload;
+    }
+
+    async startConversation(accountId, phone, {isCurrent = () => true} = {}) {
+        if (this.destroyed || this.startConversationPending) {
+            return false;
+        }
+        if (
+            !this.accounts.some(
+                (account) =>
+                    account.id === accountId && account.can_start_conversation === true
+            )
+        ) {
+            throw new Error("Selecione uma caixa disponível para iniciar a conversa.");
+        }
+        // Guard BEFORE the write: refusing navigation during a recording must
+        // not create a channel that the agent never meant to open.
+        if (
+            this.conversationSelectionGuard &&
+            this.conversationSelectionGuard(false, {checkOnly: true}) === false
+        ) {
+            throw new Error(
+                "Conclua ou descarte a gravação antes de iniciar outra conversa."
+            );
+        }
+        this.startConversationPending = true;
+        try {
+            const payload = await this.call("start_conversation", [accountId, phone]);
+            if (this.destroyed || !isCurrent()) {
+                return false;
+            }
+            validateEnvelope(payload);
+            if (
+                !isRenderableConversation(payload.item) ||
+                payload.item.channel_id !== payload.channel_id ||
+                !payload.item.account ||
+                payload.item.account.id !== accountId
+            ) {
+                throw new TypeError("A conversa retornada pelo servidor é inválida.");
+            }
+            if (
+                this.conversationSelectionGuard &&
+                this.conversationSelectionGuard(false, {checkOnly: true}) === false
+            ) {
+                throw new Error(
+                    "A conversa está disponível. Conclua a ação em andamento e abra novamente; ela será reutilizada."
+                );
+            }
+            if (this.searchTimer !== null) {
+                browser.clearTimeout(this.searchTimer);
+                this.searchTimer = null;
+            }
+            // Change only the list view, never the existing channel's state,
+            // assignment or tags. In-flight pages must not hide this result.
+            this.listRequest += 1;
+            Object.assign(this.state.filters, {
+                states: [],
+                accountId,
+                query: "",
+                responsibility: "all",
+                responsibleId: false,
+                unreadOnly: false,
+                conversationType: false,
+                tagId: false,
+                tagIds: [],
+                activityTiming: false,
+            });
+            this.state.conversations = [];
+            this.preservedConversationChannelId = false;
+            this.state.conversationTotal = 1;
+            this.state.conversationsHaveMore = false;
+            this.state.nextConversationCursor = false;
+            this.state.listPhase = "ready";
+            this.replaceConversation(payload.item);
+            await this.selectConversation(payload.channel_id);
+            if (!this.destroyed && isCurrent()) {
+                await this.loadConversations({reset: true, silent: true});
+            }
+            if (this.destroyed || !isCurrent()) {
+                return false;
+            }
+            this.notify(
+                "Conversa aberta. Os filtros foram ajustados para esta caixa; nenhuma mensagem foi enviada.",
+                {type: "info"}
+            );
+            return payload;
+        } finally {
+            this.startConversationPending = false;
+        }
     }
 
     async selectConversation(channelId, {preservePane = false} = {}) {
@@ -3576,7 +3735,10 @@ export class ContactCenterStore {
             return false;
         }
         const stateFilters = this.state.filters.states;
-        if (stateFilters.length && !stateFilters.includes(normalizedItem.state)) {
+        if (
+            (stateFilters.length && !stateFilters.includes(normalizedItem.state)) ||
+            !this.conversationMatchesPeopleAndTags(normalizedItem)
+        ) {
             this.state.conversations = this.state.conversations.filter(
                 (conversation) => conversation.channel_id !== normalizedItem.channel_id
             );
@@ -3597,7 +3759,7 @@ export class ContactCenterStore {
         }
         if (
             normalizedItem.channel_id === this.state.selectedChannelId &&
-            this.state.filters.responsibility !== "all" &&
+            this.hasPeopleOrTagFilters &&
             !this.responsibilityVisibleConversations.some(
                 (conversation) => conversation.channel_id === normalizedItem.channel_id
             )

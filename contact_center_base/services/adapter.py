@@ -10,6 +10,7 @@ from .dto import (
     AddressDTO,
     AvatarResult,
     CommandDTO,
+    DirectAddressResult,
     EventDTO,
     GroupMetadataDTO,
     IdentityProfileResult,
@@ -368,6 +369,20 @@ class ProviderAdapter(abc.ABC):
         """Declare explicit unified profile support before core schedules work."""
 
         return False
+
+    def supports_direct_conversation_start(self, connection) -> bool:
+        """Opt in to registration-verified direct conversation creation."""
+
+        return False
+
+    def resolve_direct_address(
+        self, connection, normalized_phone: str
+    ) -> DirectAddressResult:
+        """Resolve E.164 digits without sending messages or changing domain records."""
+
+        raise UnsupportedEventError(
+            "%s does not implement direct conversation start" % self.key
+        )
 
     def is_provider_read_ready(self, connection, purpose: str) -> bool:
         """Return whether a provider read may run for the requested purpose.

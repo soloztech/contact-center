@@ -426,8 +426,8 @@ export class MessageComposer extends Component {
         this.activeChannelId = false;
         this.switchPrepared = false;
         this.unregisterConversationGuard =
-            this.store.registerConversationSelectionGuard((channelId) =>
-                this.prepareConversationSwitch(channelId)
+            this.store.registerConversationSelectionGuard((channelId, options) =>
+                this.prepareConversationSwitch(channelId, options)
             );
         this.unregisterDraftAttachmentHandler =
             this.store.registerDraftAttachmentHandler((source) =>
@@ -818,7 +818,12 @@ export class MessageComposer extends Component {
         );
     }
 
-    prepareConversationSwitch(channelId) {
+    prepareConversationSwitch(channelId, {checkOnly = false} = {}) {
+        if (checkOnly) {
+            // Starting a channel checks before its ID exists. Do not mark the
+            // composer prepared or save/change the draft before that RPC.
+            return !this.switchHasBlockingWork;
+        }
         if (!channelId || channelId === this.activeChannelId || this.switchPrepared) {
             return true;
         }

@@ -68,6 +68,33 @@ class ContactCenterUiApi(models.AbstractModel):
             "unassigned",
         ):
             raise ValidationError(_("Unsupported responsibility filter."))
+        responsible_id = filters.get("responsible_id")
+        if (
+            responsible_id is not None
+            and responsible_id is not False
+            and responsible_id != ""
+        ):
+            if responsibility != "all":
+                raise ValidationError(
+                    _("Choose a responsible user or a responsibility scope, not both.")
+                )
+            responsible_id = self._positive_id(responsible_id, _("responsible ID"))
+            account_model = self.env["contact.center.account"]
+            accounts = account_model.search(
+                account_model._contact_center_scope_domain() + [("active", "=", True)]
+            )
+            team_model = self.env["contact.center.team"]
+            teams = team_model.search(
+                team_model._contact_center_scope_domain() + [("active", "=", True)]
+            )
+            available = (
+                teams.agent_ids
+                | teams.supervisor_ids
+                | accounts._contact_center_effective_users()
+            ).filtered(lambda user: user.active and not user.share)
+            if responsible_id not in available.ids:
+                raise ValidationError(_("The responsible user is not available."))
+            return [("contact_center_responsible_id", "=", responsible_id)]
         if responsibility == "mine":
             return [("contact_center_responsible_id", "=", self.env.user.id)]
         if responsibility == "unassigned":

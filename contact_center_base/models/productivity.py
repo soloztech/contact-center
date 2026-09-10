@@ -1505,16 +1505,30 @@ class ContactCenterUiApiProductivity(models.AbstractModel):
             )
             domain = expression.AND([domain, [("id", "in", bindings.channel_id.ids)]])
         tag_id = filters.get("tag_id")
+        tag_ids = filters.get("tag_ids", [])
+        if not isinstance(tag_ids, list) or len(tag_ids) > 50:
+            raise ValidationError(_("Select up to 50 tags."))
+        if tag_id and tag_ids:
+            raise ValidationError(_("Use either tag_id or tag_ids, not both."))
         if tag_id:
-            tag = (
-                self.env["contact.center.tag"]
-                .browse(self._positive_id(tag_id, _("tag ID")))
-                .exists()
+            tag_ids = [self._positive_id(tag_id, _("tag ID"))]
+        if any(type(value) is not int or value <= 0 for value in tag_ids):
+            raise ValidationError(_("Invalid tag IDs."))
+        if tag_ids:
+            tags = self.env["contact.center.tag"].search(
+                [
+                    ("id", "in", list(set(tag_ids))),
+                    ("company_id", "in", self.env.companies.ids),
+                ]
             )
-            if not tag or tag.company_id not in self.env.companies:
+            if len(tags) != len(set(tag_ids)) or any(
+                tag.company_id not in self.env.companies for tag in tags
+            ):
                 raise ValidationError(_("The tag is not available."))
+            tags.check_access_rights("read")
+            tags.check_access_rule("read")
             domain = expression.AND(
-                [domain, [("contact_center_tag_ids", "in", tag.ids)]]
+                [domain, [("contact_center_tag_ids", "in", tags.ids)]]
             )
         return self._contact_center_apply_activity_timing_filter(
             domain, filters.get("activity_timing")

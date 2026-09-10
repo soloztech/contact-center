@@ -237,6 +237,13 @@ export class ConversationList extends Component {
         this.viewportRef = useRef("viewport");
         this.filterToggleRef = useRef("filterToggle");
         this.filterPanelRef = useRef("filterPanel");
+        this.startToggleRef = useRef("startToggle");
+        this.startPanelRef = useRef("startPanel");
+        this.startPhoneRef = useRef("startPhone");
+        this.startAccountRef = useRef("startAccount");
+        this.startPreviewTimer = null;
+        this.startPreviewRequest = 0;
+        this.startSession = 0;
         this.lastScrollTop = 0;
         this.paginationPending = false;
         this.paginationFrame = false;
@@ -247,6 +254,14 @@ export class ConversationList extends Component {
             view: "grouped",
             collapsedInboxes: {},
             filtersOpen: false,
+            startOpen: false,
+            startAccountId: false,
+            startPhone: "",
+            startPreview: false,
+            startPreviewKey: "",
+            startPreviewPending: false,
+            startPending: false,
+            startError: "",
         });
         this.onWindowKeydown = (event) => this.onShortcut(event);
         this.onWindowPointerdown = (event) => this.onFilterOutsidePointerdown(event);
@@ -260,8 +275,22 @@ export class ConversationList extends Component {
             },
             () => [this.ui.filtersOpen]
         );
+        useEffect(
+            () => {
+                if (this.ui.startOpen) {
+                    const target = this.ui.startAccountId
+                        ? this.startPhoneRef.el
+                        : this.startAccountRef.el;
+                    if (target) {
+                        target.focus();
+                    }
+                }
+            },
+            () => [this.ui.startOpen]
+        );
         onWillDestroy(() => {
             this.destroyed = true;
+            this.cancelStartPreview();
             if (this.paginationFrame) {
                 browser.cancelAnimationFrame(this.paginationFrame);
             }
@@ -315,7 +344,17 @@ export class ConversationList extends Component {
             this.state.conversations,
             this.state.filters.responsibility,
             positiveInteger(user && user.id)
-        );
+        ).filter((item) => {
+            const responsibleId = this.state.filters.responsibleId;
+            const tagIds = this.selectedFilterTagIds;
+            return (
+                (!responsibleId ||
+                    (item.responsible && item.responsible.id === responsibleId)) &&
+                (!tagIds.length ||
+                    (Array.isArray(item.tags) &&
+                        item.tags.some((tag) => tagIds.includes(tag.id))))
+            );
+        });
     }
 
     get accounts() {
@@ -357,11 +396,21 @@ export class ConversationList extends Component {
             filters.states.length > 0,
             Boolean(filters.accountId),
             filters.responsibility !== "all",
+            Boolean(filters.responsibleId),
             filters.unreadOnly,
             Boolean(filters.conversationType),
-            Boolean(filters.tagId),
+            this.selectedFilterTagIds.length > 0,
             Boolean(filters.activityTiming),
         ].filter(Boolean).length;
+    }
+
+    get selectedFilterTagIds() {
+        const filters = this.state.filters;
+        return Array.isArray(filters.tagIds) && filters.tagIds.length
+            ? filters.tagIds
+            : filters.tagId
+            ? [filters.tagId]
+            : [];
     }
 
     get filterSummary() {
@@ -378,6 +427,7 @@ export class ConversationList extends Component {
         if (this.ui.filtersOpen) {
             this.closeFilters();
         } else {
+            this.closeStartConversation(false);
             this.ui.filtersOpen = true;
         }
     }
@@ -397,6 +447,205 @@ export class ConversationList extends Component {
             !this.filterToggleRef.el.contains(event.target)
         ) {
             this.closeFilters(false);
+        }
+        if (
+            this.ui.startOpen &&
+            this.startPanelRef.el &&
+            !this.startPanelRef.el.contains(event.target) &&
+            this.startToggleRef.el &&
+            !this.startToggleRef.el.contains(event.target)
+        ) {
+            this.closeStartConversation(false);
+        }
+    }
+
+    get startAccounts() {
+        return this.accounts.filter(
+            (account) => account.can_start_conversation === true
+        );
+    }
+
+    get startAccount() {
+        return (
+            this.startAccounts.find(
+                (account) => account.id === this.ui.startAccountId
+            ) || false
+        );
+    }
+
+    get startPhoneHint() {
+        const country = this.startAccount && this.startAccount.start_phone_country;
+        if (country && country.calling_code) {
+            return `Sem DDI, será usado ${country.name || country.code} (+${
+                country.calling_code
+            }). Para outro país, use +DDI.`;
+        }
+        return "Informe o número com +DDI e código de área. Espaços, parênteses e traços são aceitos.";
+    }
+
+    get startPreviewKey() {
+        return JSON.stringify([this.ui.startAccountId, this.ui.startPhone]);
+    }
+
+    get canSubmitStart() {
+        return Boolean(
+            this.startAccount &&
+                this.ui.startPreview &&
+                this.ui.startPreviewKey === this.startPreviewKey &&
+                !this.ui.startPending &&
+                !this.ui.startPreviewPending
+        );
+    }
+
+    toggleStartConversation() {
+        if (this.ui.startOpen) {
+            this.closeStartConversation();
+            return;
+        }
+        this.closeFilters(false);
+        this.startSession += 1;
+        const filtered = this.startAccounts.find(
+            (account) => account.id === this.state.filters.accountId
+        );
+        this.ui.startAccountId = filtered
+            ? filtered.id
+            : this.startAccounts.length === 1
+            ? this.startAccounts[0].id
+            : false;
+        this.ui.startPhone = "";
+        this.ui.startPreview = false;
+        this.ui.startPreviewKey = "";
+        this.ui.startError = "";
+        this.ui.startPending = false;
+        this.ui.startOpen = true;
+    }
+
+    cancelStartPreview() {
+        this.startPreviewRequest += 1;
+        if (this.startPreviewTimer !== null) {
+            browser.clearTimeout(this.startPreviewTimer);
+            this.startPreviewTimer = null;
+        }
+    }
+
+    closeStartConversation(restoreFocus = true) {
+        this.cancelStartPreview();
+        this.startSession += 1;
+        this.ui.startOpen = false;
+        this.ui.startPreviewPending = false;
+        if (restoreFocus && this.startToggleRef.el) {
+            this.startToggleRef.el.focus();
+        }
+    }
+
+    onStartAccountChange(event) {
+        this.ui.startAccountId = Number(event.target.value) || false;
+        this.scheduleStartPreview();
+    }
+
+    onStartPhoneInput(event) {
+        this.ui.startPhone = event.target.value;
+        this.scheduleStartPreview();
+    }
+
+    scheduleStartPreview() {
+        this.cancelStartPreview();
+        this.ui.startPreview = false;
+        this.ui.startPreviewKey = "";
+        this.ui.startPreviewPending = false;
+        this.ui.startError = "";
+        if (this.startAccount && this.ui.startPhone.trim()) {
+            this.startPreviewTimer = browser.setTimeout(() => {
+                this.startPreviewTimer = null;
+                this.previewStartPhone();
+            }, 350);
+        }
+    }
+
+    async previewStartPhone() {
+        if (
+            !this.ui.startOpen ||
+            !this.startAccount ||
+            !this.ui.startPhone.trim() ||
+            this.ui.startPending ||
+            this.ui.startPreviewPending ||
+            this.canSubmitStart
+        ) {
+            return false;
+        }
+        this.cancelStartPreview();
+        const request = this.startPreviewRequest;
+        const key = this.startPreviewKey;
+        const current = () =>
+            !this.destroyed &&
+            this.ui.startOpen &&
+            request === this.startPreviewRequest &&
+            key === this.startPreviewKey;
+        this.ui.startPreviewPending = true;
+        try {
+            const payload = await this.store.normalizeStartPhone(
+                this.ui.startAccountId,
+                this.ui.startPhone
+            );
+            if (!current()) {
+                return false;
+            }
+            this.ui.startPreview = payload;
+            this.ui.startPreviewKey = key;
+            this.ui.startError = "";
+            return true;
+        } catch (error) {
+            if (current()) {
+                this.ui.startError =
+                    (error.data && error.data.message) ||
+                    error.message ||
+                    "Confira o número informado.";
+            }
+            return false;
+        } finally {
+            if (current()) {
+                this.ui.startPreviewPending = false;
+            }
+        }
+    }
+
+    async submitStartConversation(event) {
+        if (event) {
+            event.preventDefault();
+        }
+        if (!this.canSubmitStart) {
+            return false;
+        }
+        const session = this.startSession;
+        const current = () =>
+            !this.destroyed && this.ui.startOpen && this.startSession === session;
+        this.ui.startPending = true;
+        this.ui.startError = "";
+        try {
+            const result = await this.store.startConversation(
+                this.ui.startAccountId,
+                this.ui.startPhone,
+                {isCurrent: current}
+            );
+            if (!current()) {
+                return false;
+            }
+            if (result) {
+                this.closeStartConversation();
+            }
+            return Boolean(result);
+        } catch (error) {
+            if (current()) {
+                this.ui.startError =
+                    (error.data && error.data.message) ||
+                    error.message ||
+                    "Não foi possível abrir a conversa.";
+            }
+            return false;
+        } finally {
+            if (!this.destroyed && this.startSession === session) {
+                this.ui.startPending = false;
+            }
         }
     }
 
@@ -568,8 +817,18 @@ export class ConversationList extends Component {
         this.store.setFilter("conversationType", type || false);
     }
 
-    onTagChange(event) {
-        this.store.setFilter("tagId", event.target.value || false);
+    onResponsibleChange(event) {
+        return this.store.setFilter("responsibleId", event.target.value || false);
+    }
+
+    toggleFilterTag(tagId) {
+        const ids = new Set(this.selectedFilterTagIds);
+        if (ids.has(tagId)) {
+            ids.delete(tagId);
+        } else {
+            ids.add(tagId);
+        }
+        return this.store.setFilter("tagIds", [...ids]);
     }
 
     onActivityTimingChange(event) {
@@ -595,11 +854,15 @@ export class ConversationList extends Component {
         if (event.defaultPrevented || document.querySelector(".o_dialog")) {
             return false;
         }
-        if (this.ui.filtersOpen) {
+        if (this.ui.filtersOpen || this.ui.startOpen) {
             if (event.key === "Escape") {
                 event.preventDefault();
                 event.stopPropagation();
-                this.closeFilters();
+                if (this.ui.startOpen) {
+                    this.closeStartConversation();
+                } else {
+                    this.closeFilters();
+                }
                 return true;
             }
             // Do not navigate the conversation list while editing its filters.
@@ -627,6 +890,7 @@ export class ConversationList extends Component {
 
     toggleDensity() {
         this.closeFilters(false);
+        this.closeStartConversation(false);
         this.store.toggleInboxDensity();
     }
 

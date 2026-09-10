@@ -29,6 +29,8 @@ from . import (
     test_queue_recovery,
     test_resolution,
     test_source_webhook_link,
+    test_start_conversation,
+    test_start_phone,
     test_structured_content,
     test_technical_menus,
 )

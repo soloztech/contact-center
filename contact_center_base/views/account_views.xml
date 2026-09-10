@@ -424,7 +424,7 @@
     </record>
 
     <record id="action_contact_center_tags" model="ir.actions.act_window">
-        <field name="name">Tags</field>
+        <field name="name">Marcadores</field>
         <field name="res_model">contact.center.tag</field>
         <field name="view_mode">tree</field>
     </record>

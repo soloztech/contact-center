@@ -1,7 +1,7 @@
 {
     "name": "Contact Center WuzAPI",
     "summary": "WuzAPI provider adapter for Contact Center",
-    "version": "16.0.1.2.0",
+    "version": "16.0.1.2.1",
     "author": "Soloz Technologies",
     "website": "https://github.com/soloztech/contact-center",
     "license": "AGPL-3",

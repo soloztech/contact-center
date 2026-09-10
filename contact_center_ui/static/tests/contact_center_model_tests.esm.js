@@ -10802,7 +10802,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             responsibility: "mine",
             unread_only: true,
             conversation_type: "direct",
-            tag_id: 12,
+            tag_ids: [12],
             activity_timing: "overdue",
         });
     });

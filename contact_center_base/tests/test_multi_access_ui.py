@@ -1,7 +1,7 @@
 import uuid
 
 from odoo import fields
-from odoo.exceptions import AccessError
+from odoo.exceptions import AccessError, ValidationError
 from odoo.tests.common import SavepointCase
 
 
@@ -162,3 +162,99 @@ class TestMultiAccessConversationUi(SavepointCase):
             set(self.channel.channel_member_ids.partner_id.ids),
             set(self.users[:2].partner_id.ids),
         )
+
+    def test_specific_responsible_filter_uses_accessible_roster_without_assignment(
+        self,
+    ):
+        ui = self.env["contact.center.ui.api"].with_user(self.users[0])
+        initial = self.channel.contact_center_responsible_id
+        filters = {"account_id": self.account.id, "responsible_id": self.users[1].id}
+        page = ui.list_conversations(filters=filters, limit=1)
+        self.assertEqual(
+            [item["channel_id"] for item in page["items"]], self.channel.ids
+        )
+        self.assertEqual(page["total"], 1)
+        filters["responsible_id"] = self.users[2].id
+        self.assertFalse(ui.list_conversations(filters=filters)["items"])
+        self.assertEqual(self.channel.contact_center_responsible_id, initial)
+        for scope in ("mine", "unassigned"):
+            with self.assertRaises(ValidationError):
+                ui.list_conversations(filters={**filters, "responsibility": scope})
+
+    def test_specific_responsible_filter_rejects_invalid_and_outside_roster(self):
+        ui = self.env["contact.center.ui.api"].with_user(self.users[0])
+        outsider = (
+            self.env["res.users"]
+            .with_context(no_reset_password=True)
+            .create(
+                {
+                    "name": "Outside filter roster",
+                    "login": "cc-filter-outsider-%s" % uuid.uuid4(),
+                    "company_id": self.env.company.id,
+                    "company_ids": [fields.Command.set(self.env.company.ids)],
+                    "groups_id": [
+                        fields.Command.set(
+                            self.env.ref(
+                                "contact_center_base.group_contact_center_agent"
+                            ).ids
+                        )
+                    ],
+                }
+            )
+        )
+        for value in (True, 0, -1, [], {}, "x", outsider.id):
+            with self.subTest(value=value), self.assertRaises(ValidationError):
+                ui.list_conversations(filters={"responsible_id": value})
+
+    def test_multi_tag_filters_are_or_compatible_with_legacy_and_responsible(self):
+        ui = self.env["contact.center.ui.api"].with_user(self.users[0])
+        tags = self.env["contact.center.tag"].create(
+            [
+                {
+                    "name": "Filter tag %s" % uuid.uuid4(),
+                    "company_id": self.env.company.id,
+                }
+                for _index in range(2)
+            ]
+        )
+        self.channel.write(
+            {"contact_center_tag_ids": [fields.Command.set(tags[:1].ids)]}
+        )
+        filters = {"account_id": self.account.id, "responsible_id": self.users[1].id}
+        for selector in (
+            {"tag_ids": tags.ids},
+            {"tag_id": tags[0].id},
+            {"tag_ids": tags.ids + tags[:1].ids},
+        ):
+            page = ui.list_conversations(filters={**filters, **selector}, limit=1)
+            self.assertEqual(
+                [item["channel_id"] for item in page["items"]], self.channel.ids
+            )
+            self.assertEqual(page["total"], 1)
+        self.assertFalse(
+            ui.list_conversations(filters={**filters, "tag_ids": tags[1:].ids})["items"]
+        )
+        self.assertEqual(self.channel.contact_center_tag_ids, tags[:1])
+
+    def test_multi_tag_filters_reject_malformed_conflicting_and_foreign_company(self):
+        ui = self.env["contact.center.ui.api"].with_user(self.users[0])
+        foreign_company = self.env["res.company"].create(
+            {"name": "Foreign filters %s" % uuid.uuid4()}
+        )
+        foreign_tag = self.env["contact.center.tag"].create(
+            {"name": "Foreign filter tag", "company_id": foreign_company.id}
+        )
+        for selector in (
+            {"tag_ids": None},
+            {"tag_ids": "1"},
+            {"tag_ids": [True]},
+            {"tag_ids": [0]},
+            {"tag_ids": [-1]},
+            {"tag_ids": ["1"]},
+            {"tag_ids": [1] * 51},
+            {"tag_ids": [1], "tag_id": 1},
+            {"tag_ids": [foreign_tag.id]},
+            {"tag_ids": [999999999]},
+        ):
+            with self.subTest(selector=selector), self.assertRaises(ValidationError):
+                ui.list_conversations(filters=selector)

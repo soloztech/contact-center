@@ -314,3 +314,23 @@ msgstr "A conexão preparada do provedor não existe mais."
 #. module: contact_center_base
 msgid "The staged provider connection is not eligible for guided repair."
 msgstr "A conexão preparada do provedor não pode ser corrigida por este assistente."
+
+#. module: contact_center_base
+msgid "Choose a specific responsible user or a responsibility scope, not both."
+msgstr "Escolha um responsável específico ou um atalho de responsabilidade, não ambos."
+
+#. module: contact_center_base
+msgid "The responsible user is not available."
+msgstr "O responsável não está disponível no seu escopo de acesso."
+
+#. module: contact_center_base
+msgid "Select up to 50 tags."
+msgstr "Selecione até 50 marcadores."
+
+#. module: contact_center_base
+msgid "Use either tag_id or tag_ids, not both."
+msgstr "Use apenas uma seleção de marcadores por filtro."
+
+#. module: contact_center_base
+msgid "Invalid tag IDs."
+msgstr "A seleção de marcadores é inválida."

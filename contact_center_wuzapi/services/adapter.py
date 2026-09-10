@@ -47,6 +47,7 @@ from odoo.addons.contact_center_base.services.media import (
     is_ogg_opus,
 )
 
+from .direct_start import WuzapiDirectStartMixin
 from .group import WuzapiGroupMetadataMixin
 from .structured_content import (
     OUTBOUND_STRUCTURED_CONTENT,
@@ -2299,7 +2300,7 @@ def _reply_context(command):
 
 
 @adapter_registry.register("wuzapi", module="contact_center_wuzapi")
-class WuzapiAdapter(WuzapiGroupMetadataMixin, ProviderAdapter):
+class WuzapiAdapter(WuzapiDirectStartMixin, WuzapiGroupMetadataMixin, ProviderAdapter):
     """WuzAPI v1.0.8 translation and transport boundary."""
 
     key = "wuzapi"

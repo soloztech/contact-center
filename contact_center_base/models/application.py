@@ -2412,7 +2412,12 @@ class ContactCenterApplication(models.AbstractModel):
                 }
             )
 
-    def _resolve_channel(self, account, identity, event):
+    def _resolve_channel(self, account, identity, event=None, *, conversation_ref=None):
+        # Outbound-first preparation has no inbound event or customer message.
+        # Existing callers retain their exact event-based contract.
+        reference = event.conversation_ref if event is not None else conversation_ref
+        if not isinstance(reference, str) or not reference:
+            raise ValidationError(_("A direct conversation requires an address."))
         binding_model = self.env["contact.center.channel.binding"].sudo()
         binding = binding_model.search(
             [
@@ -2441,7 +2446,7 @@ class ContactCenterApplication(models.AbstractModel):
                 "account_id": account.id,
                 "identity_id": identity.id,
                 "conversation_type": "direct",
-                "conversation_ref": event.conversation_ref,
+                "conversation_ref": reference,
             }
         )
         return binding

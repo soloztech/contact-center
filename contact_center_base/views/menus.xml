@@ -256,10 +256,11 @@
     />
     <menuitem
         id="menu_contact_center_tags"
-        name="Tags"
-        parent="menu_contact_center_configuration"
+        name="Marcadores"
+        parent="menu_contact_center_operations"
         action="action_contact_center_tags"
         sequence="40"
+        groups="contact_center_base.group_contact_center_supervisor"
     />
     <menuitem
         id="menu_contact_center_quick_replies"

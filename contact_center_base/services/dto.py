@@ -919,6 +919,63 @@ class IdentityProfileResult:
 
 
 @dataclasses.dataclass(frozen=True)
+class DirectAddressResult:
+    """Ephemeral registration proof; never a command or a synthetic message."""
+
+    state: str
+    conversation_ref: str = ""
+    addresses: Tuple[AddressDTO, ...] = ()
+
+    def __post_init__(self):
+        if self.state not in ("ready", "not_registered"):
+            raise DTOValidationError("invalid direct_address.state")
+        _bounded_string(
+            self.conversation_ref,
+            "direct_address.conversation_ref",
+            maximum=2048,
+            reject_controls=True,
+        )
+        if not isinstance(self.addresses, tuple) or len(self.addresses) > 8:
+            raise DTOValidationError("direct_address.addresses must be a bounded tuple")
+        if self.state == "not_registered":
+            if self.conversation_ref or self.addresses:
+                raise DTOValidationError("unregistered result cannot provide addresses")
+            return
+        if (
+            not self.conversation_ref.strip()
+            or self.conversation_ref.strip() != self.conversation_ref
+            or not self.addresses
+            or any(not isinstance(address, AddressDTO) for address in self.addresses)
+        ):
+            raise DTOValidationError(
+                "ready result requires a reference and AddressDTOs"
+            )
+        primaries = [address for address in self.addresses if address.role == "primary"]
+        if (
+            len(primaries) != 1
+            or primaries[0].confidence != "protocol"
+            or primaries[0].value_normalized != self.conversation_ref
+            or any(
+                address.role not in ("primary", "alternate")
+                for address in self.addresses
+            )
+        ):
+            raise DTOValidationError(
+                "ready result requires one matching protocol primary"
+            )
+        if len(
+            {
+                (address.namespace, address.value_normalized)
+                for address in self.addresses
+            }
+        ) != len(self.addresses):
+            raise DTOValidationError("direct_address.addresses contains duplicates")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return _serialize(self)
+
+
+@dataclasses.dataclass(frozen=True)
 class MediaDTO:
     """Provider-neutral media descriptor; binary content never belongs in the DTO."""
 

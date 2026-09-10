@@ -1,12 +1,13 @@
 {
     "name": "Contact Center Base",
     "summary": "Provider-neutral contact center foundation",
-    "version": "16.0.1.2.1",
+    "version": "16.0.1.2.2",
     "category": "Productivity/Discuss",
     "author": "Soloz Technologies",
     "website": "https://github.com/soloztech/contact-center",
     "license": "AGPL-3",
     "depends": ["mail", "queue_job", "rating", "web"],
+    "external_dependencies": {"python": ["phonenumbers"]},
     "data": [
         "security/contact_center_security.xml",
         "security/ir.model.access.csv",
