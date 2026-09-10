@@ -1,6 +1,13 @@
 /** @odoo-module **/
 
-import {Component, onMounted, onWillUnmount, useRef, useState} from "@odoo/owl";
+import {
+    Component,
+    onMounted,
+    onWillUnmount,
+    useEffect,
+    useRef,
+    useState,
+} from "@odoo/owl";
 import {useChildRef, useOwnedDialogs} from "@web/core/utils/hooks";
 import {DeferredImage} from "./deferred_image.esm";
 import {Dialog} from "@web/core/dialog/dialog";
@@ -482,6 +489,9 @@ export class AudioPlayer extends Component {
         if (activeAudioElement && activeAudioElement !== this.audio) {
             activeAudioElement.pause();
         }
+        if (activeVideoElement) {
+            activeVideoElement.pause();
+        }
         activeAudioElement = this.audio;
         this.state.playing = true;
         this.state.error = false;
@@ -539,6 +549,14 @@ export class MessageContent extends Component {
         this.imageLoad = useState({attempts: {}, failures: {}});
         this.videoState = useState({media: false});
         this.closeFloatingVideo = () => this.closeVideo();
+        useEffect(
+            () => {
+                if (this.videoState.media && !this.floatingVideoMedia) {
+                    this.closeVideo();
+                }
+            },
+            () => [this.floatingVideoMedia && this.floatingVideoMedia.id]
+        );
         onWillUnmount(() => {
             if (closeActiveVideoWindow === this.closeFloatingVideo) {
                 closeActiveVideoWindow = null;
@@ -548,6 +566,26 @@ export class MessageContent extends Component {
 
     get message() {
         return this.props.message;
+    }
+
+    get floatingVideoMedia() {
+        const selected = this.videoState.media;
+        if (
+            !selected ||
+            (this.message.is_deleted && this.message.deleted_content_visible !== true)
+        ) {
+            return false;
+        }
+        // The floating player outlives the clicked thumbnail. Revalidate its
+        // media against each live DTO so redaction also unmounts native PiP.
+        return (
+            viewableMediaItems(this.message.media).find(
+                (media) =>
+                    media.id === selected.id &&
+                    media.kind === "video" &&
+                    media.content_url === selected.content_url
+            ) || false
+        );
     }
 
     get structuredCard() {

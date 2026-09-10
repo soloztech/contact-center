@@ -467,6 +467,137 @@ QUnit.module("contact_center_ui > media presentation", () => {
     );
 
     QUnit.test(
+        "live redaction closes the floating video and native PiP while retained media stays open",
+        async (assert) => {
+            const fixture = await mountedTimeline([
+                timelineMessage({media: [readyMedia({kind: "video"})]}),
+            ]);
+            const pipDescriptor = Object.getOwnPropertyDescriptor(
+                document,
+                "pictureInPictureElement"
+            );
+            const exitDescriptor = Object.getOwnPropertyDescriptor(
+                document,
+                "exitPictureInPicture"
+            );
+            let pauses = 0;
+            let exits = 0;
+            try {
+                await fixture.settle();
+                await click(fixture.target, ".cc-media-video");
+                const player = document.querySelector(".cc-floating-video");
+                const video = player.querySelector("video");
+                video.pause = () => pauses++;
+                Object.defineProperty(document, "pictureInPictureElement", {
+                    configurable: true,
+                    value: video,
+                });
+                Object.defineProperty(document, "exitPictureInPicture", {
+                    configurable: true,
+                    value: async () => exits++,
+                });
+                fixture.store.state.messages[0] = {
+                    ...fixture.store.state.messages[0],
+                    is_deleted: true,
+                    deleted_content_visible: true,
+                };
+                await fixture.settle();
+                assert.strictEqual(
+                    document.querySelector(".cc-floating-video"),
+                    player,
+                    "explicitly retained deleted content keeps its player"
+                );
+                assert.strictEqual(exits, 0);
+                fixture.store.state.messages[0] = {
+                    ...fixture.store.state.messages[0],
+                    deleted_content_visible: false,
+                };
+                await fixture.settle();
+                assert.notOk(document.querySelector(".cc-floating-video"));
+                assert.strictEqual(pauses, 1, "redaction stops the loaded media");
+                assert.strictEqual(exits, 1, "redaction exits native PiP as well");
+                assert.ok(fixture.target.querySelector(".cc-message-tombstone"));
+            } finally {
+                fixture.close();
+                for (const [key, descriptor] of [
+                    ["pictureInPictureElement", pipDescriptor],
+                    ["exitPictureInPicture", exitDescriptor],
+                ]) {
+                    if (descriptor) {
+                        Object.defineProperty(document, key, descriptor);
+                    } else {
+                        delete document[key];
+                    }
+                }
+            }
+        }
+    );
+
+    QUnit.test(
+        "removing the selected media closes its player and does not reopen it on refresh",
+        async (assert) => {
+            const originalMedia = [readyMedia({kind: "video"})];
+            const fixture = await mountedTimeline([
+                timelineMessage({media: originalMedia}),
+            ]);
+            try {
+                await fixture.settle();
+                await click(fixture.target, ".cc-media-video");
+                const video = document.querySelector(".cc-floating-video video");
+                let pauses = 0;
+                video.pause = () => pauses++;
+                fixture.store.state.messages[0] = {
+                    ...fixture.store.state.messages[0],
+                    media: [],
+                };
+                await fixture.settle();
+                assert.notOk(document.querySelector(".cc-floating-video"));
+                assert.strictEqual(pauses, 1);
+                fixture.store.state.messages[0] = {
+                    ...fixture.store.state.messages[0],
+                    media: originalMedia,
+                };
+                await fixture.settle();
+                assert.ok(fixture.target.querySelector(".cc-media-video"));
+                assert.notOk(
+                    document.querySelector(".cc-floating-video"),
+                    "a later DTO refresh does not resume the closed player"
+                );
+            } finally {
+                fixture.close();
+            }
+        }
+    );
+
+    QUnit.test("starting audio pauses the active floating video", async (assert) => {
+        const fixture = await mountedTimeline([
+            timelineMessage({media: [readyMedia({kind: "video"})]}),
+            timelineMessage({message_id: 85}),
+        ]);
+        try {
+            await fixture.settle();
+            await click(fixture.target, ".cc-media-video");
+            const video = document.querySelector(".cc-floating-video video");
+            const audio = fixture.target.querySelector("audio");
+            let pauses = 0;
+            video.pause = () => pauses++;
+            video.dispatchEvent(new Event("play"));
+            audio.dispatchEvent(new Event("play"));
+            await fixture.settle();
+            assert.strictEqual(pauses, 1);
+            assert.ok(document.querySelector(".cc-floating-video"));
+            assert.strictEqual(
+                fixture.target
+                    .querySelector(".cc-audio-player__play")
+                    .getAttribute("aria-label"),
+                "Pausar áudio"
+            );
+        } finally {
+            fixture.close();
+        }
+    });
+
+    QUnit.test(
         "native picture-in-picture failure preserves the floating video",
         async (assert) => {
             let calls = 0;

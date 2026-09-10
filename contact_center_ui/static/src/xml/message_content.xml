@@ -2,10 +2,10 @@
 <templates xml:space="preserve">
     <t t-name="contact_center_ui.MessageContent" owl="1">
         <div class="cc-message-body">
-            <t t-if="videoState.media" t-portal="'body'">
+            <t t-if="floatingVideoMedia" t-portal="'body'">
                 <FloatingVideo
-                    t-key="videoState.media.id"
-                    media="videoState.media"
+                    t-key="floatingVideoMedia.id"
+                    media="floatingVideoMedia"
                     close="() => this.closeVideo()"
                 />
             </t>
