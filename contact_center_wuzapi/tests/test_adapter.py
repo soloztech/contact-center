@@ -274,6 +274,7 @@ class TestWuzapiAdapter(WuzapiCase):
             FakeResponse(
                 200,
                 {
+                    "code": 200,
                     "success": True,
                     "data": {
                         "connected": True,
@@ -285,6 +286,7 @@ class TestWuzapiAdapter(WuzapiCase):
             FakeResponse(
                 200,
                 {
+                    "code": 200,
                     "success": True,
                     "data": {
                         "jid": "5511888888888@s.whatsapp.net",
