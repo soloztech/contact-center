@@ -137,6 +137,22 @@ class ContactCenterApplication(models.AbstractModel):
         return result
 
 
+class ContactCenterMessageMutation(models.Model):
+    _inherit = "contact.center.message.mutation"
+
+    def _purge_redacted_operational_content(self, target):
+        result = super()._purge_redacted_operational_content(target)
+        # Derived native metadata must follow the same deletion policy as the
+        # message body, including readers outside the custom timeline.
+        message = target.message_id.sudo()
+        message.link_preview_ids.unlink()
+        if message.contact_center_link_preview_body_hash:
+            message.with_context(
+                contact_center_post_token=CONTACT_CENTER_POST_TOKEN
+            ).write({"contact_center_link_preview_body_hash": False})
+        return result
+
+
 class ContactCenterUiApi(models.AbstractModel):
     _inherit = "contact.center.ui.api"
 

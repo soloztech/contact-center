@@ -143,6 +143,7 @@ import {reactive} from "@odoo/owl";
 import {hotkeyService} from "@web/core/hotkeys/hotkey_service";
 import {makeTestEnv} from "@web/../tests/helpers/mock_env";
 import {makeFakeLocalizationService} from "@web/../tests/helpers/mock_services";
+import {ormService} from "@web/core/orm_service";
 import {click, getFixture, mount, nextTick} from "@web/../tests/helpers/utils";
 import {registry} from "@web/core/registry";
 import {uiService} from "@web/core/ui/ui_service";
@@ -2809,6 +2810,8 @@ QUnit.module("contact_center_ui > model", (hooks) => {
     QUnit.test(
         "rendered control and message menus retain their own source and keyboard behavior",
         async (assert) => {
+            registry.category("services").add("ui", uiService);
+            registry.category("services").add("orm", ormService);
             const actions = [];
             registry.category("services").add("action", {
                 start: () => ({doAction: async (action) => actions.push(action)}),
@@ -6461,6 +6464,8 @@ QUnit.module("contact_center_ui > model", (hooks) => {
     );
 
     async function mountedUnreadTimeline({focused = true, hidden = false} = {}) {
+        registry.category("services").add("ui", uiService);
+        registry.category("services").add("orm", ormService);
         registry.category("services").add("action", {
             start: () => ({doAction: async () => undefined}),
         });

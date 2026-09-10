@@ -8,6 +8,8 @@ import {
 } from "@contact_center_ui/js/link_preview.esm";
 import {getFixture, mount} from "@web/../tests/helpers/utils";
 import {makeTestEnv} from "@web/../tests/helpers/mock_env";
+import {ormService} from "@web/core/orm_service";
+import {registry} from "@web/core/registry";
 
 QUnit.module("contact_center_ui > native link previews", () => {
     QUnit.test(
@@ -46,6 +48,7 @@ QUnit.module("contact_center_ui > native link previews", () => {
     QUnit.test(
         "native metadata is escaped and opens a separate safe tab",
         async (assert) => {
+            registry.category("services").add("orm", ormService);
             const env = await makeTestEnv();
             const target = getFixture();
             await mount(MessageLinkPreviews, target, {

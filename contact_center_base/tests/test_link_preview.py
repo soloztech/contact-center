@@ -144,6 +144,52 @@ class TestContactCenterLinkPreview(SavepointCase):
             )
             transport.assert_not_called()
 
+    def test_provider_redaction_removes_native_preview_metadata(self):
+        connection = self.env["contact.center.provider.connection"].create(
+            {
+                "name": "Preview deletion provider",
+                "account_id": self.account.id,
+                "adapter_key": "test.fake",
+                "external_ref": "preview-delete-%s" % uuid.uuid4(),
+                "active": True,
+                "role": "primary",
+                "inbound_active": True,
+                "outbound_active": False,
+            }
+        )
+        self.card.provider_connection_id = connection
+        preview = self.env["mail.link.preview"].create(
+            {
+                "message_id": self.message.id,
+                "source_url": "https://example.com/product",
+                "og_title": "Derived title to redact",
+                "og_description": "Derived description to redact",
+            }
+        )
+        body_hash = self.message._contact_center_preview_hash()
+        self.message.with_context(
+            contact_center_post_token=CONTACT_CENTER_POST_TOKEN
+        ).write({"contact_center_link_preview_body_hash": body_hash})
+        mutation = self.env["contact.center.message.mutation"].create(
+            {
+                "target_message_binding_id": self.card.id,
+                "provider_connection_id": connection.id,
+                "external_event_id": "preview-redact-%s" % uuid.uuid4(),
+                "mutation_type": "delete",
+                "direction": "inbound",
+                "deletion_display_mode": "redact",
+            }
+        )
+        with patch(MODEL + ".PublicPreviewSession") as transport:
+            mutation._apply_projection()
+            self.assertEqual(mutation.state, "applied")
+            self.assertEqual(self.card.message_state, "deleted")
+            self.assertFalse(preview.exists())
+            self.assertFalse(self.message.link_preview_ids)
+            self.assertFalse(self.message.contact_center_link_preview_body_hash)
+            self.assertFalse(self.message._job_contact_center_link_previews(body_hash))
+            transport.assert_not_called()
+
     def test_request_checks_channel_scope_before_queueing(self):
         api = self.env["contact.center.ui.api"]
         with self.assertRaises(AccessError):

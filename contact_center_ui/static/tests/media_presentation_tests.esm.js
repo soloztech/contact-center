@@ -13,8 +13,10 @@ import {ContactCenterStore} from "@contact_center_ui/js/contact_center_store.esm
 import {ConversationTimeline} from "@contact_center_ui/js/conversation_timeline.esm";
 import {makeFakeLocalizationService} from "@web/../tests/helpers/mock_services";
 import {makeTestEnv} from "@web/../tests/helpers/mock_env";
+import {ormService} from "@web/core/orm_service";
 import {reactive} from "@odoo/owl";
 import {registry} from "@web/core/registry";
+import {uiService} from "@web/core/ui/ui_service";
 
 function readyMedia(overrides = {}) {
     return {
@@ -31,6 +33,8 @@ function readyMedia(overrides = {}) {
 }
 
 async function mountedTimeline(messages) {
+    registry.category("services").add("ui", uiService);
+    registry.category("services").add("orm", ormService);
     registry.category("services").add("action", {
         start: () => ({doAction: async () => undefined}),
     });
@@ -226,6 +230,8 @@ QUnit.module("contact_center_ui > media presentation", () => {
     QUnit.test(
         "media downloads render only in the message menu with keyboard navigation",
         async (assert) => {
+            registry.category("services").add("ui", uiService);
+            registry.category("services").add("orm", ormService);
             registry.category("services").add("action", {
                 start: () => ({doAction: async () => undefined}),
             });
