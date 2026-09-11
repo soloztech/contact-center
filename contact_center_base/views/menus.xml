@@ -13,7 +13,7 @@
         name="Operations"
         parent="menu_contact_center_root"
         sequence="20"
-        groups="contact_center_base.group_contact_center_supervisor"
+        groups="contact_center_base.group_contact_center_agent,-contact_center_base.group_contact_center_supervisor"
     />
     <menuitem
         id="menu_contact_center_channels"
@@ -21,6 +21,7 @@
         parent="menu_contact_center_operations"
         action="action_contact_center_channels"
         sequence="10"
+        groups="contact_center_base.group_contact_center_supervisor"
     />
     <menuitem
         id="menu_contact_center_identities"
@@ -28,6 +29,7 @@
         parent="menu_contact_center_operations"
         action="action_contact_center_identities"
         sequence="20"
+        groups="contact_center_base.group_contact_center_supervisor"
     />
     <menuitem
         id="menu_contact_center_identity_conflicts"
@@ -35,13 +37,14 @@
         parent="menu_contact_center_operations"
         action="action_contact_center_identity_conflicts"
         sequence="30"
+        groups="contact_center_base.group_contact_center_supervisor"
     />
 
     <menuitem
         id="menu_contact_center_technical"
         name="Technical"
         parent="menu_contact_center_root"
-        sequence="80"
+        sequence="90"
         groups="base.group_system"
     />
     <menuitem
@@ -215,7 +218,7 @@
         id="menu_contact_center_configuration"
         name="Configuration"
         parent="menu_contact_center_root"
-        sequence="90"
+        sequence="80"
         groups="contact_center_base.group_contact_center_admin"
     />
     <menuitem
@@ -265,7 +268,7 @@
     <menuitem
         id="menu_contact_center_quick_replies"
         name="Quick Replies"
-        parent="menu_contact_center_root"
+        parent="menu_contact_center_operations"
         action="action_contact_center_quick_reply_bindings"
         sequence="50"
         groups="contact_center_base.group_contact_center_agent"

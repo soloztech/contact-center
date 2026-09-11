@@ -32,7 +32,7 @@
     <menuitem
         id="menu_contact_center_conversation_ignore"
         name="Conversas ignoradas"
-        parent="menu_contact_center_root"
+        parent="menu_contact_center_operations"
         action="action_contact_center_conversation_ignore"
         sequence="75"
         groups="contact_center_base.group_contact_center_agent"

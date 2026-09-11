@@ -366,12 +366,46 @@ class TestContactCenterQuickReplyManagement(SavepointCase):
     def test_quick_reply_menu_is_available_to_agents(self):
         menu = self.env.ref("contact_center_base.menu_contact_center_quick_replies")
         self.assertEqual(
-            menu.parent_id, self.env.ref("contact_center_base.menu_contact_center_root")
+            menu.parent_id,
+            self.env.ref("contact_center_base.menu_contact_center_operations"),
         )
         self.assertIn(
             self.env.ref("contact_center_base.group_contact_center_agent"),
             menu.groups_id,
         )
+
+        admin = self._user("admin", "group_contact_center_admin")
+        system = self._user("system", "group_contact_center_admin")
+        system.write({"groups_id": [(4, self.env.ref("base.group_system").id)]})
+        for user, supervisor_access, admin_access, technical_access in (
+            (self.agent, False, False, False),
+            (self.supervisor, True, False, False),
+            (admin, True, True, False),
+            (system, True, True, True),
+        ):
+            with self.subTest(user=user.name):
+                menus = self.env["ir.ui.menu"].with_user(user).load_menus(False)
+                self.assertIn(menu.parent_id.id, menus)
+                children = menus[menu.parent_id.id]["children"]
+                for name in ("quick_replies", "conversation_ignore"):
+                    child = self.env.ref(
+                        "contact_center_base.menu_contact_center_" + name
+                    )
+                    self.assertIn(child.id, children)
+                expected = {
+                    "channels": supervisor_access,
+                    "identities": supervisor_access,
+                    "identity_conflicts": supervisor_access,
+                    "resolution_reasons": supervisor_access,
+                    "tags": supervisor_access,
+                    "configuration": admin_access,
+                    "technical": technical_access,
+                }
+                for name, visible in expected.items():
+                    child = self.env.ref(
+                        "contact_center_base.menu_contact_center_" + name
+                    )
+                    self.assertEqual(child.id in menus, visible, name)
 
     def test_tag_catalog_is_company_scoped_and_reports_creation_rights(self):
         own = self.env["contact.center.tag"].create({"name": "Own tag"})

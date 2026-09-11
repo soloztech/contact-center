@@ -206,7 +206,8 @@ class TestConversationPrivacy(SavepointCase):
             "contact_center_base.menu_contact_center_conversation_ignore"
         )
         self.assertEqual(
-            menu.parent_id, self.env.ref("contact_center_base.menu_contact_center_root")
+            menu.parent_id,
+            self.env.ref("contact_center_base.menu_contact_center_operations"),
         )
 
     def test_ignore_follows_identity_aliases_but_never_another_inbox_or_group(self):

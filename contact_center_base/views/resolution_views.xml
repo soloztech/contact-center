@@ -36,7 +36,7 @@
     <menuitem
         id="menu_contact_center_resolution_reasons"
         name="Resolution Reasons"
-        parent="menu_contact_center_root"
+        parent="menu_contact_center_operations"
         action="action_contact_center_resolution_reasons"
         sequence="55"
         groups="contact_center_base.group_contact_center_supervisor"

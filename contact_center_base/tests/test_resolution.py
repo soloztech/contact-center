@@ -476,7 +476,8 @@ class TestContactCenterResolution(SavepointCase):
         )
         self.assertEqual(action.target, "new")
         self.assertEqual(
-            menu.parent_id, self.env.ref("contact_center_base.menu_contact_center_root")
+            menu.parent_id,
+            self.env.ref("contact_center_base.menu_contact_center_operations"),
         )
         self.assertIn(
             self.env.ref("contact_center_base.group_contact_center_supervisor"),
