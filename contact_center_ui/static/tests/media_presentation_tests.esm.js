@@ -16,9 +16,7 @@ import {makeFakeLocalizationService} from "@web/../tests/helpers/mock_services";
 import {makeTestEnv} from "@web/../tests/helpers/mock_env";
 import {ormService} from "@web/core/orm_service";
 import {reactive} from "@odoo/owl";
-import {registerCleanup} from "@web/../tests/helpers/cleanup";
 import {registry} from "@web/core/registry";
-import {templates} from "@web/core/assets";
 import {uiService} from "@web/core/ui/ui_service";
 
 function readyMedia(overrides = {}) {
@@ -36,27 +34,6 @@ function readyMedia(overrides = {}) {
 }
 
 async function mountedTimeline(messages) {
-    // Odoo's test setup rewrites src/alt on every XML node, including Owl
-    // component props. Restore those props while keeping DOM media requests
-    // disabled through data-src, and restore the shared templates after each test.
-    const payload = templates.querySelector(
-        '[t-name="contact_center_ui.MessagePayload"]'
-    );
-    for (const image of payload.querySelectorAll("DeferredImage")) {
-        for (const attribute of ["src", "alt"]) {
-            const testAttribute = `data-${attribute}`;
-            if (!image.hasAttribute(testAttribute)) {
-                continue;
-            }
-            const value = image.getAttribute(testAttribute);
-            image.removeAttribute(testAttribute);
-            image.setAttribute(attribute, value);
-            registerCleanup(() => {
-                image.removeAttribute(attribute);
-                image.setAttribute(testAttribute, value);
-            });
-        }
-    }
     registry.category("services").add("ui", uiService);
     registry.category("services").add("orm", ormService);
     registry.category("services").add("action", {
@@ -650,7 +627,7 @@ QUnit.module("contact_center_ui > media presentation", () => {
             ]);
             try {
                 await fixture.settle();
-                await click(fixture.target, ".cc-media-video");
+                await click(fixture.target.querySelector(".cc-media-video"));
                 const player = document.querySelector(".cc-media-viewer-dialog");
                 const firstVideo = player.querySelector("video");
                 let firstPauses = 0;

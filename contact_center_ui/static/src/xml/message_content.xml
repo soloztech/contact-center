@@ -90,8 +90,7 @@
                 >
                     <DeferredImage
                         t-key="imageRenderKey(media)"
-                        src="contentUrl(media)"
-                        alt="fileLabel(media)"
+                        t-props="{src: contentUrl(media), alt: fileLabel(media)}"
                         width="media.width"
                         height="media.height"
                         priority="30"
