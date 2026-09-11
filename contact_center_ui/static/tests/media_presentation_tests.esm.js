@@ -4,13 +4,14 @@
 
 import {
     AudioPlayer,
-    FloatingVideo,
     downloadableMessageMedia,
     hasCompactAudio,
 } from "@contact_center_ui/js/message_content.esm";
 import {click, getFixture, mount, nextTick} from "@web/../tests/helpers/utils";
 import {ContactCenterStore} from "@contact_center_ui/js/contact_center_store.esm";
 import {ConversationTimeline} from "@contact_center_ui/js/conversation_timeline.esm";
+import {dialogService} from "@web/core/dialog/dialog_service";
+import {hotkeyService} from "@web/core/hotkeys/hotkey_service";
 import {makeFakeLocalizationService} from "@web/../tests/helpers/mock_services";
 import {makeTestEnv} from "@web/../tests/helpers/mock_env";
 import {ormService} from "@web/core/orm_service";
@@ -38,12 +39,16 @@ async function mountedTimeline(messages) {
     registry.category("services").add("action", {
         start: () => ({doAction: async () => undefined}),
     });
-    registry.category("services").add("dialog", {
-        start: () => ({add: () => () => undefined}),
-    });
+    registry.category("services").add("hotkey", hotkeyService);
+    registry.category("services").add("dialog", dialogService);
     makeFakeLocalizationService();
     const env = await makeTestEnv();
     const target = getFixture();
+    const container = registry.category("main_components").get("DialogContainer");
+    const dialogs = await mount(container.Component, target, {
+        env,
+        props: container.props,
+    });
     const originalStyle = target.style.cssText;
     target.style.cssText =
         "position:fixed;left:120px;top:16px;width:560px;height:280px;overflow:hidden;z-index:10000";
@@ -79,6 +84,7 @@ async function mountedTimeline(messages) {
         settle,
         close: () => {
             timeline.__owl__.app.destroy();
+            dialogs.__owl__.app.destroy();
             store.destroy();
             target.style.cssText = originalStyle;
         },
@@ -438,7 +444,7 @@ QUnit.module("contact_center_ui > media presentation", () => {
     );
 
     QUnit.test(
-        "video opens in a non-modal floating player and closes cleanly",
+        "video opens in the media gallery and closing stops playback and restores focus",
         async (assert) => {
             const fixture = await mountedTimeline([
                 timelineMessage({media: [readyMedia({kind: "video"})]}),
@@ -446,16 +452,21 @@ QUnit.module("contact_center_ui > media presentation", () => {
             try {
                 await fixture.settle();
                 await click(fixture.target, ".cc-media-video");
-                const player = document.querySelector(".cc-floating-video");
-                assert.ok(player, "player is outside the clipped timeline");
-                assert.notOk(fixture.target.contains(player));
-                assert.notOk(
-                    document.querySelector(".cc-media-viewer-dialog"),
-                    "chat remains available"
-                );
+                const player = document.querySelector(".cc-media-viewer-dialog");
+                assert.ok(player, "video uses the existing modal gallery");
                 assert.ok(player.querySelector("video").controls);
-                await click(player, '[aria-label="Fechar vídeo"]');
-                assert.notOk(document.querySelector(".cc-floating-video"));
+                assert.strictEqual(
+                    fixture.target
+                        .querySelector(".cc-media-video")
+                        .getAttribute("aria-haspopup"),
+                    "dialog"
+                );
+                const video = player.querySelector("video");
+                let pauses = 0;
+                video.pause = () => pauses++;
+                await click(player, '[aria-label="Fechar visualizador"]');
+                assert.notOk(document.querySelector(".cc-media-viewer-dialog"));
+                assert.strictEqual(pauses, 1, "closing stops the loaded video");
                 assert.strictEqual(
                     document.activeElement,
                     fixture.target.querySelector(".cc-media-video")
@@ -467,7 +478,7 @@ QUnit.module("contact_center_ui > media presentation", () => {
     );
 
     QUnit.test(
-        "live redaction closes the floating video and native PiP while retained media stays open",
+        "live redaction closes the media gallery while retained media stays open",
         async (assert) => {
             const fixture = await mountedTimeline([
                 timelineMessage({media: [readyMedia({kind: "video"})]}),
@@ -485,7 +496,7 @@ QUnit.module("contact_center_ui > media presentation", () => {
             try {
                 await fixture.settle();
                 await click(fixture.target, ".cc-media-video");
-                const player = document.querySelector(".cc-floating-video");
+                const player = document.querySelector(".cc-media-viewer-dialog");
                 const video = player.querySelector("video");
                 video.pause = () => pauses++;
                 Object.defineProperty(document, "pictureInPictureElement", {
@@ -503,19 +514,20 @@ QUnit.module("contact_center_ui > media presentation", () => {
                 };
                 await fixture.settle();
                 assert.strictEqual(
-                    document.querySelector(".cc-floating-video"),
+                    document.querySelector(".cc-media-viewer-dialog"),
                     player,
                     "explicitly retained deleted content keeps its player"
                 );
+                assert.strictEqual(pauses, 0);
                 assert.strictEqual(exits, 0);
                 fixture.store.state.messages[0] = {
                     ...fixture.store.state.messages[0],
                     deleted_content_visible: false,
                 };
                 await fixture.settle();
-                assert.notOk(document.querySelector(".cc-floating-video"));
+                assert.notOk(document.querySelector(".cc-media-viewer-dialog"));
                 assert.strictEqual(pauses, 1, "redaction stops the loaded media");
-                assert.strictEqual(exits, 1, "redaction exits native PiP as well");
+                assert.strictEqual(exits, 1, "redaction closes browser-native PiP too");
                 assert.ok(fixture.target.querySelector(".cc-message-tombstone"));
             } finally {
                 fixture.close();
@@ -534,7 +546,7 @@ QUnit.module("contact_center_ui > media presentation", () => {
     );
 
     QUnit.test(
-        "removing the selected media closes its player and does not reopen it on refresh",
+        "removing the selected media closes its gallery and does not reopen it on refresh",
         async (assert) => {
             const originalMedia = [readyMedia({kind: "video"})];
             const fixture = await mountedTimeline([
@@ -543,7 +555,7 @@ QUnit.module("contact_center_ui > media presentation", () => {
             try {
                 await fixture.settle();
                 await click(fixture.target, ".cc-media-video");
-                const video = document.querySelector(".cc-floating-video video");
+                const video = document.querySelector(".cc-media-viewer-dialog video");
                 let pauses = 0;
                 video.pause = () => pauses++;
                 fixture.store.state.messages[0] = {
@@ -551,7 +563,7 @@ QUnit.module("contact_center_ui > media presentation", () => {
                     media: [],
                 };
                 await fixture.settle();
-                assert.notOk(document.querySelector(".cc-floating-video"));
+                assert.notOk(document.querySelector(".cc-media-viewer-dialog"));
                 assert.strictEqual(pauses, 1);
                 fixture.store.state.messages[0] = {
                     ...fixture.store.state.messages[0],
@@ -560,7 +572,7 @@ QUnit.module("contact_center_ui > media presentation", () => {
                 await fixture.settle();
                 assert.ok(fixture.target.querySelector(".cc-media-video"));
                 assert.notOk(
-                    document.querySelector(".cc-floating-video"),
+                    document.querySelector(".cc-media-viewer-dialog"),
                     "a later DTO refresh does not resume the closed player"
                 );
             } finally {
@@ -569,65 +581,133 @@ QUnit.module("contact_center_ui > media presentation", () => {
         }
     );
 
-    QUnit.test("starting audio pauses the active floating video", async (assert) => {
+    QUnit.test("audio and gallery video pause each other", async (assert) => {
         const fixture = await mountedTimeline([
             timelineMessage({media: [readyMedia({kind: "video"})]}),
             timelineMessage({message_id: 85}),
         ]);
         try {
             await fixture.settle();
-            await click(fixture.target, ".cc-media-video");
-            const video = document.querySelector(".cc-floating-video video");
             const audio = fixture.target.querySelector("audio");
+            let audioPauses = 0;
+            audio.pause = () => audioPauses++;
+            audio.dispatchEvent(new Event("play"));
+            await click(fixture.target, ".cc-media-video");
+            const video = document.querySelector(".cc-media-viewer-dialog video");
             let pauses = 0;
             video.pause = () => pauses++;
             video.dispatchEvent(new Event("play"));
+            assert.strictEqual(audioPauses, 1);
             audio.dispatchEvent(new Event("play"));
             await fixture.settle();
             assert.strictEqual(pauses, 1);
-            assert.ok(document.querySelector(".cc-floating-video"));
-            assert.strictEqual(
-                fixture.target
-                    .querySelector(".cc-audio-player__play")
-                    .getAttribute("aria-label"),
-                "Pausar áudio"
-            );
+            assert.ok(document.querySelector(".cc-media-viewer-dialog"));
         } finally {
             fixture.close();
         }
     });
 
     QUnit.test(
-        "native picture-in-picture failure preserves the floating video",
+        "gallery navigation stops the previous video and preserves image navigation",
         async (assert) => {
-            let calls = 0;
-            const component = {
-                supportsPictureInPicture: true,
-                state: {ready: true, error: ""},
-                videoRef: {
-                    el: {
-                        requestPictureInPicture: async () => {
-                            calls++;
-                            throw new Error("blocked");
-                        },
-                    },
-                },
-            };
-            assert.notOk(
-                await FloatingVideo.prototype.pictureInPicture.call(component)
-            );
-            assert.strictEqual(calls, 1);
-            assert.ok(component.state.error.includes("Continue assistindo aqui"));
-            component.videoRef.el.requestPictureInPicture = async () => {
-                calls++;
-            };
-            assert.ok(await FloatingVideo.prototype.pictureInPicture.call(component));
-            assert.strictEqual(component.state.error, "");
-            component.supportsPictureInPicture = false;
-            assert.notOk(
-                await FloatingVideo.prototype.pictureInPicture.call(component)
-            );
-            assert.strictEqual(calls, 2, "unsupported browsers keep the local player");
+            const second = readyMedia({
+                id: 9,
+                kind: "video",
+                name: "segundo.mp4",
+                content_url: "/contact_center/media/9/content",
+            });
+            const image = readyMedia({
+                id: 10,
+                kind: "image",
+                name: "imagem.jpg",
+                content_url: "/contact_center/media/10/content",
+            });
+            const fixture = await mountedTimeline([
+                timelineMessage({media: [readyMedia({kind: "video"}), second, image]}),
+            ]);
+            try {
+                await fixture.settle();
+                await click(fixture.target, ".cc-media-video");
+                const player = document.querySelector(".cc-media-viewer-dialog");
+                const firstVideo = player.querySelector("video");
+                let firstPauses = 0;
+                firstVideo.pause = () => firstPauses++;
+                await click(player, '[aria-label="Próxima mídia"]');
+                assert.strictEqual(firstPauses, 1);
+                const secondVideo = player.querySelector("video");
+                assert.notStrictEqual(secondVideo, firstVideo);
+                assert.strictEqual(secondVideo.getAttribute("src"), second.content_url);
+                let secondPauses = 0;
+                secondVideo.pause = () => secondPauses++;
+                await click(player, '[aria-label="Próxima mídia"]');
+                assert.strictEqual(secondPauses, 1);
+                assert.notOk(player.querySelector("video"));
+                assert.strictEqual(
+                    player.querySelector("img").getAttribute("src"),
+                    image.content_url
+                );
+                await click(player, '[aria-label="Mídia anterior"]');
+                assert.strictEqual(
+                    player.querySelector("video").getAttribute("src"),
+                    second.content_url
+                );
+            } finally {
+                fixture.close();
+            }
+        }
+    );
+
+    QUnit.test(
+        "revoking another gallery item also closes the open video",
+        async (assert) => {
+            const video = readyMedia({kind: "video"});
+            const fixture = await mountedTimeline([
+                timelineMessage({
+                    media: [
+                        video,
+                        readyMedia({
+                            id: 9,
+                            kind: "image",
+                            content_url: "/contact_center/media/9/content",
+                        }),
+                    ],
+                }),
+            ]);
+            try {
+                await fixture.settle();
+                await click(fixture.target, ".cc-media-video");
+                fixture.store.state.messages[0] = {
+                    ...fixture.store.state.messages[0],
+                    media: [video],
+                };
+                await fixture.settle();
+                assert.notOk(document.querySelector(".cc-media-viewer-dialog"));
+            } finally {
+                fixture.close();
+            }
+        }
+    );
+
+    QUnit.test(
+        "leaving the conversation closes and stops its video",
+        async (assert) => {
+            const fixture = await mountedTimeline([
+                timelineMessage({media: [readyMedia({kind: "video"})]}),
+            ]);
+            try {
+                await fixture.settle();
+                await click(fixture.target, ".cc-media-video");
+                const video = document.querySelector(".cc-media-viewer-dialog video");
+                let pauses = 0;
+                video.pause = () => pauses++;
+                fixture.store.state.selectedChannelId = 20;
+                fixture.store.state.messages = [];
+                await fixture.settle();
+                assert.notOk(document.querySelector(".cc-media-viewer-dialog"));
+                assert.strictEqual(pauses, 1);
+            } finally {
+                fixture.close();
+            }
         }
     );
 

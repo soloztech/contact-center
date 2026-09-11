@@ -61,7 +61,6 @@ const CONTROL_TIMELINE_MESSAGE_META = Object.freeze({
 
 let activeAudioElement = null;
 let activeVideoElement = null;
-let closeActiveVideoWindow = null;
 
 /**
  * Return the fixed presentation metadata for a provider-neutral control event.
@@ -237,80 +236,6 @@ export function hasCompactAudio(message) {
     );
 }
 
-export class FloatingVideo extends Component {
-    setup() {
-        this.videoRef = useRef("video");
-        this.closeRef = useRef("close");
-        this.state = useState({error: "", ready: false});
-        onMounted(() => {
-            // Owl's portal may clear refs before its child unmount hooks run.
-            // Keep the mounted element until playback and native PiP are closed.
-            this.videoElement = this.videoRef.el;
-            this.closeRef.el.focus();
-        });
-        onWillUnmount(() => {
-            const video = this.videoElement;
-            this.videoElement = null;
-            if (!video) {
-                return;
-            }
-            video.pause();
-            if (document.pictureInPictureElement === video) {
-                document.exitPictureInPicture().catch(() => false);
-            }
-            if (activeVideoElement === video) {
-                activeVideoElement = null;
-            }
-        });
-    }
-
-    get supportsPictureInPicture() {
-        return Boolean(
-            document.pictureInPictureEnabled &&
-                typeof HTMLVideoElement.prototype.requestPictureInPicture === "function"
-        );
-    }
-
-    onPlay() {
-        const video = this.videoRef.el;
-        if (activeVideoElement && activeVideoElement !== video) {
-            activeVideoElement.pause();
-        }
-        if (activeAudioElement) {
-            activeAudioElement.pause();
-        }
-        activeVideoElement = video;
-    }
-
-    onKeydown(event) {
-        if (event.key === "Escape") {
-            event.stopPropagation();
-            this.props.close();
-        }
-    }
-
-    async pictureInPicture() {
-        const video = this.videoRef.el;
-        if (!video || !this.state.ready || !this.supportsPictureInPicture) {
-            return false;
-        }
-        try {
-            if (document.pictureInPictureElement !== video) {
-                await video.requestPictureInPicture();
-            }
-            this.state.error = "";
-            return true;
-        } catch (_error) {
-            this.state.error =
-                "O navegador não abriu a janela externa. Continue assistindo aqui.";
-            return false;
-        }
-    }
-}
-
-FloatingVideo.props = {media: Object, close: Function};
-FloatingVideo.template = "contact_center_ui.FloatingVideo";
-
 export class MediaViewer extends Component {
     setup() {
         const startIndex = Number.isInteger(this.props.startIndex)
@@ -321,6 +246,15 @@ export class MediaViewer extends Component {
         });
         this.modalRef = useChildRef();
         this.viewerRef = useRef("viewer");
+        this.videoRef = useRef("video");
+        useEffect(
+            () => {
+                // Keep the actual node: dialog teardown can clear Owl refs first.
+                this.videoElement = this.videoRef.el;
+                return () => this.stopVideo();
+            },
+            () => [this.current.id]
+        );
         onMounted(() => {
             if (this.modalRef.el) {
                 this.modalRef.el.setAttribute("aria-label", "Visualizador de mídia");
@@ -347,6 +281,31 @@ export class MediaViewer extends Component {
         return this.props.items.length > 1
             ? `${content}; use as setas para navegar`
             : content;
+    }
+
+    stopVideo() {
+        const video = this.videoElement;
+        this.videoElement = null;
+        if (video) {
+            video.pause();
+            if (document.pictureInPictureElement === video) {
+                document.exitPictureInPicture().catch(() => false);
+            }
+            if (activeVideoElement === video) {
+                activeVideoElement = null;
+            }
+        }
+    }
+
+    onVideoPlay(event) {
+        const video = event.currentTarget;
+        if (activeVideoElement && activeVideoElement !== video) {
+            activeVideoElement.pause();
+        }
+        if (activeAudioElement) {
+            activeAudioElement.pause();
+        }
+        activeVideoElement = video;
     }
 
     previous() {
@@ -553,44 +512,36 @@ export class MessageContent extends Component {
     setup() {
         this.addDialog = useOwnedDialogs();
         this.imageLoad = useState({attempts: {}, failures: {}});
-        this.videoState = useState({media: false});
-        this.closeFloatingVideo = () => this.closeVideo();
+        this.viewerState = useState({items: []});
+        this.closeMediaViewer = null;
         useEffect(
             () => {
-                if (this.videoState.media && !this.floatingVideoMedia) {
-                    this.closeVideo();
+                if (this.closeMediaViewer && !this.viewerMediaAvailable) {
+                    this.closeMediaViewer();
                 }
             },
-            () => [this.floatingVideoMedia && this.floatingVideoMedia.id]
+            () => [this.viewerMediaAvailable]
         );
-        onWillUnmount(() => {
-            if (closeActiveVideoWindow === this.closeFloatingVideo) {
-                closeActiveVideoWindow = null;
-            }
-        });
     }
 
     get message() {
         return this.props.message;
     }
 
-    get floatingVideoMedia() {
-        const selected = this.videoState.media;
-        if (
-            !selected ||
-            (this.message.is_deleted && this.message.deleted_content_visible !== true)
-        ) {
+    get viewerMediaAvailable() {
+        if (this.message.is_deleted && this.message.deleted_content_visible !== true) {
             return false;
         }
-        // The floating player outlives the clicked thumbnail. Revalidate its
-        // media against each live DTO so redaction also unmounts native PiP.
-        return (
-            viewableMediaItems(this.message.media).find(
+        const currentItems = viewableMediaItems(this.message.media);
+        // Dialogs own a gallery snapshot. Close it when any item is revoked so
+        // neither the current view nor gallery navigation can expose stale media.
+        return this.viewerState.items.every((selected) =>
+            currentItems.some(
                 (media) =>
                     media.id === selected.id &&
-                    media.kind === "video" &&
+                    media.kind === selected.kind &&
                     media.content_url === selected.content_url
-            ) || false
+            )
         );
     }
 
@@ -683,6 +634,9 @@ export class MessageContent extends Component {
     }
 
     openViewer(media, event) {
+        if (this.message.is_deleted && this.message.deleted_content_visible !== true) {
+            return;
+        }
         const items = viewableMediaItems(this.message.media);
         const startIndex = items.findIndex(
             (item) =>
@@ -694,23 +648,17 @@ export class MessageContent extends Component {
             return;
         }
         const opener = event && event.currentTarget;
-        if (media.kind === "video") {
-            if (
-                closeActiveVideoWindow &&
-                closeActiveVideoWindow !== this.closeFloatingVideo
-            ) {
-                closeActiveVideoWindow();
-            }
-            closeActiveVideoWindow = this.closeFloatingVideo;
-            this.videoOpener = opener;
-            this.videoState.media = items[startIndex];
-            return;
+        if (this.closeMediaViewer) {
+            this.closeMediaViewer();
         }
-        this.addDialog(
+        this.viewerState.items = items;
+        this.closeMediaViewer = this.addDialog(
             MediaViewer,
             {items, startIndex},
             {
                 onClose: () => {
+                    this.closeMediaViewer = null;
+                    this.viewerState.items = [];
                     if (opener && opener.isConnected) {
                         opener.focus();
                     }
@@ -718,22 +666,11 @@ export class MessageContent extends Component {
             }
         );
     }
-
-    closeVideo() {
-        this.videoState.media = false;
-        if (closeActiveVideoWindow === this.closeFloatingVideo) {
-            closeActiveVideoWindow = null;
-        }
-        if (this.videoOpener && this.videoOpener.isConnected) {
-            this.videoOpener.focus();
-        }
-    }
 }
 
 MessageContent.components = {
     AudioPlayer,
     DeferredImage,
-    FloatingVideo,
     MessageLinkPreviews,
 };
 MessageContent.props = {message: Object, slots: {type: Object, optional: true}};

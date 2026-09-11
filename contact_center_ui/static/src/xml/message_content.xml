@@ -2,13 +2,6 @@
 <templates xml:space="preserve">
     <t t-name="contact_center_ui.MessageContent" owl="1">
         <div class="cc-message-body">
-            <t t-if="floatingVideoMedia" t-portal="'body'">
-                <FloatingVideo
-                    t-key="floatingVideoMedia.id"
-                    media="floatingVideoMedia"
-                    close="() => this.closeVideo()"
-                />
-            </t>
             <div
                 t-if="message.is_deleted &amp;&amp; !message.deleted_content_visible"
                 class="cc-message-tombstone"
@@ -113,7 +106,7 @@
                     t-elif="media.kind === 'video'"
                     type="button"
                     class="cc-media-video"
-                    t-att-aria-expanded="videoState.media &amp;&amp; videoState.media.id === media.id ? 'true' : 'false'"
+                    aria-haspopup="dialog"
                     t-att-aria-label="'Reproduzir ' + fileLabel(media)"
                     t-on-click="(event) => this.openViewer(media, event)"
                 >
@@ -129,7 +122,7 @@
                     </video>
                     <span class="cc-media-video__overlay">
                         <i class="fa fa-play" aria-hidden="true" />
-                        <span>Abrir vídeo flutuante</span>
+                        <span>Abrir vídeo</span>
                     </span>
                 </button>
                 <button
@@ -354,6 +347,9 @@
                     />
                     <video
                         t-else=""
+                        t-key="current.id"
+                        t-ref="video"
+                        t-on-play="onVideoPlay"
                         controls="controls"
                         autoplay="autoplay"
                         preload="metadata"
@@ -375,48 +371,6 @@
                 </button>
             </div>
         </Dialog>
-    </t>
-
-    <t t-name="contact_center_ui.FloatingVideo" owl="1">
-        <section
-            class="cc-floating-video"
-            role="region"
-            aria-label="Vídeo flutuante"
-            t-on-keydown="onKeydown"
-        >
-            <header>
-                <strong t-esc="props.media.name" />
-                <button
-                    t-if="supportsPictureInPicture"
-                    type="button"
-                    t-att-disabled="!state.ready"
-                    title="Abrir picture-in-picture"
-                    aria-label="Abrir picture-in-picture"
-                    t-on-click="pictureInPicture"
-                ><i class="fa fa-clone" aria-hidden="true" /></button>
-                <button
-                    type="button"
-                    title="Fechar vídeo"
-                    aria-label="Fechar vídeo"
-                    t-ref="close"
-                    t-on-click="props.close"
-                ><i class="fa fa-times" aria-hidden="true" /></button>
-            </header>
-            <video
-                t-ref="video"
-                t-att-src="props.media.content_url"
-                controls="controls"
-                autoplay="autoplay"
-                playsinline="playsinline"
-                preload="metadata"
-                t-on-play="onPlay"
-                t-on-loadedmetadata="() => state.ready = true"
-                t-on-error="() => state.error = 'Este vídeo não pôde ser reproduzido.'"
-            >
-                Seu navegador não reproduz este vídeo.
-            </video>
-            <p t-if="state.error" role="status" t-esc="state.error" />
-        </section>
     </t>
 
     <t t-name="contact_center_ui.AudioPlayer" owl="1">
