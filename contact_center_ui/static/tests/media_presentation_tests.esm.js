@@ -16,7 +16,9 @@ import {makeFakeLocalizationService} from "@web/../tests/helpers/mock_services";
 import {makeTestEnv} from "@web/../tests/helpers/mock_env";
 import {ormService} from "@web/core/orm_service";
 import {reactive} from "@odoo/owl";
+import {registerCleanup} from "@web/../tests/helpers/cleanup";
 import {registry} from "@web/core/registry";
+import {templates} from "@web/core/assets";
 import {uiService} from "@web/core/ui/ui_service";
 
 function readyMedia(overrides = {}) {
@@ -34,6 +36,27 @@ function readyMedia(overrides = {}) {
 }
 
 async function mountedTimeline(messages) {
+    // Odoo's test setup rewrites src/alt on every XML node, including Owl
+    // component props. Restore those props while keeping DOM media requests
+    // disabled through data-src, and restore the shared templates after each test.
+    const payload = templates.querySelector(
+        '[t-name="contact_center_ui.MessagePayload"]'
+    );
+    for (const image of payload.querySelectorAll("DeferredImage")) {
+        for (const attribute of ["src", "alt"]) {
+            const testAttribute = `data-${attribute}`;
+            if (!image.hasAttribute(testAttribute)) {
+                continue;
+            }
+            const value = image.getAttribute(testAttribute);
+            image.removeAttribute(testAttribute);
+            image.setAttribute(attribute, value);
+            registerCleanup(() => {
+                image.removeAttribute(attribute);
+                image.setAttribute(testAttribute, value);
+            });
+        }
+    }
     registry.category("services").add("ui", uiService);
     registry.category("services").add("orm", ormService);
     registry.category("services").add("action", {
@@ -636,19 +659,22 @@ QUnit.module("contact_center_ui > media presentation", () => {
                 assert.strictEqual(firstPauses, 1);
                 const secondVideo = player.querySelector("video");
                 assert.notStrictEqual(secondVideo, firstVideo);
-                assert.strictEqual(secondVideo.getAttribute("src"), second.content_url);
+                assert.strictEqual(
+                    secondVideo.getAttribute("data-src"),
+                    second.content_url
+                );
                 let secondPauses = 0;
                 secondVideo.pause = () => secondPauses++;
                 await click(player, '[aria-label="Próxima mídia"]');
                 assert.strictEqual(secondPauses, 1);
                 assert.notOk(player.querySelector("video"));
                 assert.strictEqual(
-                    player.querySelector("img").getAttribute("src"),
+                    player.querySelector("img").getAttribute("data-src"),
                     image.content_url
                 );
                 await click(player, '[aria-label="Mídia anterior"]');
                 assert.strictEqual(
-                    player.querySelector("video").getAttribute("src"),
+                    player.querySelector("video").getAttribute("data-src"),
                     second.content_url
                 );
             } finally {
