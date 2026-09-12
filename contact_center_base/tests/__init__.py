@@ -39,4 +39,5 @@ from . import (
     test_start_phone,
     test_structured_content,
     test_technical_menus,
+    test_transcription,
 )

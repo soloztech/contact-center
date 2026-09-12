@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record
+        id="access_contact_center_transcription_provider_admin"
+        model="ir.model.access"
+    >
+        <field name="name">Speech provider administrator</field>
+        <field name="model_id" ref="model_contact_center_transcription_provider" />
+        <field name="group_id" ref="group_contact_center_admin" />
+        <field name="perm_read" eval="True" />
+        <field name="perm_write" eval="True" />
+        <field name="perm_create" eval="True" />
+        <field name="perm_unlink" eval="True" />
+    </record>
+    <record id="rule_contact_center_transcription_provider_company" model="ir.rule">
+        <field name="name">Speech providers in active companies</field>
+        <field name="model_id" ref="model_contact_center_transcription_provider" />
+        <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+    </record>
+</odoo>

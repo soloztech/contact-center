@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="view_contact_center_transcription_provider_tree" model="ir.ui.view">
+        <field name="name">contact.center.transcription.provider.tree</field>
+        <field name="model">contact.center.transcription.provider</field>
+        <field name="arch" type="xml">
+            <tree>
+                <field name="name" />
+                <field name="backend" />
+                <field name="model" />
+                <field name="company_id" groups="base.group_multi_company" />
+                <field name="active" />
+            </tree>
+        </field>
+    </record>
+    <record id="view_contact_center_transcription_provider_form" model="ir.ui.view">
+        <field name="name">contact.center.transcription.provider.form</field>
+        <field name="model">contact.center.transcription.provider</field>
+        <field name="arch" type="xml">
+            <form string="Provedor de transcrição">
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="name" string="Nome" />
+                            <field name="active" string="Ativo" />
+                            <field
+                                name="company_id"
+                                groups="base.group_multi_company"
+                            />
+                            <field name="backend" string="Provedor" />
+                            <field name="model" string="Modelo" />
+                            <field
+                                name="base_url"
+                                attrs="{'invisible': [('backend', '=', 'openai')], 'required': [('backend', '=', 'openai_compatible')]}"
+                            />
+                            <field
+                                name="api_key"
+                                string="Chave da API"
+                                password="True"
+                            />
+                        </group>
+                        <group>
+                            <field name="language" string="Idioma" />
+                            <field
+                                name="timeout_seconds"
+                                string="Tempo limite (segundos)"
+                            />
+                            <field
+                                name="max_duration_seconds"
+                                string="Duração máxima (segundos)"
+                            />
+                            <field
+                                name="api_key_env"
+                                string="Variável de ambiente da chave"
+                            />
+                        </group>
+                    </group>
+                    <group string="Vocabulário e contexto">
+                        <field
+                            name="prompt"
+                            nolabel="1"
+                            placeholder="Nomes de produtos, marcas e termos técnicos usados no atendimento."
+                        />
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+    <record
+        id="action_contact_center_transcription_providers"
+        model="ir.actions.act_window"
+    >
+        <field name="name">Transcrição de áudio</field>
+        <field name="res_model">contact.center.transcription.provider</field>
+        <field name="view_mode">tree,form</field>
+    </record>
+    <menuitem
+        id="menu_contact_center_transcription_providers"
+        name="Transcrição de áudio"
+        parent="menu_contact_center_configuration"
+        action="action_contact_center_transcription_providers"
+        groups="group_contact_center_admin"
+        sequence="60"
+    />
+    <record id="view_contact_center_account_transcription" model="ir.ui.view">
+        <field name="name">contact.center.account.transcription</field>
+        <field name="model">contact.center.account</field>
+        <field name="inherit_id" ref="view_contact_center_account_form" />
+        <field name="arch" type="xml">
+            <xpath expr="//notebook" position="inside">
+                <page
+                    string="Transcrição de áudio"
+                    groups="contact_center_base.group_contact_center_admin"
+                >
+                    <group>
+                        <field name="transcription_mode" string="Transcrição" />
+                        <field
+                            name="transcription_provider_id"
+                            string="Provedor"
+                            domain="[('company_id', '=', company_id)]"
+                            attrs="{'invisible': [('transcription_mode', '=', 'disabled')], 'required': [('transcription_mode', '!=', 'disabled')]}"
+                        />
+                    </group>
+                    <p
+                    >O modo automático transcreve novos áudios recebidos após o download.
+                        No modo manual, o atendente usa o botão Transcrever na mensagem.</p>
+                </page>
+            </xpath>
+        </field>
+    </record>
+</odoo>
