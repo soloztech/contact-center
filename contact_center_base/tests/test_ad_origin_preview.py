@@ -116,7 +116,11 @@ class TestContactCenterAdOriginPreview(SavepointCase):
         self.fetch = fetch_patch.start()
         self.addCleanup(fetch_patch.stop)
         marketing_patch = mock.patch.object(
-            type(self.previews), "_marketing_preview_values", return_value={}
+            # A bare MagicMock invents _ondelete and becomes an ORM deletion hook.
+            type(self.previews),
+            "_marketing_preview_values",
+            autospec=True,
+            return_value={},
         )
         self.marketing = marketing_patch.start()
         self.addCleanup(marketing_patch.stop)
@@ -420,7 +424,7 @@ class TestContactCenterAdOriginPreview(SavepointCase):
         self.account.write({"ad_preview_enrichment_enabled": True})
         preview = self._preview(creative={"title": "Snapshot"})
 
-        def redact_then_return():
+        def redact_then_return(_preview):
             self._redact(preview)
             return {"body": "Must not reappear"}
 
