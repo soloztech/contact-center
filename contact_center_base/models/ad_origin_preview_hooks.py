@@ -57,6 +57,45 @@ class ContactCenterAccount(models.Model):
             },
         }
 
+    def action_retry_ad_previews(self):
+        self.ensure_one()
+        self._check_ad_preview_admin()
+        self.check_access_rights("write")
+        self.check_access_rule("write")
+        previews = (
+            self.env["contact.center.attribution.preview"]
+            .sudo()
+            .search(
+                [
+                    ("account_id", "=", self.id),
+                    ("expired", "=", False),
+                    ("expires_at", ">", fields.Datetime.now()),
+                    "|",
+                    "|",
+                    "|",
+                    ("title", "=", False),
+                    ("body", "=", False),
+                    ("source_public_url", "=", False),
+                    ("thumbnail_attachment_id", "=", False),
+                ],
+                order="id",
+                limit=100,
+            )
+        )
+        count = previews._retry_enrichment()
+        return {
+            "type": "ir.actions.client",
+            "tag": "display_notification",
+            "params": {
+                "title": _("Ad previews"),
+                "message": _(
+                    "%(count)s incomplete previews queued again.", count=count
+                ),
+                "type": "success",
+                "sticky": False,
+            },
+        }
+
 
 class ContactCenterAttributionTouchpoint(models.Model):
     _inherit = "contact.center.attribution.touchpoint"
@@ -253,7 +292,9 @@ class ContactCenterAttributionPreview(models.Model):
                 "|",
                 ("ad_preview_ids", "=", False),
                 "&",
+                "&",
                 ("ad_preview_ids.expired", "=", False),
+                ("ad_preview_ids.expires_at", ">", fields.Datetime.now()),
                 ("ad_preview_ids.enrichment_attempted", "=", False),
                 "|",
                 "|",

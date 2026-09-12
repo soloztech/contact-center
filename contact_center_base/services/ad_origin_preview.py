@@ -102,7 +102,11 @@ def public_source_url(value):
     }:
         return ""
     try:
-        values = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True)
+        values = (
+            parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True)
+            if parsed.query
+            else []
+        )
     except ValueError:
         return ""
     if any(

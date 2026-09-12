@@ -27,6 +27,15 @@
                     />
                     <p
                     >Cada execução examina até 100 origens disponíveis. Conteúdo apagado não é recuperado; imagens antigas podem estar indisponíveis.</p>
+                    <button
+                        name="action_retry_ad_previews"
+                        type="object"
+                        string="Tentar completar prévias novamente"
+                        class="btn-secondary"
+                        attrs="{'invisible': [('ad_preview_enrichment_enabled', '=', False)]}"
+                    />
+                    <p
+                    >Após corrigir o acesso ao Marketing Center, esta ação agenda até 100 prévias incompletas. Tentativas em andamento e conteúdo expirado são preservados.</p>
                 </page>
             </xpath>
         </field>

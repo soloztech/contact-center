@@ -485,7 +485,7 @@ class ContactCenterMetaWebhookDispatcher(models.AbstractModel):
             reference = (
                 self.env["contact.center.ad.preview.locator"]
                 .sudo()
-                ._register(connection, source_key, candidate["url"])
+                ._register_thumbnail_locator(connection, source_key, candidate["url"])
             )
             if reference:
                 referral = payload["messaging"]

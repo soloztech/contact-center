@@ -31,6 +31,11 @@ first observed copy.
    Already complete or expired previews are skipped. Old thumbnails that were never
    retained cannot be reconstructed from historical webhook data.
 
+When a missing Marketing link or catalog match becomes available, its exact revision can
+wake an incomplete preview once. **Tentar completar prévias novamente** lets an
+administrator retry up to 100 incomplete previews after fixing access or a previous
+failure. Active jobs are deduplicated; expired or deleted content stays erased.
+
 Later catalog details fill missing fields only and carry a visible **Prévia consultada
 posteriormente** label. They describe the later lookup, not proof that the current
 creative was displayed at the time of the message.
@@ -38,8 +43,8 @@ creative was displayed at the time of the message.
 ## Content and lifecycle
 
 - Titles are limited to 256 characters and bodies to 2,000. HTML is rendered as text.
-  Public links accept only HTTPS Facebook/Instagram URLs, remove tracking parameters and
-  reject account, login and messaging paths.
+  Public links accept only HTTPS Facebook/Instagram URLs with public query keys and
+  reject private parameters, fragments, account, login and messaging paths.
 - Signed thumbnail URLs stay in an internal locator vault scoped to the exact connection
   and event. Operational payloads use opaque references. Locators expire after one day
   and their URLs are erased after use.

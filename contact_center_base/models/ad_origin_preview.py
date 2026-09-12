@@ -4,7 +4,8 @@ import hashlib
 import uuid
 from datetime import timedelta
 
-from psycopg2.errors import SerializationFailure
+from psycopg2 import Error as DatabaseError
+from psycopg2.errors import DeadlockDetected, LockNotAvailable, SerializationFailure
 
 from odoo import _, api, fields, models
 from odoo.exceptions import AccessError
@@ -97,7 +98,7 @@ class ContactCenterAdPreviewLocator(models.Model):
         return super().unlink()
 
     @api.model
-    def _register(self, connection, source_key, url):
+    def _register_thumbnail_locator(self, connection, source_key, url):
         connection.ensure_one()
         url = thumbnail_url(url)
         if not url or not source_key or clean_text(source_key, 512) != source_key:
@@ -215,6 +216,7 @@ class ContactCenterAttributionPreview(models.Model):
     expired = fields.Boolean(default=False, index=True)
     queue_job_uuid = fields.Char(copy=False, index=True)
     enrichment_attempted = fields.Boolean(default=False, copy=False)
+    marketing_wake_key = fields.Char(copy=False)
     error_code = fields.Char(copy=False)
     _sql_constraints = [
         (
@@ -362,7 +364,10 @@ class ContactCenterAttributionPreview(models.Model):
                 preview.write(
                     {
                         "state": "ready"
-                        if preview.title or preview.body or preview.source_public_url
+                        if preview.title
+                        or preview.body
+                        or preview.source_public_url
+                        or preview.thumbnail_attachment_id
                         else "unavailable"
                     }
                 )
@@ -387,11 +392,67 @@ class ContactCenterAttributionPreview(models.Model):
         self.ensure_one()
         return {}
 
+    def _marketing_preview_validate(self, values):
+        """Optional bridge checks its in-memory scope after all remote reads."""
+        self.ensure_one()
+        return True
+
+    def _wake_marketing_enrichment(self, wake_key):
+        """A catalog/link revision can wake an earlier incomplete attempt once."""
+        self.ensure_one()
+        preview = _owned(self)
+        if (
+            not wake_key
+            or wake_key == preview.marketing_wake_key
+            or not preview.account_id.ad_preview_enrichment_enabled
+            or not preview._lock_projection()
+        ):
+            return False
+        preview.write({"marketing_wake_key": wake_key})
+        if canonical_queue_job(
+            preview, preview._identity(), ACTIVE_QUEUE_JOB_STATES, adopt=False
+        ):
+            return False
+        preview.write({"enrichment_attempted": False})
+        preview._queue_work()
+        return True
+
+    def _retry_enrichment(self):
+        """Explicit administrative retry, bounded by the caller's batch."""
+        count = 0
+        for preview in _owned(self):
+            if (
+                not preview.account_id.ad_preview_enrichment_enabled
+                or not preview._lock_projection()
+                or canonical_queue_job(
+                    preview, preview._identity(), ACTIVE_QUEUE_JOB_STATES, adopt=False
+                )
+            ):
+                continue
+            values = {"enrichment_attempted": False, "error_code": False}
+            if preview.thumbnail_ref and not preview.thumbnail_attachment_id:
+                try:
+                    self.env["contact.center.ad.preview.locator"]._resolve(
+                        preview.thumbnail_ref,
+                        preview.touchpoint_id.provider_connection_id,
+                        preview.touchpoint_id.source_external_key,
+                    )
+                except PreviewError:
+                    # The old URL remains consumed; a newly authorized lookup
+                    # can now provide a fresh image without changing evidence.
+                    values["thumbnail_ref"] = False
+            preview.write(values)
+            if preview._needs_enrichment() or (
+                preview.thumbnail_ref and not preview.thumbnail_attachment_id
+            ):
+                preview._queue_work()
+                count += 1
+        return count
+
     def _enrichment_updates(self):
         self.ensure_one()
-        updates = {}
+        updates, enriched = {}, {}
         preview = self
-        locator = self.env["contact.center.ad.preview.locator"]
         if preview._needs_enrichment():
             enriched = preview._marketing_preview_values()
             if not isinstance(enriched, dict):
@@ -406,20 +467,90 @@ class ContactCenterAttributionPreview(models.Model):
             ):
                 if normalized.get(src) and not preview[dest]:
                     updates[dest] = normalized[src]
-            if enriched.get("thumbnail_url") and not preview.thumbnail_ref:
-                reference = locator._register(
-                    preview.touchpoint_id.provider_connection_id,
-                    preview.touchpoint_id.source_external_key,
-                    enriched["thumbnail_url"],
-                )
-                if reference:
-                    updates["thumbnail_ref"] = reference
             if len(updates) > 1:
                 updates.update(
                     presentation_source="marketing_catalog",
                     fetched_at=fields.Datetime.now(),
                 )
+        return updates, enriched
+
+    def _store_thumbnail(self, locator, pending_url, derivative):
+        self.ensure_one()
+        updates = {}
+        if pending_url:
+            reference = locator._register_thumbnail_locator(
+                self.touchpoint_id.provider_connection_id,
+                self.touchpoint_id.source_external_key,
+                pending_url,
+            )
+            locator = locator.sudo().search([("reference", "=", reference)], limit=1)
+            updates.update(
+                thumbnail_ref=reference,
+                presentation_source="marketing_catalog",
+            )
+        content, width, height = derivative
+        attachment = (
+            self.env["ir.attachment"]
+            .sudo()
+            .create(
+                {
+                    "name": "ad-preview.jpg",
+                    "type": "binary",
+                    "raw": content,
+                    "mimetype": "image/jpeg",
+                    "public": False,
+                    "res_model": self._name,
+                    "res_id": self.id,
+                }
+            )
+        )
+        updates.update(
+            thumbnail_attachment_id=attachment.id,
+            width=width,
+            height=height,
+            fetched_at=fields.Datetime.now(),
+        )
+        locator._consume()
         return updates
+
+    def _finish_preview_error(self, updates, enriched, locator, error):
+        """A failed download has the same authorization fence as a success."""
+        self.ensure_one()
+        try:
+            if error.retryable:
+                job = (
+                    self.env["queue.job"]
+                    .sudo()
+                    .search([("uuid", "=", self.queue_job_uuid)], limit=1)
+                )
+                if job and job.retry < 3:
+                    raise RetryableJobError(
+                        "Ad preview download temporarily unavailable", seconds=60
+                    ) from None
+            values = dict(updates)
+            code = error.code
+            if not self._marketing_preview_validate(enriched):
+                values = {}
+                code = "invalid_scope"
+            if not self._lock_projection():
+                return False
+            if locator.ids:
+                locator._consume()
+            values.update(state="unavailable", error_code=code)
+            self.write(values)
+            return True
+        except RetryableJobError:
+            raise
+        except (SerializationFailure, DeadlockDetected, LockNotAvailable):
+            raise RetryableJobError(
+                "Ad preview content changed during processing",
+                seconds=5,
+                ignore_retry=True,
+            ) from None
+        except Exception:
+            # Finalization must abort without publishing either rejected copy or
+            # provider/SQL exception text. An aborted cursor is never reused.
+            raise RuntimeError("Ad preview finalization unavailable") from None
 
     def _job_prepare_preview(self):
         self.ensure_one()
@@ -432,46 +563,35 @@ class ContactCenterAttributionPreview(models.Model):
         ):
             return False
         locator = self.env["contact.center.ad.preview.locator"]
-        updates, derivative = {}, None
+        updates, enriched, derivative = {}, {}, None
         try:
-            updates = preview._enrichment_updates()
-            reference = updates.get("thumbnail_ref") or preview.thumbnail_ref
-            if reference and not preview.thumbnail_attachment_id:
+            updates, enriched = preview._enrichment_updates()
+            pending_url = (
+                thumbnail_url(enriched.get("thumbnail_url"))
+                if not preview.thumbnail_ref and not preview.thumbnail_attachment_id
+                else ""
+            )
+            if pending_url:
+                derivative = fetch_thumbnail(pending_url)
+            elif preview.thumbnail_ref and not preview.thumbnail_attachment_id:
                 locator = locator._resolve(
-                    reference,
+                    preview.thumbnail_ref,
                     preview.touchpoint_id.provider_connection_id,
                     preview.touchpoint_id.source_external_key,
                 )
                 derivative = fetch_thumbnail(locator.download_url)
             # Both remote operations finish before taking the deletion fence.
+            if not preview._marketing_preview_validate(enriched):
+                updates = {}
+                raise PreviewError("invalid_scope")
             if not preview._lock_projection():
                 if locator.ids:
                     locator._consume()
                 return False
             if derivative:
-                content, width, height = derivative
-                attachment = (
-                    self.env["ir.attachment"]
-                    .sudo()
-                    .create(
-                        {
-                            "name": "ad-preview.jpg",
-                            "type": "binary",
-                            "raw": content,
-                            "mimetype": "image/jpeg",
-                            "public": False,
-                            "res_model": preview._name,
-                            "res_id": preview.id,
-                        }
-                    )
-                )
                 updates.update(
-                    thumbnail_attachment_id=attachment.id,
-                    width=width,
-                    height=height,
-                    fetched_at=fields.Datetime.now(),
+                    preview._store_thumbnail(locator, pending_url, derivative)
                 )
-                locator._consume()
             preview.write(updates)
             preview.write(
                 {
@@ -484,34 +604,26 @@ class ContactCenterAttributionPreview(models.Model):
                     "error_code": False,
                 }
             )
-        except SerializationFailure:
+        except (SerializationFailure, DeadlockDetected, LockNotAvailable):
             raise RetryableJobError(
-                "Ad preview content changed during processing", seconds=5
+                "Ad preview content changed during processing",
+                seconds=5,
+                ignore_retry=True,
             ) from None
+        except DatabaseError:
+            # Keep an aborted cursor out of the fallback write path, and keep
+            # SQL parameters (which can include signed locators) out of job logs.
+            raise RuntimeError("Ad preview storage unavailable") from None
         except PreviewError as error:
-            job = (
-                self.env["queue.job"]
-                .sudo()
-                .search([("uuid", "=", preview.queue_job_uuid)], limit=1)
-            )
-            if error.retryable and job and job.retry < 3:
-                raise RetryableJobError(
-                    "Ad preview download temporarily unavailable", seconds=60
-                ) from None
-            if preview._lock_projection():
-                if locator.ids:
-                    locator._consume()
-                updates.update(state="unavailable", error_code=error.code)
-                preview.write(updates)
+            if not preview._finish_preview_error(updates, enriched, locator, error):
+                return False
         except Exception:
             # Third-party bridge failures must not leak URLs or credentials to jobs.
-            if preview._lock_projection():
-                updates.update(
-                    state="unavailable",
-                    error_code="unavailable",
-                    enrichment_attempted=True,
-                )
-                preview.write(updates)
+            updates["enrichment_attempted"] = True
+            if not preview._finish_preview_error(
+                updates, enriched, locator, PreviewError("unavailable")
+            ):
+                return False
         preview._notify()
         return True
 

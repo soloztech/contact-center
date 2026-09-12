@@ -53,6 +53,7 @@ CC_TEST_FILES = (
     "contact_center_base/tests/test_retention.py",
     "contact_center_wuzapi/tests/test_ad_origin.py",
     "contact_center_meta/tests/test_ad_origin.py",
+    "contact_center_ui/tests/test_ad_origin_assets.py",
 )
 MARKETING_TEST_FILES = (
     "marketing_center_contact_center/tests/test_ad_preview.py",

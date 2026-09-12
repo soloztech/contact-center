@@ -6,6 +6,8 @@ import uuid
 from datetime import timedelta
 from unittest import mock
 
+from psycopg2.errors import LockNotAvailable
+
 from odoo import fields
 from odoo.exceptions import AccessError
 from odoo.tests import tagged
@@ -134,7 +136,7 @@ class TestContactCenterAdOriginPreview(SavepointCase):
             creative or {"title": "Provider title", "body": "Provider body"}
         )
         if image:
-            creative["thumbnail_ref"] = self.locators._register(
+            creative["thumbnail_ref"] = self.locators._register_thumbnail_locator(
                 self.connection,
                 key,
                 "https://scontent.fbcdn.net/fixture.jpg?signature=private-fixture",
@@ -195,8 +197,11 @@ class TestContactCenterAdOriginPreview(SavepointCase):
     def test_private_locator_is_exact_scope_and_deduplicated(self):
         key = "locator-" + str(uuid.uuid4())
         url = "https://scontent.fbcdn.net/fixture.jpg?signature=synthetic"
-        reference = self.locators._register(self.connection, key, url)
-        self.assertEqual(reference, self.locators._register(self.connection, key, url))
+        reference = self.locators._register_thumbnail_locator(self.connection, key, url)
+        self.assertEqual(
+            reference,
+            self.locators._register_thumbnail_locator(self.connection, key, url),
+        )
         locator = self.locators._resolve(reference, self.connection, key)
         self.assertEqual(locator.download_url, url)
         with self.assertRaises(PreviewError):
@@ -249,6 +254,7 @@ class TestContactCenterAdOriginPreview(SavepointCase):
         self.assertNotIn("signature", json.dumps(descriptor))
         self.assertNotIn("fbcdn", json.dumps(descriptor))
         attachment = preview.thumbnail_attachment_id
+        self.assertEqual(attachment.name, "ad-preview.jpg")
         self.assertFalse(attachment.public)
         self.assertEqual(attachment.res_model, preview._name)
         self.assertEqual(attachment.res_id, preview.id)
@@ -286,6 +292,8 @@ class TestContactCenterAdOriginPreview(SavepointCase):
                 )
             with self.subTest(user=user.name), self.assertRaises(AccessError):
                 self.account.with_user(user).action_backfill_ad_previews()
+            with self.subTest(user=user.name), self.assertRaises(AccessError):
+                self.account.with_user(user).action_retry_ad_previews()
             with self.subTest(user=user.name), self.assertRaises(AccessError):
                 self.env["contact.center.account"].with_user(user).with_context(
                     default_ad_preview_enrichment_enabled=True
@@ -486,6 +494,10 @@ class TestContactCenterAdOriginPreview(SavepointCase):
         )
         expired = self._preview()
         expired._expire()
+        awaiting_cleanup = self._preview()
+        _owned(awaiting_cleanup).write(
+            {"expires_at": fields.Datetime.now() - timedelta(days=1)}
+        )
         legacy = [self._preview() for _item in range(3)]
         points = [preview.touchpoint_id for preview in legacy]
         for preview in legacy:
@@ -499,6 +511,8 @@ class TestContactCenterAdOriginPreview(SavepointCase):
         self.assertTrue(all(rebuilt.mapped("queue_job_uuid")))
         self.assertFalse(expired.title)
         self.assertTrue(expired.expired)
+        self.assertFalse(awaiting_cleanup.expired)
+        self.assertFalse(awaiting_cleanup.queue_job_uuid)
         self.assertEqual(full.title, "Complete")
         self.fetch.assert_not_called()
         self.marketing.assert_not_called()
@@ -579,3 +593,161 @@ class TestContactCenterAdOriginPreview(SavepointCase):
             binding.message_id.sudo(), binding=binding.sudo()
         )
         self.assertEqual(result["ad_origin_previews"], [])
+
+    def test_image_only_preview_stays_ready_after_duplicate_queue_request(self):
+        preview = self._preview(creative={"media_type": "image"}, image=True)
+        self._perform(preview)
+        preview._queue_work()
+        self.assertEqual(preview.state, "ready")
+        self.assertTrue(preview.thumbnail_attachment_id)
+
+    def test_final_scope_validation_runs_after_download_and_before_storage(self):
+        self.account.write({"ad_preview_enrichment_enabled": True})
+        preview = self._preview(creative={"title": "Snapshot"})
+        self.marketing.return_value = {
+            "body": "Enriched copy",
+            "thumbnail_url": "https://scontent.fbcdn.net/new-image.jpg?sig=fixture",
+        }
+        calls = []
+
+        def download(_url):
+            calls.append("download")
+            self.assertFalse(
+                self.locators.sudo().search(
+                    [("source_key", "=", preview.touchpoint_id.source_external_key)]
+                )
+            )
+            return b"synthetic-jpeg", 30, 20
+
+        def validate(_preview, values):
+            calls.append("validate")
+            self.assertEqual(values["body"], "Enriched copy")
+            self.assertFalse(preview.thumbnail_attachment_id)
+            return True
+
+        self.fetch.side_effect = download
+        with mock.patch.object(
+            type(preview), "_marketing_preview_validate", new=validate
+        ):
+            self.assertTrue(self._perform(preview))
+        self.assertEqual(calls, ["download", "validate"])
+        self.assertTrue(preview.thumbnail_attachment_id)
+
+    def test_scope_revoked_after_download_discards_copy_and_image(self):
+        self.account.write({"ad_preview_enrichment_enabled": True})
+        preview = self._preview(creative={"title": "Snapshot"})
+        self.marketing.return_value = {
+            "body": "Must not persist",
+            "thumbnail_url": "https://scontent.fbcdn.net/revoked.jpg",
+        }
+        with mock.patch.object(
+            type(preview), "_marketing_preview_validate", return_value=False
+        ):
+            self.assertTrue(self._perform(preview))
+        self.fetch.assert_called_once()
+        self.assertEqual(preview.title, "Snapshot")
+        self.assertFalse(preview.body)
+        self.assertFalse(preview.thumbnail_attachment_id)
+        self.assertFalse(preview.thumbnail_ref)
+        self.assertEqual(preview.error_code, "invalid_scope")
+
+    def test_busy_final_authorization_lock_retries_without_leaking_database_error(self):
+        preview = self._preview(image=True)
+        with mock.patch.object(
+            type(preview),
+            "_marketing_preview_validate",
+            side_effect=LockNotAvailable("private-scope"),
+        ):
+            with self.assertRaises(RetryableJobError) as raised:
+                self._perform(preview)
+        self.assertNotIn("private-scope", str(raised.exception))
+        self.assertEqual(preview.state, "pending")
+        self.assertFalse(preview.thumbnail_attachment_id)
+
+    def test_manual_retry_recovers_consumed_thumbnail_and_deduplicates_active_job(self):
+        self.account.write({"ad_preview_enrichment_enabled": True})
+        preview = self._preview(image=True)
+        self.fetch.side_effect = PreviewError("download_failed")
+        self._perform(preview)
+        stored = Job.load(self.env, self._job(preview).uuid)
+        stored.set_done()
+        stored.store()
+        old_ref = preview.thumbnail_ref
+        self.assertFalse(
+            self.locators.sudo().search([("reference", "=", old_ref)]).download_url
+        )
+        self.account.with_user(self.admin).action_retry_ad_previews()
+        self.assertFalse(preview.thumbnail_ref)
+        replacement_job = self._job(preview)
+        self.account.with_user(self.admin).action_retry_ad_previews()
+        self.assertEqual(self._job(preview), replacement_job)
+        self.fetch.side_effect = None
+        self.marketing.return_value = {
+            "thumbnail_url": "https://scontent.fbcdn.net/refreshed.jpg?sig=new-fixture",
+        }
+        self._perform(preview)
+        self.assertTrue(preview.thumbnail_attachment_id)
+        self.assertNotEqual(preview.thumbnail_ref, old_ref)
+
+    def test_catalog_revision_wake_is_once_and_never_revives_expired_preview(self):
+        self.account.write({"ad_preview_enrichment_enabled": True})
+        preview = self._preview(creative={"title": "Snapshot"})
+        self._perform(preview)
+        stored = Job.load(self.env, self._job(preview).uuid)
+        stored.set_done()
+        stored.store()
+        self.assertTrue(preview._wake_marketing_enrichment("a" * 64))
+        first = self._job(preview)
+        self.assertFalse(preview._wake_marketing_enrichment("a" * 64))
+        self.assertEqual(self._job(preview), first)
+        preview._expire()
+        self.assertFalse(preview._wake_marketing_enrichment("b" * 64))
+        self.assertEqual(preview._retry_enrichment(), 0)
+        self.assertFalse(preview.title)
+
+    def test_revoked_enrichment_is_discarded_when_thumbnail_download_fails(self):
+        for failure in (PreviewError("download_failed"), RuntimeError("private-url")):
+            with self.subTest(failure=type(failure).__name__):
+                self.account.write({"ad_preview_enrichment_enabled": True})
+                preview = self._preview(creative={"title": "Original snapshot"})
+                self.marketing.return_value = {
+                    "body": "Revoked ad copy",
+                    "thumbnail_url": "https://scontent.fbcdn.net/revoked.jpg",
+                }
+
+                def revoke_and_fail(_url):
+                    self.account.write({"ad_preview_enrichment_enabled": False})
+                    raise failure
+
+                def validate_scope(record, _values):
+                    return record.account_id.ad_preview_enrichment_enabled
+
+                self.fetch.side_effect = revoke_and_fail
+                with mock.patch.object(
+                    type(preview), "_marketing_preview_validate", new=validate_scope
+                ):
+                    self.assertTrue(self._perform(preview))
+                self.assertEqual(preview.title, "Original snapshot")
+                self.assertFalse(preview.body)
+                self.assertFalse(preview.thumbnail_attachment_id)
+                self.assertFalse(preview.thumbnail_ref)
+                self.assertEqual(preview.error_code, "invalid_scope")
+
+    def test_busy_scope_in_download_failure_path_uses_sanitized_retry(self):
+        self.account.write({"ad_preview_enrichment_enabled": True})
+        preview = self._preview(creative={"title": "Original snapshot"})
+        self.marketing.return_value = {
+            "body": "Not yet authorized",
+            "thumbnail_url": "https://scontent.fbcdn.net/failing.jpg",
+        }
+        self.fetch.side_effect = PreviewError("download_failed")
+        with mock.patch.object(
+            type(preview),
+            "_marketing_preview_validate",
+            side_effect=LockNotAvailable("private-database-context"),
+        ):
+            with self.assertRaises(RetryableJobError) as raised:
+                self._perform(preview)
+        self.assertNotIn("private-database-context", str(raised.exception))
+        self.assertEqual(preview.state, "pending")
+        self.assertFalse(preview.body)

@@ -700,15 +700,34 @@ class TestContactCenterAttribution(SavepointCase):
                 "creative_media_type",
                 "show_ad_attribution",
                 "occurred_at",
+                "ad_origin_preview",
             },
         )
+        preview = item["ad_origin_preview"]
+        self.assertEqual(
+            set(preview),
+            {
+                "public_ref",
+                "title",
+                "body",
+                "source_url",
+                "thumbnail_url",
+                "media_type",
+                "state",
+                "presentation_source",
+                "observed_at",
+                "fetched_at",
+            },
+        )
+        # The customer's private attribution URL is never a public ad link.
+        self.assertFalse(preview["source_url"])
+        self.assertFalse(preview["thumbnail_url"])
         serialized = json.dumps(payload, sort_keys=True)
         for secret in (
             "secret-ad-id",
             "secret-click-id",
             "https://example.invalid/private-campaign",
             "secret-extension",
-            "source_url",
             "provider_extensions",
             "external_identifiers",
         ):

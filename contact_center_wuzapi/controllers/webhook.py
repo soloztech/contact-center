@@ -522,7 +522,9 @@ def _capture_ad_origin_preview(
         reference = (
             connection.env["contact.center.ad.preview.locator"]
             .sudo()
-            ._register(connection, candidate["source_key"], candidate["url"])
+            ._register_thumbnail_locator(
+                connection, candidate["source_key"], candidate["url"]
+            )
         )
         if reference:
             creative["thumbnail_ref"] = reference
