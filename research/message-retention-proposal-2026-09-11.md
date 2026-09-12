@@ -1,6 +1,7 @@
 # Proposta de retenção de mensagens e mídias
 
-Data: 2026-09-11. Estado: **estudo; não implementado nem ativado**.
+Data: 2026-09-11. Revisão de requisitos: 2026-09-12. Estado: **estudo; não implementado
+nem ativado**.
 
 Solicitação: permitir, por exemplo, manter somente sete dias de mensagens em grupos com
 muito volume, eliminando conteúdo antigo e mídias para controlar o crescimento do Odoo.
@@ -10,12 +11,16 @@ não criou cron.
 ## Recomendação
 
 Vale implementar. Recomendo começar com uma política **desativada por padrão**,
-configurada na caixa para **grupos**, com uma exceção por conversa:
+configurada na caixa para **grupos**, com uma exceção por conversa. Conforme os
+requisitos de 12/09, o prazo fica centralizado na caixa:
 
-- Sem exclusão automática.
-- Herdar a regra da caixa.
-- Manter por N dias, inicialmente sete nos grupos escolhidos.
-- Preservar esta conversa, mesmo quando a caixa tiver uma regra.
+- Na caixa: ativar/desativar exclusão automática e manter por N dias, inicialmente sete.
+- No grupo: seguir a regra da caixa ou preservar este grupo.
+- Supervisor e administrador podem preservar um grupo diretamente no painel lateral.
+- O aviso de exclusão mostra o prazo efetivo para todos que acessam o grupo.
+
+Não haverá prazo diferente configurável por grupo no MVP. A exceção apenas desativa a
+exclusão naquele grupo, sem alterar a caixa ou os demais grupos.
 
 A rotina remove o **histórico vencido**, incluindo texto, versões editadas, reações,
 prévias, mídia exclusiva e cópias operacionais dos webhooks. A conversa continua
@@ -31,6 +36,90 @@ histórico. Um PDF usado também em uma cotação continua existindo na cotaçã
 conservar um controle técnico mínimo, sem texto nem mídia, para que webhooks repetidos
 não recriem o que foi eliminado. Não prometer zero linhas residuais nem eliminação no
 WhatsApp, dispositivos, backups ou outros sistemas.
+
+## Configuração e painel lateral — requisitos de 12/09
+
+### Configuração por caixa
+
+Em **Configuração > Caixas > caixa selecionada**, acrescentar a seção **Retenção de
+histórico**, acessível a quem já pode administrar a caixa:
+
+- **Excluir histórico antigo de grupos:** desligado por padrão, inclusive nas caixas
+  existentes. Instalar ou atualizar o módulo não ativa a regra.
+- **Manter histórico por (dias):** inteiro positivo, valor inicial **7**, obrigatório
+  quando a regra estiver ligada. Zero não significa excluir tudo.
+- **Abrangência:** grupos dessa caixa; conversas individuais permanecem fora do MVP.
+- Explicação: o prazo conta desde a data original de cada mensagem. Nova atividade no
+  grupo não renova o prazo das mensagens antigas. Mídias seguem o mesmo prazo.
+
+O cadastro do grupo, nome, participantes, responsável e marcadores são preservados,
+mesmo que não reste nenhuma mensagem. Por isso o texto do produto deve dizer
+**“mensagens e mídias”** ou **“histórico”**, evitando sugerir que o grupo inteiro será
+excluído após sete dias.
+
+Ativar a regra, reduzir o prazo ou voltar a aplicá-la em um grupo preservado torna
+elegível também o histórico que já ultrapassou o prazo. A futura interface deve mostrar
+isso antes de salvar, com a simulação de impacto prevista neste estudo. O salvamento da
+configuração não executa a purga dentro da requisição do usuário.
+
+### Aviso e exceção no painel do grupo
+
+No painel direito da imagem fornecida, acrescentar **Retenção do histórico** logo após
+**Dados do grupo**, antes de **Operação**. A seção mostra a regra efetiva a qualquer
+usuário com acesso à conversa; somente supervisor e administrador veem o controle.
+
+Quando ativa, mostrar um aviso persistente e discreto, sem modal a cada abertura:
+
+> Mensagens e mídias deste grupo com mais de 7 dias serão excluídas da Central. O
+> cadastro do grupo será mantido.
+
+O número é obtido da configuração da caixa, sem texto fixo em sete. A ajuda detalha que
+a limpeza ocorre na próxima execução da rotina após vencer o prazo; não promete
+liberação física do disco no instante exato. Arquivos vinculados também a documentos ou
+outras conversas seguem a proteção de compartilhamento descrita abaixo.
+
+Com o painel fechado, manter um indicador compacto **Histórico: N dias** no cabeçalho da
+conversa, que abre essa seção. Aviso e indicador pertencem ao Odoo; não são mensagens
+automáticas enviadas ao grupo no WhatsApp.
+
+O controle para supervisor/administrador será **Preservar histórico deste grupo**:
+
+| Regra da caixa | Preservar grupo | Estado exibido no painel                                                                                 |
+| -------------- | --------------- | -------------------------------------------------------------------------------------------------------- |
+| Ligada         | Desmarcado      | **Exclusão automática após N dias**, com o aviso acima.                                                  |
+| Ligada         | Marcado         | **Histórico preservado. Este grupo está isento da exclusão automática da caixa.**                        |
+| Desligada      | Desmarcado      | **Exclusão automática desativada nesta caixa.**                                                          |
+| Desligada      | Marcado         | **Exclusão automática desativada nesta caixa. Este grupo continuará preservado se a regra for ativada.** |
+
+Marcar preservação interrompe exclusões futuras após a confirmação do servidor;
+desmarcar volta a seguir a caixa. Ajuda do controle: **“Preserva as mensagens e mídias
+deste grupo. Não recupera conteúdo já excluído.”** A exceção permanece salva quando a
+caixa é desligada e ligada novamente e vale para todos os usuários, não apenas para quem
+marcou. Ela é independente de silenciar, arquivar, resolver ou ignorar o grupo.
+
+### Contrato para a futura implementação
+
+- Persistir a política na caixa e a exceção no vínculo canônico caixa/conversa, não em
+  estado local do navegador nem na conexão temporária do provedor. Aliases e merges
+  devem preservar a exceção; em conflito dentro da mesma caixa, preservar prevalece.
+- Validar supervisor/administrador e acesso à caixa/conversa no backend. Ocultar o
+  controle para agentes não basta; uma chamada direta por agente deve ser recusada. Ser
+  administrador do grupo no WhatsApp não concede permissão de supervisor no Odoo. A
+  capacidade é própria da retenção, independente das flags de excluir ou ignorar.
+- Retornar ao painel o estado efetivo calculado no backend, prazo e capacidade de
+  alterar a exceção. Atualizar outras abas e usuários após commit; só confirmar a
+  alteração visual quando o servidor tiver salvo.
+- Mudança de política e exceção usa a mesma ordem de travas da rotina de retenção.
+  Revalidar a regra dentro de cada lote, depois das travas, inclusive em jobs já
+  enfileirados. Se uma purga já confirmou um lote antes da preservação, esse conteúdo
+  não volta; depois da confirmação de preservação, novos lotes não podem excluir o
+  histórico desse grupo.
+- Registrar autor, data e estado anterior/novo da configuração, sem copiar conteúdo das
+  mensagens e sem enviar aviso ao WhatsApp. Desativar a regra não reduz o limite de
+  expiração já aplicado nem permite recriação do histórico por replay.
+
+Esta revisão registra os três requisitos para implementação posterior. Não cria campos,
+controles, jobs ou exclusões no teste ou na oficial.
 
 ## O que existe hoje, de fato
 
@@ -245,6 +334,13 @@ de expiração antes de liberar ingestão/UI para não ressuscitar conteúdo ven
 
 - Regra desligada não altera nenhum registro; grupos de uma caixa não afetam outras
   caixas nem conversas diretas; exceção de preservação prevalece.
+- Prazo e aviso correspondem à caixa atual; alterar sete para outro valor atualiza o
+  painel. Agente vê o estado, mas não altera a exceção nem por chamada direta.
+- Supervisor com acesso e administrador podem preservar e voltar a seguir a caixa;
+  usuário sem acesso não altera outro grupo. Exceção persiste após troca de conexão,
+  merge de aliases e desativação/reativação da caixa, com auditoria do autor.
+- Preservar enquanto há purga enfileirada ou concorrente respeita a confirmação e as
+  travas; outras abas recebem o novo estado, sem mostrar sucesso em falha de gravação.
 - Limite exato em UTC, importação histórica, mudança de fuso, mensagem editada,
   timestamp ausente/inválido e replay não renovam prazos indevidamente.
 - Texto, versões, snapshots citados, prévias, JSON, locators, uploads, jobs e mídia
