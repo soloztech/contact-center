@@ -138,6 +138,7 @@ class TestWuzapiRetentionIngress(WuzapiCase):
                 "outbound_active": False,
                 "wuzapi_base_url": "https://wuzapi.invalid/",
                 "wuzapi_api_token": "test",
+                "wuzapi_hmac_secret": "unit-test-hmac-secret-at-least-32-chars",
             }
         )
         self.assertTrue(
