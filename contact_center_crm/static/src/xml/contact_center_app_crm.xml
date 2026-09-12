@@ -21,20 +21,6 @@
                 <i class="fa fa-handshake-o" aria-hidden="true" />
             </button>
         </xpath>
-        <xpath expr="//button[hasclass('cc-details-toggle')]" position="attributes">
-            <attribute name="t-on-click">toggleContactPanel</attribute>
-            <attribute
-                name="t-att-aria-pressed"
-            >!crmPanelSelected &amp;&amp; store.state.detailsOpen ? 'true' : 'false'</attribute>
-            <attribute
-                name="t-att-aria-label"
-            >!crmPanelSelected &amp;&amp; store.state.detailsOpen ? 'Ocultar detalhes' : 'Mostrar detalhes'</attribute>
-        </xpath>
-        <xpath expr="//ContactPanel" position="attributes">
-            <attribute
-                name="t-if"
-            >selectedConversation &amp;&amp; !crmPanelSelected</attribute>
-        </xpath>
         <xpath expr="//ContactPanel" position="after">
             <CrmPanel
                 t-if="selectedConversation &amp;&amp; crmPanelSelected &amp;&amp; store.state.detailsOpen"

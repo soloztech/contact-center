@@ -78,6 +78,120 @@ QUnit.module("contact_center_ui > sidebar filter flyout", (hooks) => {
     });
 
     QUnit.test(
+        "grouped rows omit the repeated inbox badge and keep conversation tags in both views",
+        async (assert) => {
+            const store = filterStore();
+            const longName = "Retorno comercial com documentação complementar";
+            store.state.conversations = [
+                {
+                    channel_id: 20,
+                    state: "open",
+                    name: "Cliente",
+                    account: {id: 1, name: "Comercial"},
+                    responsible: {id: 7, name: "Ana"},
+                    tags: [
+                        {id: 3, name: "Retorno", color: 2},
+                        {id: 4, name: longName, color: 7},
+                        {id: 3, name: "Duplicate"},
+                        null,
+                        {name: "Missing ID"},
+                        {id: 5},
+                    ],
+                },
+            ];
+            try {
+                const {target} = await mountList(store);
+                assert.notOk(target.querySelector(".cc-inbox-badge"));
+                assert.ok(
+                    target
+                        .querySelector("[data-channel-id='20']")
+                        .closest(".cc-inbox-group")
+                        .querySelector(".cc-inbox-group__identity")
+                        .textContent.includes("Comercial"),
+                    "the inbox remains identified by its group header"
+                );
+                const tags = target.querySelectorAll(".cc-conversation-tag");
+                assert.strictEqual(tags.length, 2, "only valid, unique tags render");
+                assert.strictEqual(tags[1].title, longName);
+                assert.strictEqual(tags[1].querySelector("span").textContent, longName);
+                assert.ok(tags[0].querySelector(".cc-tag-color--2"));
+                assert.strictEqual(
+                    target
+                        .querySelector(".cc-conversation-item__tags")
+                        .getAttribute("aria-label"),
+                    "Marcadores da conversa"
+                );
+                await click(target, "[aria-label='Lista sem agrupamento']");
+                assert.strictEqual(
+                    target.querySelector(".cc-inbox-badge").title,
+                    "Comercial"
+                );
+                assert.strictEqual(
+                    target.querySelectorAll(".cc-conversation-tag").length,
+                    2
+                );
+                await click(target, "[aria-label='Agrupar por caixa']");
+                assert.notOk(target.querySelector(".cc-inbox-badge"));
+                assert.strictEqual(
+                    target.querySelectorAll(".cc-conversation-tag").length,
+                    2
+                );
+            } finally {
+                store.destroy();
+            }
+        }
+    );
+
+    QUnit.test(
+        "conversation tag changes update the mounted list without reloading it",
+        async (assert) => {
+            const store = filterStore();
+            const conversation = {
+                channel_id: 20,
+                state: "open",
+                name: "Cliente",
+                account: {id: 1, name: "Comercial"},
+                tags: [],
+            };
+            store.state.conversations = [conversation];
+            store.loadConversations = () => {
+                throw new Error("Tag updates must not reload the conversation list");
+            };
+            try {
+                const {target} = await mountList(store);
+                assert.notOk(target.querySelector(".cc-conversation-item__tags"));
+                store.replaceConversation({
+                    ...conversation,
+                    tags: [{id: 3, name: "Retorno", color: 2}],
+                });
+                await nextTick();
+                assert.strictEqual(
+                    target.querySelector(".cc-conversation-tag").title,
+                    "Retorno"
+                );
+                store.replaceConversation({
+                    ...conversation,
+                    tags: [{id: 4, name: "Urgente", color: 1}],
+                });
+                await nextTick();
+                assert.strictEqual(
+                    target.querySelectorAll(".cc-conversation-tag").length,
+                    1
+                );
+                assert.strictEqual(
+                    target.querySelector(".cc-conversation-tag").title,
+                    "Urgente"
+                );
+                store.replaceConversation(conversation);
+                await nextTick();
+                assert.notOk(target.querySelector(".cc-conversation-item__tags"));
+            } finally {
+                store.destroy();
+            }
+        }
+    );
+
+    QUnit.test(
         "filters are grouped behind one button and states remain additive",
         async (assert) => {
             const store = filterStore();

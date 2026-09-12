@@ -139,9 +139,9 @@
                                 <button
                                     type="button"
                                     class="cc-icon-button cc-details-toggle"
-                                    t-att-aria-pressed="store.state.detailsOpen ? 'true' : 'false'"
-                                    t-att-aria-label="store.state.detailsOpen ? 'Ocultar detalhes' : 'Mostrar detalhes'"
-                                    t-on-click="() => store.toggleDetails()"
+                                    t-att-aria-pressed="contactPanelSelected &amp;&amp; store.state.detailsOpen ? 'true' : 'false'"
+                                    t-att-aria-label="contactPanelSelected &amp;&amp; store.state.detailsOpen ? 'Ocultar detalhes' : 'Mostrar detalhes'"
+                                    t-on-click="toggleContactPanel"
                                 >
                                     <i
                                         class="fa fa-address-card-o"
@@ -193,7 +193,7 @@
                 </main>
 
                 <ContactPanel
-                    t-if="selectedConversation"
+                    t-if="selectedConversation &amp;&amp; contactPanelSelected"
                     store="store"
                     state="store.state"
                     conversation="selectedConversation"

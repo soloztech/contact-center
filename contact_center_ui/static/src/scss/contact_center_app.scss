@@ -1825,6 +1825,30 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
     }
 }
 
+.cc-conversation-item__tags {
+    flex-wrap: wrap;
+    margin-top: 0.35rem;
+
+    .cc-conversation-tag {
+        display: inline-flex;
+        max-width: 100%;
+        align-items: center;
+        text-transform: none;
+        gap: 0.3rem;
+
+        .cc-tag-color {
+            flex: 0 0 auto;
+        }
+
+        span {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+    }
+}
+
 .cc-list-skeleton {
     padding: 0.25rem 0;
 

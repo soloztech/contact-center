@@ -608,7 +608,7 @@ QUnit.module("contact_center_crm > customer records", (hooks) => {
         "commercial and contact controls select one panel keyed by customer",
         (assert) => {
             const app = Object.create(ContactCenterApp.prototype);
-            app.crmUi = {panelMode: "contact"};
+            app.ui = {sidePanel: "contact"};
             app.store = {
                 capabilities: {view_crm: true},
                 state: {detailsOpen: true},

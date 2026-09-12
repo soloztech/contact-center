@@ -679,6 +679,29 @@ export class ConversationList extends Component {
         return conversationInboxMetadata(conversation);
     }
 
+    conversationTags(conversation) {
+        const ids = new Set();
+        return (Array.isArray(conversation.tags) ? conversation.tags : [])
+            .filter((tag) => {
+                if (
+                    !isPlainRecord(tag) ||
+                    !positiveInteger(tag.id) ||
+                    typeof tag.name !== "string" ||
+                    !tag.name.trim() ||
+                    ids.has(tag.id)
+                ) {
+                    return false;
+                }
+                ids.add(tag.id);
+                return true;
+            })
+            .map((tag) => ({
+                id: tag.id,
+                name: tag.name.trim(),
+                color: Number.isSafeInteger(tag.color) ? tag.color : 0,
+            }));
+    }
+
     itemClass(conversation) {
         const classes = ["cc-conversation-item"];
         if (this.ui.view === "grouped") {

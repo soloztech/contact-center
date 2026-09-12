@@ -702,6 +702,7 @@
                 </span>
                 <span class="cc-conversation-item__meta">
                     <small
+                            t-if="ui.view !== 'grouped'"
                             class="cc-inbox-badge"
                             t-att-title="inboxMetadata(conversation).name"
                         >
@@ -722,6 +723,28 @@
                             t-else=""
                             class="cc-responsible-badge"
                         >Sem responsável</small>
+                </span>
+                <t t-set="tags" t-value="conversationTags(conversation)" />
+                <span
+                        t-if="tags.length"
+                        class="cc-conversation-item__meta cc-conversation-item__tags"
+                        role="list"
+                        aria-label="Marcadores da conversa"
+                    >
+                    <small
+                            t-foreach="tags"
+                            t-as="tag"
+                            t-key="tag.id"
+                            class="cc-conversation-tag"
+                            role="listitem"
+                            t-att-title="tag.name"
+                        >
+                        <i
+                                t-attf-class="cc-tag-color cc-tag-color--#{tag.color}"
+                                aria-hidden="true"
+                            />
+                        <span t-esc="tag.name" />
+                    </small>
                 </span>
             </span>
             </button>

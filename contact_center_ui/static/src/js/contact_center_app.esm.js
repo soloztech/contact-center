@@ -31,7 +31,11 @@ export function conversationComposerAvailable(policy, capabilities) {
 
 export class ContactCenterApp extends Component {
     setup() {
-        this.ui = useState({stateChanging: false, failedHeaderAvatarUrl: false});
+        this.ui = useState({
+            stateChanging: false,
+            failedHeaderAvatarUrl: false,
+            sidePanel: "contact",
+        });
         this.addDialog = useOwnedDialogs();
         this.attention = new BrowserAttention();
         this.store = new ContactCenterStore({
@@ -76,6 +80,24 @@ export class ContactCenterApp extends Component {
 
     get selectedConversation() {
         return this.store.selectedConversation;
+    }
+
+    get contactPanelSelected() {
+        return this.ui.sidePanel === "contact";
+    }
+
+    toggleSidePanel(name) {
+        const wasOpen = this.ui.sidePanel === name && this.store.state.detailsOpen;
+        this.ui.sidePanel = name;
+        this.store.state.detailsOpen = !wasOpen;
+    }
+
+    toggleContactPanel() {
+        if (!this.contactPanelSelected) {
+            this.ui.sidePanel = "contact";
+            this.store.state.detailsOpen = false;
+        }
+        this.store.toggleDetails();
     }
 
     get conversationPolicy() {
