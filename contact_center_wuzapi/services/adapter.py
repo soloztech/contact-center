@@ -10,6 +10,7 @@ import math
 import mimetypes
 import re
 import uuid
+from dataclasses import replace
 from email.utils import parsedate_to_datetime
 from urllib.parse import urlsplit
 
@@ -18,6 +19,10 @@ from urllib3.exceptions import NewConnectionError
 
 from odoo.exceptions import ValidationError
 
+from odoo.addons.contact_center_base.services.ad_origin_preview import (
+    normalize_creative,
+    thumbnail_url,
+)
 from odoo.addons.contact_center_base.services.adapter import (
     AdapterError,
     ProviderAdapter,
@@ -1333,6 +1338,86 @@ def _attribution_values(message, is_from_me, preferred_context=None):
     )
 
 
+def ad_origin_preview_candidate(envelope):
+    """Return one current inbound ad snapshot and its private image candidate.
+
+    Private URLs returned here belong only in the preview vault. A complementary
+    context with a conflicting source ID must not donate another ad's creative.
+    """
+    if _normalized_key(_lookup(envelope, "type")) != "message":
+        return None
+    event = _lookup(envelope, "event")
+    info = _lookup(event, "Info")
+    message = _lookup(event, "Message")
+    if not isinstance(info, dict) or not isinstance(message, dict):
+        return None
+    try:
+        if _required_is_from_me(info, "WuzAPI Message event IsFromMe"):
+            return None
+        if _mutation_values(event, message, info)[0]:
+            return None
+    except AdapterError:
+        return None
+    source_key = _provider_string(_lookup(info, "ID", "Id"), maximum=512)
+    if not source_key:
+        return None
+    return _ad_origin_preview_for_message(message, source_key)
+
+
+def _ad_origin_preview_for_message(message, source_key):
+    try:
+        context = _message_content(message, source_key)[1]
+    except AdapterError:
+        context = None
+    evidence = _attribution_values(message, False, preferred_context=context)
+    if not evidence or evidence[0].touchpoint_type not in {
+        "paid_ad_click",
+        "paid_ad_signal",
+    }:
+        return None
+    canonical = _attribution_context(message, preferred_context=context)
+    canonical_external = canonical.get("externalAdReply") or {}
+    source_id = _provider_string(_lookup(canonical_external, "sourceID", "sourceId"))
+    click_id = _provider_string(_lookup(canonical_external, "ctwaClid", "ctwaCLID"))
+    contexts = ([context] if isinstance(context, dict) else []) + [
+        candidate
+        for candidate in _attribution_context_candidates(message)
+        if candidate is not context
+    ]
+    for candidate in contexts:
+        external = _lookup(candidate, "externalAdReply")
+        if not isinstance(external, dict):
+            continue
+        candidate_source = _provider_string(_lookup(external, "sourceID", "sourceId"))
+        candidate_click = _provider_string(_lookup(external, "ctwaClid", "ctwaCLID"))
+        if source_id and candidate_source != source_id:
+            continue
+        if click_id and candidate_click and candidate_click != click_id:
+            continue
+        creative = normalize_creative(
+            {
+                "title": _lookup(external, "title"),
+                "body": _lookup(external, "body"),
+                "public_url": _lookup(external, "sourceURL", "sourceUrl"),
+                "media_type": _canonical_attribution_token(
+                    _lookup(external, "mediaType")
+                ),
+            }
+        )
+        private_url = ""
+        for field in ("thumbnailURL", "originalImageURL"):
+            private_url = thumbnail_url(_lookup(external, field))
+            if private_url:
+                break
+        if not private_url and creative.get("media_type") == "image":
+            private_url = thumbnail_url(_lookup(external, "mediaURL"))
+        if private_url or any(
+            creative.get(key) for key in ("title", "body", "public_url")
+        ):
+            return {"source_key": source_key, "creative": creative, "url": private_url}
+    return None
+
+
 def _sha256_hex(value):
     if not isinstance(value, str) or not value.strip():
         return ""
@@ -2564,6 +2649,17 @@ class WuzapiAdapter(WuzapiDirectStartMixin, WuzapiGroupMetadataMixin, ProviderAd
 
         return clean(envelope)
 
+    def ad_origin_preview_from_history(self, payload, source_key):
+        """Recover bounded copy only, without fetching or recreating old images."""
+        candidate = ad_origin_preview_candidate(payload)
+        if not candidate or candidate["source_key"] != source_key:
+            return {}
+        return {
+            key: value
+            for key, value in candidate["creative"].items()
+            if key in {"title", "body", "public_url", "media_type"}
+        }
+
     def normalize_event(self, connection, envelope):
         if not isinstance(envelope, dict):
             raise AdapterError("WuzAPI webhook envelope must be a JSON object")
@@ -2824,6 +2920,18 @@ class WuzapiAdapter(WuzapiDirectStartMixin, WuzapiGroupMetadataMixin, ProviderAd
                             human_message, "interactiveResponseMessage"
                         ):
                             text = structured_content["title"]
+        preview = envelope.get("contact_center_ad_origin")
+        if (
+            not is_from_me
+            and not mutation_event_type
+            and attribution
+            and attribution[0].touchpoint_type in {"paid_ad_click", "paid_ad_signal"}
+            and isinstance(preview, dict)
+            and preview.get("source_key") == external_message_id
+        ):
+            creative = dict(attribution[0].creative)
+            creative.update(normalize_creative(preview.get("creative")))
+            attribution = (replace(attribution[0], creative=creative),)
         reply_to_external_id, reply_to = _reply_values(context)
         is_forwarded, forwarding_score = _forwarding_values(context)
         normalized_message_id = (

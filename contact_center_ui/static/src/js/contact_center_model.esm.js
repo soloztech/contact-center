@@ -61,6 +61,28 @@ const ATTRIBUTION_EVIDENCE_LEVELS = new Set([
     "derived",
 ]);
 const ATTRIBUTION_KEY_PATTERN = /^[a-z][a-z0-9_.-]{0,127}$/;
+const AD_ORIGIN_STATES = new Set(["pending", "ready", "unavailable"]);
+const AD_ORIGIN_SOURCES = new Set(["provider_snapshot", "marketing_catalog"]);
+const AD_ORIGIN_SOCIAL_HOSTS = new Set([
+    "instagram.com",
+    "www.instagram.com",
+    "m.instagram.com",
+    "facebook.com",
+    "www.facebook.com",
+    "m.facebook.com",
+    "fb.me",
+    "www.fb.me",
+]);
+const AD_ORIGIN_PUBLIC_QUERY_KEYS = new Set(["id", "story_fbid", "fbid", "v"]);
+const AD_ORIGIN_PRIVATE_PATHS = new Set([
+    "direct",
+    "accounts",
+    "messages",
+    "login",
+    "settings",
+    "dialog",
+    "adsmanager",
+]);
 const ODOO_DATETIME_PATTERN =
     /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?$/;
 const DEFAULT_MAX_MEDIA_BYTES = Object.freeze({
@@ -643,6 +665,98 @@ function attributionKey(value) {
     return ATTRIBUTION_KEY_PATTERN.test(candidate) ? candidate : null;
 }
 
+function unsafeAdOriginUrlCharacters(value) {
+    return (
+        value.includes("\\") ||
+        value.includes("#") ||
+        Array.from(value).some(
+            (character) =>
+                character.charCodeAt(0) <= 32 || character.charCodeAt(0) === 127
+        )
+    );
+}
+
+function privateAdOriginSourcePath(url) {
+    const firstSegment = decodeURIComponent(url.pathname)
+        .replace(/^\/+/, "")
+        .split("/")[0]
+        .toLowerCase();
+    return AD_ORIGIN_PRIVATE_PATHS.has(firstSegment);
+}
+
+export function safeAdOriginSourceUrl(value) {
+    if (
+        typeof value !== "string" ||
+        value.length > 2048 ||
+        unsafeAdOriginUrlCharacters(value)
+    ) {
+        return "";
+    }
+    try {
+        const url = new URL(value);
+        if (
+            url.protocol !== "https:" ||
+            !AD_ORIGIN_SOCIAL_HOSTS.has(url.hostname) ||
+            url.username ||
+            url.password ||
+            url.port ||
+            privateAdOriginSourcePath(url)
+        ) {
+            return "";
+        }
+        const seen = new Set();
+        for (const [key, content] of url.searchParams) {
+            if (
+                !AD_ORIGIN_PUBLIC_QUERY_KEYS.has(key) ||
+                !/^[A-Za-z0-9_./:-]{1,256}$/.test(content) ||
+                seen.has(key)
+            ) {
+                return "";
+            }
+            seen.add(key);
+        }
+        return url.href;
+    } catch (_error) {
+        return "";
+    }
+}
+
+export function normalizeAdOriginPreview(value) {
+    if (
+        !isPlainObject(value) ||
+        typeof value.public_ref !== "string" ||
+        !UUID_PATTERN.test(value.public_ref) ||
+        !AD_ORIGIN_STATES.has(value.state) ||
+        !AD_ORIGIN_SOURCES.has(value.presentation_source)
+    ) {
+        return null;
+    }
+    const publicRef = value.public_ref.toLowerCase();
+    const thumbnail = `/contact_center/attribution/${publicRef}/thumbnail`;
+    return {
+        public_ref: publicRef,
+        title: boundedText(value.title, 256),
+        body: boundedText(value.body, 2000),
+        source_url: safeAdOriginSourceUrl(value.source_url),
+        thumbnail_url:
+            value.state === "ready" && value.thumbnail_url === thumbnail
+                ? thumbnail
+                : "",
+        media_type: ["image", "video"].includes(value.media_type)
+            ? value.media_type
+            : "unknown",
+        state: value.state,
+        presentation_source: value.presentation_source,
+        observed_at: odooDateTime(value.observed_at) || "",
+        fetched_at: odooDateTime(value.fetched_at) || "",
+    };
+}
+
+function optionalAdOriginPreview(value) {
+    const preview = normalizeAdOriginPreview(value);
+    return preview ? {ad_origin_preview: preview} : {};
+}
+
 function normalizeAttributionItem(value) {
     if (!isPlainObject(value) || !UUID_PATTERN.test(value.public_ref || "")) {
         return null;
@@ -693,13 +807,15 @@ function normalizeAttributionItem(value) {
         ...boundedFields,
         show_ad_attribution: value.show_ad_attribution,
         occurred_at: occurredAt,
+        ...optionalAdOriginPreview(value.ad_origin_preview),
     };
 }
 
 /**
  * Fail-closed allow-list for the optional attribution UiDTO.
  *
- * Provider identifiers, URLs, hashes and extension objects are intentionally absent.
+ * Technical identifiers, URLs, hashes and extension objects are absent. The
+ * optional ad preview exposes only bounded text and validated public/local URLs.
  *
  * @param {Object} value server projection envelope
  * @returns {Object|null} bounded renderable projection, or null when malformed

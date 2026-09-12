@@ -908,8 +908,9 @@ class ContactCenterAccount(models.Model):
         help=(
             "Show the bounded attribution projection in the operator interface. "
             "Administrators can always view it, regardless of this setting. "
-            "Technical identifiers, source URLs and provider evidence remain "
-            "restricted to administrators."
+            "Ad titles, text and validated public ad links can be shown in previews. "
+            "Technical identifiers, technical source URLs and provider evidence "
+            "remain restricted to administrators."
         ),
     )
     conversation_delete_enabled = fields.Boolean(

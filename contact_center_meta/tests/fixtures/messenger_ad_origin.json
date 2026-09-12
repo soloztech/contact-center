@@ -1,0 +1,31 @@
+{
+  "object": "page",
+  "entry": [
+    {
+      "id": "100000000000001",
+      "time": 1789218000000,
+      "messaging": [
+        {
+          "sender": {"id": "900000000000020"},
+          "recipient": {"id": "100000000000001"},
+          "timestamp": 1789218000100,
+          "message": {
+            "mid": "m_synthetic_ad_origin",
+            "text": "Hello Can I get more info",
+            "referral": {
+              "ref": "synthetic-campaign-ref",
+              "source": "ADS",
+              "type": "OPEN_THREAD",
+              "ad_id": "synthetic-messenger-ad",
+              "ads_context_data": {
+                "ad_title": "Solicite um orçamento gratuito!",
+                "photo_url": "https://lookaside.fbsbx.com/synthetic-ad.jpg?token=synthetic-private",
+                "post_id": "synthetic-post"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

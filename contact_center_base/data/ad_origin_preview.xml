@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="channel_ad_origin_preview" model="queue.job.channel">
+        <field name="name">ad_preview</field>
+        <field name="parent_id" ref="queue_job_channel_contact_center" />
+    </record>
+    <record id="job_function_prepare_ad_preview" model="queue.job.function">
+        <field name="model_id" ref="model_contact_center_attribution_preview" />
+        <field name="method">_job_prepare_preview</field>
+        <field name="channel_id" ref="channel_ad_origin_preview" />
+        <field name="retry_pattern" eval="{1: 30, 2: 120, 3: 300}" />
+    </record>
+    <record id="cron_expire_ad_previews" model="ir.cron">
+        <field name="name">Contact Center: expire ad previews</field>
+        <field name="model_id" ref="model_contact_center_attribution_preview" />
+        <field name="state">code</field>
+        <field name="code">model._cron_expire()</field>
+        <field name="interval_number">1</field>
+        <field name="interval_type">hours</field>
+        <field name="numbercall">-1</field>
+        <field name="active" eval="True" />
+    </record>
+</odoo>

@@ -1,0 +1,37 @@
+{
+  "type": "Message",
+  "instanceName": "Synthetic ad preview fixture",
+  "userID": "synthetic-instance",
+  "event": {
+    "Info": {
+      "Chat": "100000000000001@lid",
+      "Sender": "100000000000001:7@lid",
+      "IsFromMe": false,
+      "IsGroup": false,
+      "AddressingMode": "lid",
+      "SenderAlt": "5511999999999@s.whatsapp.net",
+      "RecipientAlt": "5511888888888@s.whatsapp.net",
+      "ID": "AD-ORIGIN-SYNTHETIC-MESSAGE",
+      "Timestamp": "2026-09-12T10:00:00-03:00"
+    },
+    "Message": {
+      "extendedTextMessage": {
+        "text": "Hello Can I get more info",
+        "contextInfo": {
+          "externalAdReply": {
+            "sourceType": "ad",
+            "sourceApp": "Instagram",
+            "sourceID": "synthetic-source-ad",
+            "sourceURL": "https://www.instagram.com/p/SyntheticAd/",
+            "title": "Solicite um orçamento gratuito!",
+            "body": "Descrição sintética do anúncio, separada da mensagem.",
+            "mediaType": "image",
+            "thumbnailURL": "https://lookaside.fbsbx.com/synthetic-ad.jpg?token=synthetic-private",
+            "originalImageURL": "https://lookaside.fbsbx.com/synthetic-original.jpg?token=synthetic-private",
+            "thumbnail": "synthetic-inline-bytes-must-be-dropped"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,6 +1,9 @@
 import datetime
 import re
 
+from odoo.addons.contact_center_base.services.ad_origin_preview import (
+    normalize_creative,
+)
 from odoo.addons.contact_center_base.services.adapter import (
     AdapterError,
     UnsupportedEventError,
@@ -191,6 +194,11 @@ def _attribution_values(container, platform, is_from_me, source_field):
                 source_type="ad" if source in {"ad", "ads"} else source,
                 external_identifiers=tuple(identifiers),
                 entry_point=({"source": referral_type} if referral_type else {}),
+                creative=(
+                    normalize_creative(referral.get("contact_center_ad_origin"))
+                    if touchpoint_type == "paid_ad_click"
+                    else {}
+                ),
             ),
         )
     except DTOValidationError:

@@ -63,7 +63,13 @@ ATTRIBUTION_ENTRY_POINT_KEYS = {
     "conversion_source",
     "conversion_delay_seconds",
 }
-ATTRIBUTION_CREATIVE_KEYS = {"media_type"}
+ATTRIBUTION_CREATIVE_KEYS = {
+    "media_type",
+    "title",
+    "body",
+    "public_url",
+    "thumbnail_ref",
+}
 ATTRIBUTION_FLAG_KEYS = {
     "show_ad_attribution",
     "always_show_ad_attribution",
@@ -409,10 +415,25 @@ def _validate_attribution_entry_point(entry_point):
 
 
 def _validate_attribution_presentation(creative, flags):
-    _validate_attribution_mapping("creative", creative, ATTRIBUTION_CREATIVE_KEYS, 4096)
+    _validate_attribution_mapping(
+        "creative", creative, ATTRIBUTION_CREATIVE_KEYS, 16384
+    )
     _validate_attribution_mapping("flags", flags, ATTRIBUTION_FLAG_KEYS, 2048)
-    if creative and not isinstance(creative.get("media_type"), str):
+    if "media_type" in creative and not isinstance(creative["media_type"], str):
         raise DTOValidationError("attribution.creative.media_type must be a string")
+    from .ad_origin_preview import normalize_creative
+
+    if any(
+        not isinstance(creative[key], str)
+        for key in ("title", "body", "public_url", "thumbnail_ref")
+        if key in creative
+    ):
+        raise DTOValidationError("attribution.creative presentation must be strings")
+    if any(key in creative for key in ("title", "body", "public_url", "thumbnail_ref")):
+        if normalize_creative(creative) != {
+            key: val for key, val in creative.items() if val
+        }:
+            raise DTOValidationError("attribution.creative presentation is invalid")
     if any(not isinstance(value, bool) for value in flags.values()):
         raise DTOValidationError("attribution.flags values must be booleans")
 

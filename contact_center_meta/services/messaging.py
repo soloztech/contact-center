@@ -3,6 +3,10 @@ import json
 import re
 from urllib.parse import urlsplit
 
+from odoo.addons.contact_center_base.services.ad_origin_preview import (
+    normalize_creative,
+    thumbnail_url,
+)
 from odoo.addons.meta_webhook_base.services.sanitizer import MAX_WEBHOOK_ENTRIES
 
 from .contracts import MAX_MESSAGE_ATTACHMENTS, MAX_MESSAGING_ITEMS_PER_ENTRY
@@ -59,6 +63,53 @@ def _sanitize_party(value, field_name):
     return result
 
 
+def _referral_ad_origin(value):
+    """Read explicit Messenger/Instagram CTM fields, never the customer's text.
+
+    Optional wire fields are documented by RestFB's PostbackReferral.AdsContextData:
+    https://restfb.com/javadoc/src-html/com/restfb/types/webhook/messaging/PostbackReferral.AdsContextData.html
+    This is not the WhatsApp Cloud referral contract. Its body/source_url fields
+    are not inferred from ref, postback title, message text, or a signed CDN URL.
+    """
+    context = value.get("ads_context_data") if isinstance(value, dict) else None
+    if not isinstance(context, dict):
+        return {}, ""
+    photo = thumbnail_url(context.get("photo_url"))
+    video_thumbnail = thumbnail_url(context.get("video_url"))
+    creative = normalize_creative(
+        {
+            "title": context.get("ad_title"),
+            "media_type": "image" if photo else "video" if video_thumbnail else "",
+        }
+    )
+    return creative, photo or video_thumbnail
+
+
+def ad_origin_referral_candidate(item):
+    """Return only a direct current carrier's referral, with its exact path."""
+    if not isinstance(item, dict):
+        return None
+    for carrier in ("message", "postback"):
+        value = item.get(carrier)
+        if isinstance(value, dict):
+            if any(
+                value.get(flag) is True for flag in ("is_echo", "is_self", "is_deleted")
+            ):
+                return None
+            referral = value.get("referral")
+            path = (carrier, "referral")
+            break
+    else:
+        referral = item.get("referral")
+        path = ("referral",)
+    if not isinstance(referral, dict):
+        return None
+    creative, private_url = _referral_ad_origin(referral)
+    if not creative.get("title") and not private_url:
+        return None
+    return {"path": path, "creative": creative, "url": private_url}
+
+
 def _sanitize_referral(value, field_name):
     """Keep valid optional attribution fields without rejecting the message."""
 
@@ -85,6 +136,10 @@ def _sanitize_referral(value, field_name):
             ):
                 continue
             result[key] = sanitized
+    creative, _private_url = _referral_ad_origin(value)
+    if creative:
+        # Ignore any incoming lookalike marker and build our own bounded copy.
+        result["contact_center_ad_origin"] = creative
     return result
 
 
@@ -833,8 +888,21 @@ def _canonical_delivery_for_dedupe(value):
     return canonical
 
 
+def _without_ad_origin_preview(value):
+    """Presentation and ephemeral locator IDs never change event identity."""
+    if isinstance(value, dict):
+        return {
+            key: _without_ad_origin_preview(child)
+            for key, child in value.items()
+            if key != "contact_center_ad_origin"
+        }
+    if isinstance(value, list):
+        return [_without_ad_origin_preview(child) for child in value]
+    return value
+
+
 def atomic_dedupe_key(atomic_event, route):
-    item = atomic_event.get("messaging") or {}
+    item = _without_ad_origin_preview(atomic_event.get("messaging") or {})
     semantic = None
     message = item.get("message")
     if isinstance(message, dict) and message.get("mid"):

@@ -14,6 +14,7 @@ from ..services.adapter import (
     WUZAPI_LIFECYCLE_EVENT_STATES,
     WUZAPI_LIFECYCLE_EVENT_TYPES,
     WUZAPI_VERSION,
+    ad_origin_preview_candidate,
 )
 
 _logger = logging.getLogger(__name__)
@@ -151,6 +152,9 @@ def _sanitize_webhook_value(value, primary_media_key=None, depth=0):
         result = {}
         for key, item in value.items():
             normalized = _normalized_key(key)
+            if normalized == "contactcenteradorigin":
+                # Only server-generated preview references may enter the ledger.
+                continue
             if normalized in _DROP_WHOLE_KEYS:
                 continue
             if (
@@ -171,6 +175,14 @@ def _sanitize_webhook_value(value, primary_media_key=None, depth=0):
                 or key != primary_media_key[1]
             ):
                 continue
+            if normalized == "externaladreply" and isinstance(item, dict):
+                # These preview candidates are captured separately in a private
+                # vault; they are not regular message-media download locators.
+                item = {
+                    name: child
+                    for name, child in item.items()
+                    if _normalized_key(name) not in {"originalimageurl", "mediaurl"}
+                }
             sanitized = _sanitize_webhook_value(item, primary_media_key, depth + 1)
             if sanitized is not _DROP:
                 result[key] = sanitized
@@ -496,6 +508,31 @@ def _inbox_ledger_values(
     return values
 
 
+def _capture_ad_origin_preview(
+    connection, envelope, persisted_envelope, *, existing_inbox=None
+):
+    """Annotate sanitized evidence with bounded copy and a server-owned UUID."""
+    if existing_inbox:
+        return
+    candidate = ad_origin_preview_candidate(envelope)
+    if not candidate:
+        return
+    creative = dict(candidate["creative"])
+    if candidate["url"]:
+        reference = (
+            connection.env["contact.center.ad.preview.locator"]
+            .sudo()
+            ._register(connection, candidate["source_key"], candidate["url"])
+        )
+        if reference:
+            creative["thumbnail_ref"] = reference
+    if creative:
+        persisted_envelope["contact_center_ad_origin"] = {
+            "source_key": candidate["source_key"],
+            "creative": creative,
+        }
+
+
 def _conversation_ingress_response(connection, adapter, headers, body, envelope):
     response, block_reason = _locked_ingress_response(
         connection, adapter, headers, body
@@ -589,6 +626,12 @@ class WuzapiWebhookController(http.Controller):
             ("provider_connection_id", "=", connection.id),
             ("inbox_dedupe_key", "=", dedupe_key),
         ]
+        _capture_ad_origin_preview(
+            connection,
+            envelope,
+            persisted_envelope,
+            existing_inbox=inbox_model.search(domain, limit=1),
+        )
         values = _inbox_ledger_values(
             connection,
             envelope,

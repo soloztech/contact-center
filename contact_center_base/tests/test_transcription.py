@@ -90,6 +90,8 @@ class TestAudioTranscription(SavepointCase):
                 "conversation_ref": "transcription-" + str(uuid.uuid4()),
             }
         )
+        cls.group_binding = cls._additional_binding("group")
+        cls.other_binding = cls._additional_binding("other")
         cls.provider = cls.env["contact.center.transcription.provider"].create(
             {
                 "name": "Synthetic speech provider",
@@ -98,6 +100,24 @@ class TestAudioTranscription(SavepointCase):
                 "api_key": "fixture-key",
                 "language": "pt",
                 "prompt": "Motores de 220 volts.",
+            }
+        )
+
+    @classmethod
+    def _additional_binding(cls, conversation_type):
+        channel = cls.env["mail.channel"]._contact_center_create_channel(
+            account=cls.account,
+            name="Transcription " + conversation_type,
+            conversation_type=conversation_type,
+            partner_ids=(cls.agent | cls.supervisor).partner_id.ids,
+            guest_ids=[],
+        )
+        return cls.env["contact.center.channel.binding"].create(
+            {
+                "channel_id": channel.id,
+                "account_id": cls.account.id,
+                "conversation_type": conversation_type,
+                "conversation_ref": "transcription-" + str(uuid.uuid4()),
             }
         )
 
@@ -135,16 +155,26 @@ class TestAudioTranscription(SavepointCase):
         network_patch.start()
         self.addCleanup(network_patch.stop)
 
-    def _enable(self, mode="manual", provider=None):
+    def _enable(self, mode="manual", provider=None, group_mode="disabled"):
         self.account.write(
             {
                 "transcription_mode": mode,
+                "transcription_group_mode": group_mode,
                 "transcription_provider_id": (provider or self.provider).id,
             }
         )
 
-    def _media(self, *, kind="audio", direction="inbound", state="ready", duration=12):
-        message = self.channel._contact_center_post(
+    def _media(
+        self,
+        *,
+        kind="audio",
+        direction="inbound",
+        state="ready",
+        duration=12,
+        channel_binding=None,
+    ):
+        channel_binding = channel_binding or self.binding
+        message = channel_binding.channel_id._contact_center_post(
             origin="inbound",
             body="Synthetic audio fixture",
             message_type="comment",
@@ -155,7 +185,7 @@ class TestAudioTranscription(SavepointCase):
         binding = self.env["contact.center.message.binding"].create(
             {
                 "message_id": message.id,
-                "channel_binding_id": self.binding.id,
+                "channel_binding_id": channel_binding.id,
                 "provider_connection_id": self.connection.id,
                 "direction": direction,
                 "origin": "provider" if direction == "inbound" else "agent",
@@ -224,12 +254,189 @@ class TestAudioTranscription(SavepointCase):
 
     def test_default_disabled_prevents_automatic_and_manual_upload(self):
         self.assertEqual(self.account.transcription_mode, "disabled")
+        self.assertEqual(self.account.transcription_group_mode, "disabled")
         media = self._media()
         self.assertEqual(media.transcription_state, "idle")
         self.assertFalse(media.transcription_queue_job_uuid)
         with self.assertRaises(ValidationError):
             self._request(media)
         self.transcribe.assert_not_called()
+
+    def test_direct_and_group_mode_matrix_remains_independent(self):
+        modes = ("disabled", "manual", "automatic")
+        for direct_mode in modes:
+            for group_mode in modes:
+                with self.subTest(direct=direct_mode, group=group_mode):
+                    self._enable(direct_mode, group_mode=group_mode)
+                    for binding, mode in [
+                        (self.binding, direct_mode),
+                        (self.group_binding, group_mode),
+                    ]:
+                        media = self._media(channel_binding=binding)
+                        self.assertEqual(media._transcription_mode(), mode)
+                        self.assertEqual(
+                            media.transcription_state,
+                            "pending" if mode == "automatic" else "idle",
+                        )
+                        if mode == "disabled":
+                            self.assertFalse(
+                                media._transcription_descriptor()["can_request"]
+                            )
+                            with self.assertRaises(ValidationError):
+                                self._request(media)
+                        elif mode == "manual":
+                            self.assertTrue(
+                                media._transcription_descriptor()["can_request"]
+                            )
+                            self._request(media)
+                            self.assertEqual(
+                                media.transcription_requested_by_id, self.agent
+                            )
+                        self.assertEqual(bool(self._job(media)), mode != "disabled")
+        self.transcribe.assert_not_called()
+
+    def test_legacy_direct_setting_does_not_implicitly_enable_groups(self):
+        for mode in ("manual", "automatic"):
+            with self.subTest(mode=mode):
+                self.account.write(
+                    {
+                        "transcription_mode": mode,
+                        "transcription_provider_id": self.provider.id,
+                    }
+                )
+                self.assertEqual(self.account.transcription_mode, mode)
+                self.assertEqual(self.account.transcription_group_mode, "disabled")
+                group_audio = self._media(channel_binding=self.group_binding)
+                self.assertEqual(group_audio.transcription_state, "idle")
+                self.assertFalse(group_audio.transcription_queue_job_uuid)
+        self.transcribe.assert_not_called()
+
+    def test_group_only_mode_requires_provider(self):
+        with self.assertRaises(ValidationError), self.cr.savepoint():
+            self.account.write({"transcription_group_mode": "manual"})
+        self._enable("disabled", group_mode="manual")
+        self.assertEqual(self.account.transcription_mode, "disabled")
+        self.assertEqual(self.account.transcription_provider_id, self.provider)
+
+    def test_conversation_binding_controls_scope_despite_forged_context(self):
+        self._enable("automatic", group_mode="disabled")
+        media = self._media(channel_binding=self.group_binding)
+        forged = media.with_user(self.agent).with_context(
+            conversation_type="direct",
+            default_conversation_type="direct",
+            contact_center_transcription_scope="direct",
+        )
+        with self.assertRaises(ValidationError):
+            forged.action_request_transcription()
+        self.assertEqual(media.transcription_state, "idle")
+        self.transcribe.assert_not_called()
+
+    def test_other_and_unknown_conversation_types_are_disabled(self):
+        self._enable("automatic", group_mode="automatic")
+        media = self._media(channel_binding=self.other_binding)
+        self.assertEqual(media._transcription_mode(), "disabled")
+        self.assertEqual(media.transcription_state, "idle")
+        self.assertEqual(
+            self.account._transcription_mode_for_conversation("unknown"), "disabled"
+        )
+        with self.assertRaises(ValidationError):
+            self._request(media)
+        self.transcribe.assert_not_called()
+
+    def test_group_download_transition_uses_group_mode(self):
+        self._enable("disabled", group_mode="automatic")
+        media = self._media(channel_binding=self.group_binding, state="pending")
+        self.assertEqual(media.transcription_state, "idle")
+        media.write({"state": "ready"})
+        self.assertEqual(media.transcription_state, "pending")
+        self.assertFalse(media.transcription_requested_by_id)
+        self.transcribe.assert_not_called()
+
+    def test_disabling_group_mode_before_job_keeps_direct_job_eligible(self):
+        self._enable("automatic", group_mode="automatic")
+        direct = self._media()
+        group = self._media(channel_binding=self.group_binding)
+        self.account.write({"transcription_group_mode": "disabled"})
+        self.assertFalse(self._perform(group))
+        self.assertEqual(group.transcription_state, "skipped")
+        self.transcribe.assert_not_called()
+        self.assertTrue(self._perform(direct))
+        self.transcribe.assert_called_once()
+
+    def test_disabling_direct_mode_before_job_keeps_group_job_eligible(self):
+        self._enable("automatic", group_mode="automatic")
+        direct = self._media()
+        group = self._media(channel_binding=self.group_binding)
+        self.account.write({"transcription_mode": "disabled"})
+        self.assertFalse(self._perform(direct))
+        self.assertEqual(direct.transcription_state, "skipped")
+        self.transcribe.assert_not_called()
+        self.assertTrue(self._perform(group))
+        self.transcribe.assert_called_once()
+
+    def test_automatic_to_manual_skips_automatic_jobs_but_preserves_manual_requests(
+        self,
+    ):
+        self._enable("manual", group_mode="manual")
+        requested = self._media(channel_binding=self.group_binding)
+        self._request(requested)
+        self.account.write({"transcription_group_mode": "automatic"})
+        automatic = self._media(channel_binding=self.group_binding)
+        self.account.write({"transcription_group_mode": "manual"})
+        self.assertFalse(self._perform(automatic))
+        self.assertEqual(automatic.transcription_state, "skipped")
+        self.transcribe.assert_not_called()
+        self.assertTrue(self._perform(requested))
+        self.transcribe.assert_called_once()
+
+    def test_transcription_mode_is_per_inbox_with_shared_provider_configuration(self):
+        self._enable("automatic", group_mode="disabled")
+        second = self.env["contact.center.account"].create(
+            {
+                "name": "Another transcription inbox",
+                "company_id": self.account.company_id.id,
+                "platform": "whatsapp",
+                "transcription_mode": "disabled",
+                "transcription_group_mode": "manual",
+                "transcription_provider_id": self.provider.id,
+            }
+        )
+        second.write({"transcription_group_mode": "automatic"})
+        self.assertEqual(
+            self.account._transcription_mode_for_conversation("direct"), "automatic"
+        )
+        self.assertEqual(
+            self.account._transcription_mode_for_conversation("group"), "disabled"
+        )
+        self.assertEqual(
+            second._transcription_mode_for_conversation("direct"), "disabled"
+        )
+        self.assertEqual(
+            second._transcription_mode_for_conversation("group"), "automatic"
+        )
+        self.assertEqual(
+            second.transcription_provider_id, self.account.transcription_provider_id
+        )
+        self.assertEqual(self.provider.api_key, "fixture-key")
+
+    def test_group_mode_configuration_and_transcript_use_existing_permissions(self):
+        self._enable("disabled", group_mode="manual")
+        with self.assertRaises(AccessError):
+            self.account.with_user(self.supervisor).write(
+                {"transcription_group_mode": "automatic"}
+            )
+        with self.assertRaises(AccessError), self.cr.savepoint():
+            self.env["contact.center.account"].with_user(self.supervisor).with_context(
+                default_transcription_group_mode="automatic",
+                default_transcription_provider_id=self.provider.id,
+            ).create({"name": "Forbidden group defaults", "platform": "whatsapp"})
+        media = self._media(channel_binding=self.group_binding)
+        with self.assertRaises(AccessError):
+            self._api(self.outsider).request_transcription(media.id)
+        self._request(media)
+        self.assertTrue(self._perform(media))
+        with self.assertRaises(AccessError):
+            media.with_user(self.outsider).read(["transcription_text"])
 
     def test_manual_request_queues_without_io_and_is_idempotent(self):
         self._enable()

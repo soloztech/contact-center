@@ -1,5 +1,7 @@
 from psycopg2.errors import SerializationFailure
 
+# Keep independent feature extensions in their own source files.
+# pylint: disable=consider-merging-classes-inherited
 from odoo import _, api, fields, models
 from odoo.exceptions import AccessError, ValidationError
 
@@ -107,6 +109,13 @@ class ContactCenterMediaBinding(models.Model):
         self.ensure_one()
         return "contact_center:transcription:%s" % self.id
 
+    def _transcription_mode(self):
+        self.ensure_one()
+        media = self.sudo()
+        return media.account_id._transcription_mode_for_conversation(
+            media.message_binding_id.channel_binding_id.conversation_type
+        )
+
     def _transcription_eligible(self):
         self.ensure_one()
         media = self.sudo()
@@ -118,7 +127,7 @@ class ContactCenterMediaBinding(models.Model):
             and media.message_binding_id.direction == "inbound"
             and media.message_binding_id.message_state != "deleted"
             and media.account_id.active
-            and media.account_id.transcription_mode != "disabled"
+            and media._transcription_mode() != "disabled"
             and provider
             and provider.active
             and provider.company_id == media.company_id
@@ -175,7 +184,7 @@ class ContactCenterMediaBinding(models.Model):
         for media in self.sudo():
             if (
                 media.transcription_state == "idle"
-                and media.account_id.transcription_mode == "automatic"
+                and media._transcription_mode() == "automatic"
                 and media._transcription_eligible()
             ):
                 media._enqueue_transcription()
@@ -260,9 +269,16 @@ class ContactCenterMediaBinding(models.Model):
             return False
         if media.transcription_state != "pending":
             return media.transcription_state == "done"
-        if not media._transcription_eligible() or (
-            media.transcription_provider_id
-            != media.account_id.transcription_provider_id
+        if (
+            not media._transcription_eligible()
+            or (
+                media.transcription_provider_id
+                != media.account_id.transcription_provider_id
+            )
+            or (
+                media._transcription_mode() != "automatic"
+                and not media.transcription_requested_by_id
+            )
         ):
             return media._finish_transcription("skipped", error="unavailable")
         snapshot = media.transcription_config_json

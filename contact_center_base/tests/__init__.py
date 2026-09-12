@@ -1,5 +1,6 @@
 from . import (
     test_access_topology_concurrency,
+    test_ad_origin_preview,
     test_application_service_contract,
     test_attribution,
     test_auto_assignment,

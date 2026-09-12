@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<templates xml:space="preserve">
+    <t
+        t-name="contact_center_ui.AdOriginMessagePayload"
+        t-inherit="contact_center_ui.MessagePayload"
+        t-inherit-mode="extension"
+        owl="1"
+    >
+        <xpath expr="//p[@t-if='message.body_text']" position="after">
+            <MessageAdOriginPreviews message="message" />
+        </xpath>
+    </t>
+
+    <t
+        t-name="contact_center_ui.AdOriginAttributionTouchpoints"
+        t-inherit="contact_center_ui.AttributionTouchpoints"
+        t-inherit-mode="extension"
+        owl="1"
+    >
+        <xpath expr="//li/div/time" position="after">
+            <AdOriginPreview
+                t-if="item.ad_origin_preview"
+                preview="item.ad_origin_preview"
+            />
+        </xpath>
+    </t>
+
+    <t t-name="contact_center_ui.MessageAdOriginPreviews" owl="1">
+        <div t-if="previews.length" class="cc-ad-origin-previews">
+            <AdOriginPreview
+                t-foreach="previews"
+                t-as="preview"
+                t-key="preview.public_ref"
+                preview="preview"
+            />
+        </div>
+    </t>
+
+    <t t-name="contact_center_ui.AdOriginPreview" owl="1">
+        <article
+            t-if="preview"
+            class="cc-ad-origin-preview"
+            aria-label="Anúncio de origem"
+        >
+            <div class="cc-ad-origin-preview__heading">
+                <i class="fa fa-bullhorn" aria-hidden="true" />
+                <span>Anúncio de origem</span>
+            </div>
+            <div
+                t-if="showImage || preview.state === 'pending' || state.failedImageKey === imageKey"
+                class="cc-ad-origin-preview__media"
+            >
+                <DeferredImage
+                    t-if="showImage"
+                    t-key="imageKey"
+                    src="preview.thumbnail_url"
+                    alt="preview.title || 'Imagem do anúncio de origem'"
+                    width="640"
+                    height="360"
+                    priority="10"
+                    onLoadError="imageErrorHandler"
+                />
+                <span
+                    t-elif="preview.state === 'pending'"
+                    class="cc-ad-origin-preview__placeholder"
+                    role="status"
+                >Carregando imagem do anúncio…</span>
+                <span t-else="" class="cc-ad-origin-preview__placeholder">
+                    <i class="fa fa-picture-o" aria-hidden="true" />
+                    Imagem indisponível
+                </span>
+            </div>
+            <div class="cc-ad-origin-preview__copy">
+                <strong
+                    t-if="preview.title"
+                    class="cc-ad-origin-preview__title"
+                    t-esc="preview.title"
+                />
+                <p
+                    t-if="preview.body"
+                    class="cc-ad-origin-preview__body"
+                    t-esc="displayedBody"
+                />
+                <button
+                    t-if="canExpand"
+                    type="button"
+                    class="cc-ad-origin-preview__expand"
+                    t-att-aria-expanded="expanded ? 'true' : 'false'"
+                    t-on-click="toggleExpanded"
+                ><t t-if="expanded">Mostrar menos</t><t
+                        t-else=""
+                    >Mostrar mais</t></button>
+                <p
+                    t-if="!preview.title &amp;&amp; !preview.body &amp;&amp; !showImage &amp;&amp; preview.state !== 'pending'"
+                    class="cc-ad-origin-preview__unavailable"
+                >Prévia do anúncio indisponível.</p>
+                <a
+                    t-if="preview.source_url"
+                    class="cc-ad-origin-preview__link"
+                    t-att-href="preview.source_url"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    t-on-click="stopPropagation"
+                >
+                    <span t-esc="sourceLabel" />
+                    <i class="fa fa-external-link" aria-hidden="true" />
+                </a>
+                <small
+                    t-if="preview.presentation_source === 'marketing_catalog'"
+                    class="cc-ad-origin-preview__provenance"
+                >Prévia consultada posteriormente<t t-if="fetchedAt.label"> · <time
+                            t-att-datetime="fetchedAt.datetime"
+                            t-esc="fetchedAt.label"
+                        /></t></small>
+            </div>
+        </article>
+    </t>
+</templates>
