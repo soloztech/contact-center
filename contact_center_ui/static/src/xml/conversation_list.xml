@@ -101,6 +101,20 @@
                         t-att-title="filterSummary"
                         t-esc="filterSummary"
                     />
+                    <button
+                        t-if="ui.view === 'grouped'"
+                        type="button"
+                        class="cc-inbox-collapse-toggle"
+                        t-att-title="toggleAllInboxesLabel"
+                        t-att-aria-label="toggleAllInboxesLabel"
+                        t-att-aria-controls="inboxPanelsIds"
+                        t-att-aria-expanded="allInboxesCollapsed ? 'false' : 'true'"
+                        t-att-disabled="!conversationGroups.length"
+                        t-on-click="toggleAllInboxes"
+                    ><i
+                            t-attf-class="fa #{allInboxesCollapsed ? 'fa-angle-double-down' : 'fa-angle-double-up'}"
+                            aria-hidden="true"
+                        /></button>
                     <div
                         class="cc-list-view-switch"
                         role="group"
@@ -791,9 +805,13 @@
                         <t t-if="preference.pinned">Desafixar conversa</t>
                         <t t-else="">Fixar conversa</t>
                     </DropdownItem>
-                    <DropdownItem onSelected="() => this.selectAction('unread')">
-                        <i class="fa fa-envelope" aria-hidden="true" />
-                        Marcar como não lida
+                    <DropdownItem onSelected="() => this.selectAction('read_state')">
+                        <i
+                        t-att-class="unread ? 'fa fa-envelope-open-o' : 'fa fa-envelope'"
+                        aria-hidden="true"
+                    />
+                        <t t-if="unread">Marcar como lida</t>
+                        <t t-else="">Marcar como não lida</t>
                     </DropdownItem>
                     <DropdownItem
                     t-if="can('ignore_conversation')"

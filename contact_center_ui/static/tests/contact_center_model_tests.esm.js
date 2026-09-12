@@ -456,6 +456,396 @@ QUnit.module("contact_center_ui > conversation lifecycle", (hooks) => {
     );
 
     QUnit.test(
+        "mark read uses the clicked preview and preserves new unread work and other selections",
+        async (assert) => {
+            const store = lifecycleStore();
+            Object.assign(store.loadedConversation(10), {
+                unread_count: 3,
+                first_unread_message_id: 90,
+                last_message: {message_id: 100},
+            });
+            Object.assign(store.state, {
+                selectedChannelId: 20,
+                timelineChannelId: 20,
+                timelineFirstUnreadMessageId: 200,
+                messages: [{message_id: 200}],
+            });
+            const calls = [];
+            let finish = null;
+            store.call = async (method, args) => {
+                calls.push([method, args]);
+                if (method === "mark_seen") {
+                    return new Promise((resolve) => {
+                        finish = resolve;
+                    });
+                }
+                return {
+                    schema_version: 1,
+                    item: {
+                        ...store.loadedConversation(10),
+                        unread_count: 1,
+                        first_unread_message_id: 101,
+                    },
+                };
+            };
+            store.refreshLoadedConversations = async (options) => {
+                calls.push(["refresh", options]);
+                return true;
+            };
+            const reading = store.markConversationRead(10);
+            await Promise.resolve();
+            store.loadedConversation(10).last_message = {message_id: 101};
+            assert.strictEqual(
+                store.loadedConversation(10).unread_count,
+                3,
+                "no optimistic clear"
+            );
+            finish({channel_id: 10, message_id: 100});
+            assert.ok(await reading);
+            assert.deepEqual(calls, [
+                ["mark_seen", [10, 100]],
+                ["get_conversation", [10]],
+                ["refresh", {silent: true}],
+            ]);
+            assert.strictEqual(store.loadedConversation(10).unread_count, 1);
+            assert.strictEqual(store.state.selectedChannelId, 20);
+            assert.strictEqual(store.state.timelineFirstUnreadMessageId, 200);
+            assert.deepEqual(store.state.messages, [{message_id: 200}]);
+            assert.strictEqual(store.suspendedSeenChannels.size, 0);
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "explicit read drains viewport writes and serializes opposite commands",
+        async (assert) => {
+            const store = lifecycleStore();
+            Object.assign(store.selectedConversation, {
+                unread_count: 2,
+                last_message: {message_id: 100},
+            });
+            store.state.timelineFirstUnreadMessageId = 90;
+            let finish = null;
+            const calls = [];
+            store.call = async (method, args) => {
+                calls.push([method, args]);
+                if (method === "mark_seen" && args[1] === 90) {
+                    return new Promise((resolve) => {
+                        finish = resolve;
+                    });
+                }
+                if (method === "mark_seen") {
+                    return {channel_id: 10, message_id: 100};
+                }
+                return {
+                    schema_version: 1,
+                    item: {
+                        ...store.selectedConversation,
+                        unread_count: 0,
+                        first_unread_message_id: false,
+                    },
+                };
+            };
+            store.refreshLoadedConversations = async () => true;
+            const seen = store.markSeen(90);
+            const reading = store.markConversationRead(10);
+            await Promise.resolve();
+            assert.deepEqual(calls, [["mark_seen", [10, 90]]]);
+            assert.notOk(await store.markConversationUnread(10));
+            assert.notOk(await store.markConversationRead(10));
+            assert.notOk(await store.markSeen(100));
+            finish({channel_id: 10, message_id: 90});
+            await seen;
+            assert.ok(await reading);
+            assert.deepEqual(calls, [
+                ["mark_seen", [10, 90]],
+                ["mark_seen", [10, 100]],
+                ["get_conversation", [10]],
+            ]);
+            assert.strictEqual(store.selectedConversation.unread_count, 0);
+            assert.strictEqual(store.state.selectedChannelId, 10);
+            assert.notOk(store.state.timelineFirstUnreadMessageId);
+            assert.strictEqual(store.pendingSeenRequests.size, 0);
+            assert.strictEqual(store.suspendedSeenChannels.size, 0);
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "read failures and unconfirmed cursors never clear the personal unread counter",
+        async (assert) => {
+            for (const failure of [
+                "missing_cursor",
+                "invalid_cursor",
+                "rejected",
+                "wrong_receipt",
+                "refresh_error",
+                "wrong_channel",
+            ]) {
+                const store = lifecycleStore();
+                Object.assign(store.selectedConversation, {
+                    unread_count: 2,
+                    last_message:
+                        failure === "missing_cursor"
+                            ? false
+                            : {message_id: failure === "invalid_cursor" ? "100" : 100},
+                });
+                let writes = 0;
+                let refreshes = 0;
+                store.call = async (method) => {
+                    if (method === "mark_seen") {
+                        writes++;
+                        if (failure === "rejected") {
+                            throw new Error("Unavailable");
+                        }
+                        return {
+                            channel_id: 10,
+                            message_id: failure === "wrong_receipt" ? 101 : 100,
+                        };
+                    }
+                    if (failure === "refresh_error") {
+                        throw new Error("Unavailable");
+                    }
+                    return {
+                        schema_version: 1,
+                        item: {
+                            ...store.selectedConversation,
+                            channel_id: 20,
+                            unread_count: 0,
+                        },
+                    };
+                };
+                store.refreshLoadedConversations = async () => {
+                    refreshes++;
+                    return true;
+                };
+                assert.notOk(await store.markConversationRead(10), failure);
+                assert.strictEqual(store.selectedConversation.unread_count, 2, failure);
+                assert.strictEqual(store.state.selectedChannelId, 10, failure);
+                assert.strictEqual(store.suspendedSeenChannels.size, 0, failure);
+                assert.strictEqual(writes, failure.endsWith("cursor") ? 0 : 1, failure);
+                assert.strictEqual(refreshes, 0, failure);
+                store.destroy();
+            }
+        }
+    );
+
+    QUnit.test(
+        "pending read refresh cannot reinsert removed rows or change another timeline",
+        async (assert) => {
+            for (const change of ["filters", "deleted", "destroyed"]) {
+                const store = lifecycleStore();
+                Object.assign(store.selectedConversation, {
+                    unread_count: 2,
+                    last_message: {message_id: 100},
+                });
+                const response = {
+                    schema_version: 1,
+                    item: {...store.selectedConversation, unread_count: 0},
+                };
+                let finish = null;
+                let ready = null;
+                const requested = new Promise((resolve) => {
+                    ready = resolve;
+                });
+                store.call = async (method) => {
+                    if (method === "mark_seen") {
+                        return {channel_id: 10, message_id: 100};
+                    }
+                    ready();
+                    return new Promise((resolve) => {
+                        finish = resolve;
+                    });
+                };
+                let refreshes = 0;
+                store.refreshLoadedConversations = async () => {
+                    refreshes++;
+                    return true;
+                };
+                const reading = store.markConversationRead(10);
+                await requested;
+                store.state.selectedChannelId = 20;
+                store.state.timelineChannelId = 20;
+                store.state.messages = [{message_id: 200}];
+                store.state.conversations = store.state.conversations.filter(
+                    (item) => item.channel_id !== 10
+                );
+                if (change === "filters") {
+                    store.state.filters.query = "Other customer";
+                }
+                if (change === "deleted") {
+                    store.deletedConversationIds.add(10);
+                }
+                if (change === "destroyed") {
+                    store.destroy();
+                }
+                finish(response);
+                assert.strictEqual(await reading, change === "filters", change);
+                assert.notOk(store.loadedConversation(10), change);
+                assert.strictEqual(store.state.selectedChannelId, 20, change);
+                assert.deepEqual(store.state.messages, [{message_id: 200}], change);
+                assert.strictEqual(refreshes, change === "filters" ? 1 : 0, change);
+                assert.strictEqual(store.suspendedSeenChannels.size, 0, change);
+                if (change !== "destroyed") {
+                    store.destroy();
+                }
+            }
+        }
+    );
+
+    QUnit.test(
+        "explicit read reapplies the Unread filter without selecting another row",
+        async (assert) => {
+            const store = lifecycleStore();
+            Object.assign(store.loadedConversation(10), {
+                unread_count: 2,
+                last_message: {message_id: 100},
+            });
+            Object.assign(store.loadedConversation(20), {
+                unread_count: 1,
+                last_message: {message_id: 200},
+            });
+            Object.assign(store.state, {
+                selectedChannelId: 20,
+                timelineChannelId: 20,
+                messages: [{message_id: 200}],
+            });
+            store.state.filters.unreadOnly = true;
+            const calls = [];
+            store.call = async (method, args, kwargs) => {
+                calls.push(method);
+                if (method === "mark_seen") {
+                    return {channel_id: 10, message_id: 100};
+                }
+                if (method === "get_conversation") {
+                    return {
+                        schema_version: 1,
+                        item: {...store.loadedConversation(10), unread_count: 0},
+                    };
+                }
+                assert.strictEqual(method, "list_conversations");
+                assert.ok(kwargs.filters.unread_only);
+                return {
+                    schema_version: 1,
+                    items: [store.loadedConversation(20)],
+                    has_more: false,
+                    next_cursor: false,
+                    total: 1,
+                };
+            };
+            assert.ok(await store.markConversationRead(10));
+            assert.deepEqual(calls, [
+                "mark_seen",
+                "get_conversation",
+                "list_conversations",
+            ]);
+            assert.notOk(store.loadedConversation(10));
+            assert.strictEqual(store.state.conversationTotal, 1);
+            assert.strictEqual(store.state.selectedChannelId, 20);
+            assert.deepEqual(store.state.messages, [{message_id: 200}]);
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "mark read removes a filtered row beyond the bounded refresh window",
+        async (assert) => {
+            const store = lifecycleStore();
+            const date = "2026-09-12 10:00:00";
+            const rows = Array.from({length: 230}, (_item, index) =>
+                openConversation({
+                    channel_id: 230 - index,
+                    unread_count: 1,
+                    last_activity_at: date,
+                    last_message: {message_id: (230 - index) * 10},
+                })
+            );
+            Object.assign(store.state, {
+                conversations: rows.slice(),
+                selectedChannelId: 20,
+                timelineChannelId: 20,
+                messages: [{message_id: 200}],
+                conversationsHaveMore: true,
+                nextConversationCursor: activityConversationCursor(1, date),
+            });
+            store.state.filters.unreadOnly = true;
+            let pages = 0;
+            store.call = async (method, args, kwargs) => {
+                if (method === "mark_seen") {
+                    return {channel_id: 10, message_id: 100};
+                }
+                if (method === "get_conversation") {
+                    return {
+                        schema_version: 1,
+                        item: {...store.loadedConversation(10), unread_count: 0},
+                    };
+                }
+                assert.strictEqual(method, "list_conversations");
+                assert.ok(kwargs.filters.unread_only);
+                const items = rows.slice(pages * 100, (pages + 1) * 100);
+                pages++;
+                return {
+                    schema_version: 1,
+                    items,
+                    has_more: true,
+                    next_cursor: activityConversationCursor(
+                        items[items.length - 1].channel_id,
+                        date
+                    ),
+                    total: 229,
+                };
+            };
+            assert.ok(await store.markConversationRead(10));
+            assert.strictEqual(pages, 2, "refresh stays bounded to 200 rows");
+            assert.notOk(
+                store.loadedConversation(10),
+                "read tail row leaves the Unread filter"
+            );
+            assert.ok(
+                store.loadedConversation(1),
+                "the rest of the loaded tail stays available"
+            );
+            assert.strictEqual(store.state.conversations.length, 229);
+            assert.strictEqual(store.state.selectedChannelId, 20);
+            assert.deepEqual(store.state.messages, [{message_id: 200}]);
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "read menu command uses the current row state at the click",
+        async (assert) => {
+            const calls = [];
+            const row = openConversation({channel_id: 10, unread_count: 2});
+            const list = {
+                state: {conversations: [row]},
+                ui: {pendingConversationIds: {}},
+                store: {
+                    markConversationRead: async (id) => calls.push(["read", id]),
+                    markConversationUnread: async (id) => calls.push(["unread", id]),
+                },
+            };
+            const run = () =>
+                ConversationList.prototype.runConversationAction.call(
+                    list,
+                    10,
+                    "read_state"
+                );
+            await run();
+            row.unread_count = 0;
+            await run();
+            row.unread_count = 5;
+            await run();
+            assert.deepEqual(calls, [
+                ["read", 10],
+                ["unread", 10],
+                ["read", 10],
+            ]);
+            assert.deepEqual(list.ui.pendingConversationIds, {});
+        }
+    );
+
+    QUnit.test(
         "conversation confirmations cancel safely and recheck permissions on confirm",
         async (assert) => {
             const store = lifecycleStore();
@@ -5466,6 +5856,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 openConversation({
                     channel_id: 10,
                     name: "Ana",
+                    unread_count: 2,
                     account: {id: 1, name: "Caixa", platform: "whatsapp"},
                     preference: {pinned: false, muted: false},
                 }),
@@ -5482,6 +5873,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             store.selectConversation = (id) => calls.push(["select", id]);
             store.toggleConversationPinned = async (id) => calls.push(["pinned", id]);
             store.toggleConversationMuted = async (id) => calls.push(["muted", id]);
+            store.markConversationRead = async (id) => calls.push(["read", id]);
             store.markConversationUnread = async (id) => calls.push(["unread", id]);
             store.setConversationState = async (state, id) => calls.push([state, id]);
             try {
@@ -5500,7 +5892,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                                 "Arquivar conversa",
                                 "Silenciar conversa",
                                 "Fixar conversa",
-                                "Marcar como não lida",
+                                "Marcar como lida",
                             ],
                         ],
                         [
@@ -5538,7 +5930,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                     ["archived", 10],
                     ["muted", 10],
                     ["pinned", 10],
-                    ["unread", 10],
+                    ["read", 10],
                     ["open", 20],
                     ["muted", 20],
                     ["pinned", 20],
@@ -5547,7 +5939,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 assert.deepEqual(calls, [...expected, ...expected]);
                 assert.notOk(
                     store.state.selectedChannelId,
-                    "menus never select or read a conversation"
+                    "menu commands never change the selected conversation"
                 );
             } finally {
                 store.destroy();

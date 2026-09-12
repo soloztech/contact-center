@@ -78,6 +78,132 @@ QUnit.module("contact_center_ui > sidebar filter flyout", (hooks) => {
     });
 
     QUnit.test(
+        "bulk inbox disclosure includes empty boxes and follows mixed and flat views",
+        async (assert) => {
+            const store = filterStore();
+            store.state.conversations = [
+                {
+                    channel_id: 20,
+                    state: "open",
+                    account: {id: 1, name: "Comercial"},
+                },
+            ];
+            try {
+                const {target} = await mountList(store);
+                const bulk = () => target.querySelector(".cc-inbox-collapse-toggle");
+                assert.strictEqual(bulk().title, "Recolher todas as caixas");
+                assert.strictEqual(
+                    bulk().getAttribute("aria-controls"),
+                    "cc-inbox-group-2 cc-inbox-group-1"
+                );
+                await click(bulk());
+                assert.strictEqual(bulk().title, "Expandir todas as caixas");
+                assert.strictEqual(bulk().getAttribute("aria-expanded"), "false");
+                assert.ok(bulk().querySelector(".fa-angle-double-down"));
+                assert.strictEqual(
+                    target.querySelectorAll(".cc-inbox-group__conversations[hidden]")
+                        .length,
+                    2
+                );
+                const emptyHeader = target.querySelector(
+                    "[aria-controls='cc-inbox-group-2']"
+                );
+                await click(emptyHeader);
+                assert.strictEqual(emptyHeader.getAttribute("aria-expanded"), "true");
+                assert.strictEqual(
+                    bulk().title,
+                    "Recolher todas as caixas",
+                    "a mixed state offers collapse"
+                );
+                await click(bulk());
+                assert.strictEqual(
+                    target.querySelectorAll(".cc-inbox-group__conversations[hidden]")
+                        .length,
+                    2
+                );
+                await click(target, "[aria-label='Lista sem agrupamento']");
+                assert.notOk(bulk(), "the flat list has no box disclosure button");
+                await click(target, "[aria-label='Agrupar por caixa']");
+                assert.strictEqual(bulk().title, "Expandir todas as caixas");
+                await click(bulk());
+                assert.strictEqual(
+                    target.querySelectorAll(".cc-inbox-group__conversations[hidden]")
+                        .length,
+                    0
+                );
+                assert.strictEqual(bulk().getAttribute("aria-expanded"), "true");
+                store.state.bootstrap.accounts = [];
+                store.state.conversations = [];
+                await nextTick();
+                assert.ok(
+                    bulk().disabled,
+                    "the control is disabled when there are no boxes"
+                );
+            } finally {
+                store.destroy();
+            }
+        }
+    );
+
+    QUnit.test(
+        "bulk inbox disclosure preserves hidden filters and survives updates and paging",
+        async (assert) => {
+            const store = filterStore();
+            const conversation = {
+                channel_id: 20,
+                state: "open",
+                account: {id: 1, name: "Comercial"},
+            };
+            store.state.conversations = [conversation];
+            try {
+                const {list, target} = await mountList(store);
+                await click(target, ".cc-inbox-collapse-toggle");
+                store.state.filters.accountId = 1;
+                await nextTick();
+                await click(target, ".cc-inbox-collapse-toggle");
+                assert.notOk(list.inboxCollapsed("inbox:1"));
+                assert.ok(
+                    list.inboxCollapsed("inbox:2"),
+                    "the hidden box keeps its previous state"
+                );
+                store.state.filters.accountId = false;
+                await nextTick();
+                store.replaceConversation({...conversation, unread_count: 3});
+                store.applyConversationPage(
+                    {items: [{...conversation, channel_id: 21}]},
+                    {reset: false, silent: true}
+                );
+                await nextTick();
+                assert.notOk(list.inboxCollapsed("inbox:1"));
+                assert.ok(list.inboxCollapsed("inbox:2"));
+                assert.strictEqual(
+                    target.querySelectorAll(".cc-inbox-group__conversations[hidden]")
+                        .length,
+                    1
+                );
+                await click(target, ".cc-inbox-collapse-toggle");
+                store.replaceConversation({...conversation, unread_count: 4});
+                store.applyConversationPage(
+                    {items: [{...conversation, channel_id: 22}]},
+                    {reset: false, silent: true}
+                );
+                await nextTick();
+                assert.ok(
+                    list.allInboxesCollapsed,
+                    "new rows and unread changes never reopen boxes"
+                );
+                assert.strictEqual(
+                    target.querySelectorAll(".cc-inbox-group__conversations[hidden]")
+                        .length,
+                    2
+                );
+            } finally {
+                store.destroy();
+            }
+        }
+    );
+
+    QUnit.test(
         "grouped rows omit the repeated inbox badge and keep conversation tags in both views",
         async (assert) => {
             const store = filterStore();

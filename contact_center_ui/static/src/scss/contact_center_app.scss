@@ -915,6 +915,34 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
     }
 }
 
+.cc-inbox-collapse-toggle {
+    display: grid;
+    width: 34px;
+    height: 34px;
+    flex: 0 0 auto;
+    padding: 0;
+    place-items: center;
+    border: 1px solid var(--cc-line);
+    border-radius: 5px;
+    color: var(--cc-steel);
+    background: #fff;
+    font-size: 16px;
+
+    &:hover:not(:disabled) {
+        color: var(--cc-cobalt-deep);
+        background: var(--cc-cobalt-soft);
+    }
+
+    &:focus-visible {
+        outline: 2px solid var(--cc-cobalt-deep);
+        outline-offset: 2px;
+    }
+
+    &:disabled {
+        opacity: 0.5;
+    }
+}
+
 .cc-inbox-filter-toggle {
     display: inline-flex;
     min-height: 34px;
@@ -6186,6 +6214,7 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
         display: grid;
     }
 
+    .cc-inbox-collapse-toggle,
     .cc-connection-health__trigger,
     .cc-list-view-switch button {
         width: 2.75rem;

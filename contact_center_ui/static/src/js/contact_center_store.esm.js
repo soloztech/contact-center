@@ -3953,6 +3953,115 @@ export class ContactCenterStore {
         }
     }
 
+    applyConversationReadSnapshot(payload, channelId, filters) {
+        validateEnvelope(payload);
+        if (
+            !isRenderableConversation(payload.item) ||
+            payload.item.channel_id !== channelId ||
+            !Number.isSafeInteger(payload.item.unread_count) ||
+            payload.item.unread_count < 0
+        ) {
+            throw new TypeError("O servidor não confirmou o estado de leitura.");
+        }
+        if (
+            filters === JSON.stringify(this.conversationFilters()) &&
+            this.loadedConversation(channelId)
+        ) {
+            this.replaceConversation(payload.item);
+            if (
+                this.state.filters.unreadOnly &&
+                payload.item.unread_count === 0 &&
+                channelId !== this.state.selectedChannelId
+            ) {
+                // A bounded refresh retains the loaded tail beyond 200 rows.
+                // Remove the acknowledged row there too, while preserving the
+                // currently open conversation like other silent list updates.
+                this.state.conversations = this.state.conversations.filter(
+                    (item) => item.channel_id !== channelId
+                );
+            }
+            this.listRequest += 1;
+            this.state.listPhase = "ready";
+            if (
+                channelId === this.state.timelineChannelId &&
+                channelId === this.state.selectedChannelId
+            ) {
+                this.state.timelineFirstUnreadMessageId =
+                    payload.item.first_unread_message_id || false;
+            }
+        }
+    }
+
+    async markConversationRead(channelId) {
+        const conversation = this.loadedConversation(channelId);
+        if (
+            !conversation ||
+            this.destroyed ||
+            this.suspendedSeenChannels.has(channelId)
+        ) {
+            return false;
+        }
+        // The explicit row command acknowledges the server-provided preview
+        // visible at the click, never an unseen message arriving during the RPC.
+        const messageId =
+            conversation.last_message && conversation.last_message.message_id;
+        if (!Number.isSafeInteger(messageId) || messageId <= 0) {
+            this.notify("Atualize a lista de conversas e tente novamente.", {
+                type: "warning",
+                title: "Última mensagem indisponível",
+            });
+            return false;
+        }
+        const filters = JSON.stringify(this.conversationFilters());
+        const current = () =>
+            !this.destroyed && !this.deletedConversationIds.has(channelId);
+        this.suspendedSeenChannels.add(channelId);
+        if (channelId === this.state.selectedChannelId) {
+            this.cancelSeenRetry();
+        }
+        try {
+            await Promise.allSettled(
+                [...(this.pendingSeenRequests.get(channelId) || [])].map(
+                    (request) => request.promise
+                )
+            );
+            if (!current()) {
+                return false;
+            }
+            const seen = await this.call("mark_seen", [channelId, messageId]);
+            if (
+                !seen ||
+                seen.channel_id !== channelId ||
+                seen.message_id !== messageId
+            ) {
+                throw new TypeError("O servidor não confirmou a leitura da mensagem.");
+            }
+            if (!current()) {
+                return false;
+            }
+            const payload = await this.call("get_conversation", [channelId]);
+            if (!current()) {
+                return false;
+            }
+            this.applyConversationReadSnapshot(payload, channelId, filters);
+            // Refresh the current filters (including Unread) and totals instead
+            // of blindly zeroing a counter that may already contain new work.
+            await this.refreshLoadedConversations({silent: true});
+            return true;
+        } catch (error) {
+            if (current()) {
+                this.scheduleSynchronization(false, false);
+                this.notify(errorMessage(error), {
+                    type: "danger",
+                    title: "Não foi possível confirmar a leitura",
+                });
+            }
+            return false;
+        } finally {
+            this.suspendedSeenChannels.delete(channelId);
+        }
+    }
+
     async markConversationUnread(channelId) {
         if (
             !this.loadedConversation(channelId) ||

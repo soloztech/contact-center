@@ -207,6 +207,11 @@ export class ConversationMenu extends Component {
         return conversationPreference(this.props.conversation);
     }
 
+    get unread() {
+        const count = this.props.conversation.unread_count;
+        return Number.isSafeInteger(count) && count > 0;
+    }
+
     can(action) {
         const capabilities = this.props.conversation.capabilities || {};
         return capabilities[action] === true;
@@ -927,6 +932,35 @@ export class ConversationList extends Component {
         return this.ui.collapsedInboxes[key] === true;
     }
 
+    get allInboxesCollapsed() {
+        const groups = this.conversationGroups;
+        return (
+            groups.length > 0 && groups.every((group) => this.inboxCollapsed(group.key))
+        );
+    }
+
+    get toggleAllInboxesLabel() {
+        return this.allInboxesCollapsed
+            ? "Expandir todas as caixas"
+            : "Recolher todas as caixas";
+    }
+
+    get inboxPanelsIds() {
+        return this.conversationGroups
+            .map((group) => this.inboxPanelId(group))
+            .join(" ");
+    }
+
+    toggleAllInboxes() {
+        if (this.ui.view !== "grouped") {
+            return;
+        }
+        const collapsed = !this.allInboxesCollapsed;
+        for (const group of this.conversationGroups) {
+            this.ui.collapsedInboxes[group.key] = collapsed;
+        }
+    }
+
     toggleInbox(key) {
         if (typeof key === "string" && key.startsWith("inbox:")) {
             this.ui.collapsedInboxes[key] = !this.inboxCollapsed(key);
@@ -965,9 +999,15 @@ export class ConversationList extends Component {
         if (
             !conversation ||
             this.ui.pendingConversationIds[channelId] ||
-            !["pinned", "muted", "archived", "unread", "ignored", "delete"].includes(
-                action
-            )
+            ![
+                "pinned",
+                "muted",
+                "archived",
+                "read_state",
+                "unread",
+                "ignored",
+                "delete",
+            ].includes(action)
         ) {
             return false;
         }
@@ -982,7 +1022,14 @@ export class ConversationList extends Component {
             if (action === "muted") {
                 return await this.store.toggleConversationMuted(channelId);
             }
-            if (action === "unread") {
+            if (
+                action === "read_state" &&
+                Number.isSafeInteger(conversation.unread_count) &&
+                conversation.unread_count > 0
+            ) {
+                return await this.store.markConversationRead(channelId);
+            }
+            if (action === "unread" || action === "read_state") {
                 return await this.store.markConversationUnread(channelId);
             }
             return await this.store.setConversationState(
