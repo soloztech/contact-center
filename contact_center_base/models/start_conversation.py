@@ -1,5 +1,9 @@
 """Prepare one authorized direct conversation without sending a message."""
 
+# Direct-conversation admission is a separate UI API concern from retention and
+# its policy lifecycle; the Odoo registry composes these functional fragments.
+# pylint: disable=consider-merging-classes-inherited
+
 import json
 
 from odoo import _, api, models

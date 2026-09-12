@@ -4,6 +4,10 @@ The account/identity/channel fence is shared with admission and policy changes.
 Only owned chat content is removed; the conversation and business records survive.
 """
 
+# Keep retention policy, projection fields and UI operations in one functional
+# lane; Odoo composes these fragments with the independently owned group models.
+# pylint: disable=consider-merging-classes-inherited
+
 import base64
 import hashlib
 import hmac
