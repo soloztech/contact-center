@@ -648,3 +648,40 @@ class TestHistoryRetention(SavepointCase):
         )
         job = self.env["queue.job"].search([("uuid", "=", queued.uuid)])
         self.assertEqual(job.state, "pending")
+
+    def test_external_reference_preparation_waits_for_quotes_and_precedes_guard(self):
+        self._enable()
+        message, _projection = self._message()
+        order = []
+        with mock.patch.object(
+            type(self.service),
+            "_retention_remove_copied_quotes",
+            side_effect=lambda *args: order.append("quotes") or True,
+        ), mock.patch.object(
+            type(self.service),
+            "_retention_prepare_external_references",
+            side_effect=lambda *args: order.append("external") or False,
+        ), mock.patch.object(
+            type(self.service),
+            "_retention_guard_optional_consumers",
+        ) as guard:
+            self.assertTrue(self._purge()["staging"])
+        self.assertEqual(order, ["quotes", "external"])
+        guard.assert_not_called()
+        self.assertTrue(message.exists())
+        self.assertFalse(self.binding.retention_expired_before)
+
+    def test_quote_staging_does_not_detach_external_business_references(self):
+        self._enable()
+        message, _projection = self._message()
+        with mock.patch.object(
+            type(self.service),
+            "_retention_remove_copied_quotes",
+            return_value=False,
+        ), mock.patch.object(
+            type(self.service),
+            "_retention_prepare_external_references",
+        ) as prepare:
+            self.assertTrue(self._purge()["staging"])
+        prepare.assert_not_called()
+        self.assertTrue(message.exists())

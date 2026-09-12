@@ -22,11 +22,18 @@ class ContactCenterRetentionDependencies(models.AbstractModel):
         )
         if result is False:
             return False
-        self._retention_guard_optional_consumers(messages, message_bindings)
         if not self._retention_remove_copied_quotes(
             binding, message_bindings, inbox_events
         ):
             return False
+        if (
+            self._retention_prepare_external_references(
+                binding, messages, message_bindings, inbox_events
+            )
+            is False
+        ):
+            return False
+        self._retention_guard_optional_consumers(messages, message_bindings)
         touchpoints = (
             self.env["contact.center.attribution.touchpoint"]
             .sudo()
@@ -47,6 +54,17 @@ class ContactCenterRetentionDependencies(models.AbstractModel):
             ).mapped("retention_message_id"),
         )
         return result
+
+    def _retention_prepare_external_references(
+        self, binding, messages, message_bindings, inbox_events
+    ):
+        """Optional consumers preserve their facts before the strict FK guard.
+
+        Return False after bounded preparation while original content remains.
+        A completed consumer must detach only its own source references; the
+        generic guard still rejects any remaining business dependency.
+        """
+        return True
 
     def _retention_guard_optional_consumers(self, messages, message_bindings):
         """An unimplemented bridge defers expiry instead of cascading business data."""
