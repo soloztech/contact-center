@@ -338,6 +338,8 @@ def execute(args, native, evidence, result, trees, env):
                 "-c",
                 "max_connections=20",
                 "-c",
+                "jit=off",
+                "-c",
                 "unix_socket_permissions=0700",
             ],
             env=env,
@@ -474,9 +476,11 @@ def main():
             "workers": 0,
             "cron_threads": 0,
             "queue_channels": "root:0",
-            "no_http": True,
+            "no_http_requested": True,
+            "test_http_scope": "Odoo may bind localhost:0 inside isolated network namespace",
             "pg_shared_buffers": "32MB",
             "pg_max_connections": 20,
+            "pg_jit": False,
             "network_namespace": True,
             "timeout_seconds": TIMEOUT_SECONDS,
         },
@@ -509,12 +513,22 @@ def main():
         result["finished_at"] = native.utc_now()
         result["elapsed_seconds"] = round(time.monotonic() - started, 3)
         native.write_json(evidence / "summary.json", result)
+    test_result = result.get("test_result", {})
     print(
         json.dumps(
             {
                 "passed": result["passed"],
                 "evidence": str(evidence),
-                "test_result": result.get("test_result"),
+                "test_result": {
+                    key: test_result.get(key)
+                    for key in (
+                        "exit_status",
+                        "summary",
+                        "started_tests",
+                        "expected_tests",
+                        "all_selected_tests_started",
+                    )
+                },
                 "error": result.get("error"),
             }
         ),
