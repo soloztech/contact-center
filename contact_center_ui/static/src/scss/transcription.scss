@@ -1,0 +1,66 @@
+.cc-audio-transcription {
+    width: #{"min(20rem, 62vw)"};
+    max-width: 100%;
+    margin-top: 0.35rem;
+    padding: 0.55rem 0.25rem 0.2rem;
+    border-top: 1px solid rgba(0, 0, 0, 0.08);
+    color: inherit;
+
+    &__header,
+    &__status {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-size: 0.75rem;
+        line-height: 1.5;
+    }
+
+    &__header {
+        justify-content: space-between;
+        color: var(--cc-ink-soft);
+    }
+
+    &__text {
+        margin: 0.5rem 0 0.25rem;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        font-size: 0.85rem;
+        line-height: 1.5;
+        user-select: text;
+    }
+
+    &__request,
+    &__copy,
+    &__expand {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.2rem 0;
+        border: 0;
+        border-radius: 0.15rem;
+        background: transparent;
+        color: inherit;
+        font-size: 0.75rem;
+        line-height: 1.5;
+        cursor: pointer;
+
+        &:hover {
+            text-decoration: underline;
+        }
+
+        &:focus-visible {
+            outline: 2px solid currentColor;
+            outline-offset: 3px;
+        }
+    }
+
+    &__status {
+        margin: 0;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .cc-audio-transcription .fa-spin {
+        animation: none;
+    }
+}

@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<templates xml:space="preserve">
+    <t
+        t-name="contact_center_ui.TranscriptionMessagePayload"
+        t-inherit="contact_center_ui.MessagePayload"
+        t-inherit-mode="extension"
+        owl="1"
+    >
+        <xpath expr="//AudioPlayer" position="replace">
+            <t t-elif="media.kind === 'audio'">
+                <AudioPlayer media="media">
+                    <t t-set-slot="metadata"><t t-slot="metadata" /></t>
+                </AudioPlayer>
+                <AudioTranscription media="media" message="message" />
+            </t>
+        </xpath>
+    </t>
+
+    <t t-name="contact_center_ui.AudioTranscription" owl="1">
+        <section
+            t-if="visible"
+            class="cc-audio-transcription"
+            aria-label="Transcrição automática"
+        >
+            <div t-if="pending" class="cc-audio-transcription__status" role="status">
+                <i class="fa fa-circle-o-notch fa-spin" aria-hidden="true" />
+                <span>Transcrevendo áudio…</span>
+            </div>
+            <t t-elif="descriptor.state === 'done'">
+                <div class="cc-audio-transcription__header">
+                    <span>Transcrição automática</span>
+                    <button
+                        t-if="descriptor.text"
+                        type="button"
+                        class="cc-audio-transcription__copy"
+                        aria-label="Copiar transcrição"
+                        t-on-click="copy"
+                    >
+                        <i class="fa fa-copy" aria-hidden="true" />
+                        <t t-if="state.copied">Copiado</t>
+                        <t t-else="">Copiar</t>
+                    </button>
+                </div>
+                <p
+                    class="cc-audio-transcription__text"
+                    t-esc="displayedText || 'Nenhuma fala identificada.'"
+                />
+                <button
+                    t-if="canExpand"
+                    type="button"
+                    class="cc-audio-transcription__expand"
+                    t-att-aria-expanded="state.expanded ? 'true' : 'false'"
+                    t-on-click="toggleExpanded"
+                ><t t-if="state.expanded">Mostrar menos</t><t
+                        t-else=""
+                    >Mostrar mais</t></button>
+                <small
+                    t-if="state.copyFailed"
+                    class="cc-audio-transcription__status"
+                    role="status"
+                >Não foi possível copiar. Selecione o texto para copiar.</small>
+            </t>
+            <t t-else="">
+                <p
+                    t-if="failed"
+                    class="cc-audio-transcription__status"
+                    role="status"
+                >Não foi possível transcrever este áudio.</p>
+                <p
+                    t-elif="descriptor.state === 'skipped'"
+                    class="cc-audio-transcription__status"
+                >Transcrição indisponível para este áudio.</p>
+                <button
+                    t-if="descriptor.can_request"
+                    type="button"
+                    class="cc-audio-transcription__request"
+                    t-on-click="request"
+                >
+                    <i class="fa fa-file-text-o" aria-hidden="true" />
+                    <t t-if="failed">Tentar novamente</t>
+                    <t t-else="">Transcrever</t>
+                </button>
+            </t>
+        </section>
+    </t>
+</templates>
