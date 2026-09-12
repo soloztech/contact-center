@@ -1,6 +1,6 @@
 /** @odoo-module **/
 
-import {Component, useState} from "@odoo/owl";
+import {Component, toRaw, useEffect, useState} from "@odoo/owl";
 import {MessageContent} from "@contact_center_ui/js/message_content.esm";
 import {patch} from "@web/core/utils/patch";
 import {useService} from "@web/core/utils/hooks";
@@ -53,6 +53,7 @@ export function transcriptionForMedia(message, media) {
 export class AudioTranscription extends Component {
     setup() {
         this.orm = useService("orm");
+        this.responseSource = null;
         this.state = useState({
             requesting: false,
             requestFailed: false,
@@ -62,10 +63,32 @@ export class AudioTranscription extends Component {
             copied: false,
             copyFailed: false,
         });
+        useEffect(
+            () => {
+                if (this.state.response && !this.responseMatchesProjection) {
+                    // Once a server projection supersedes the RPC response,
+                    // discard it even if a later job returns to the same state.
+                    this.state.response = null;
+                    this.responseSource = null;
+                }
+            },
+            () => [
+                this.props.message.transcriptions,
+                JSON.stringify(this.serverDescriptor),
+                this.state.response,
+            ]
+        );
     }
 
     get serverDescriptor() {
         return transcriptionForMedia(this.props.message, this.props.media);
+    }
+
+    get responseMatchesProjection() {
+        return (
+            this.responseSource === toRaw(this.props.message.transcriptions) &&
+            this.state.responseBaseline === JSON.stringify(this.serverDescriptor)
+        );
     }
 
     get descriptor() {
@@ -75,10 +98,7 @@ export class AudioTranscription extends Component {
         }
         // An immediate RPC response covers the bus round trip, while a fresh
         // timeline projection always wins over that local response.
-        if (
-            this.state.response &&
-            this.state.responseBaseline === JSON.stringify(descriptor)
-        ) {
+        if (this.state.response && this.responseMatchesProjection) {
             return this.state.response;
         }
         return descriptor;
@@ -127,6 +147,7 @@ export class AudioTranscription extends Component {
             return;
         }
         const baseline = JSON.stringify(this.serverDescriptor);
+        const source = toRaw(this.props.message.transcriptions);
         this.state.requesting = true;
         this.state.requestFailed = false;
         try {
@@ -140,6 +161,7 @@ export class AudioTranscription extends Component {
                 this.state.requestFailed = true;
                 return;
             }
+            this.responseSource = source;
             this.state.responseBaseline = baseline;
             this.state.response = result;
         } catch (_error) {

@@ -294,6 +294,36 @@ QUnit.module("contact_center_ui transcription", (hooks) => {
     );
 
     QUnit.test(
+        "a retried job can fail again without restoring stale pending state",
+        async (assert) => {
+            const env = await makeTestEnv({
+                mockRPC: () => transcription({state: "pending", can_request: false}),
+            });
+            const target = getFixture();
+            const message = reactive(
+                messageWithTranscription(transcription({state: "failed"}))
+            );
+            const component = await mount(AudioTranscription, target, {
+                env,
+                props: {message, media: message.media[0]},
+            });
+            assert.containsOnce(target, ".cc-audio-transcription__request");
+            await component.request();
+            await nextTick();
+            message.transcriptions = [
+                transcription({state: "pending", can_request: false}),
+            ];
+            await nextTick();
+            assert.ok(target.textContent.includes("Transcrevendo áudio"));
+            message.transcriptions = [transcription({state: "failed"})];
+            await nextTick();
+            assert.containsOnce(target, ".cc-audio-transcription__request");
+            assert.notOk(target.textContent.includes("Transcrevendo áudio"));
+            component.__owl__.app.destroy();
+        }
+    );
+
+    QUnit.test(
         "long results expand and redaction removes already rendered text",
         async (assert) => {
             const text = "Uma mensagem longa com medidas e quantidades. ".repeat(20);

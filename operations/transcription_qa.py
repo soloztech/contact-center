@@ -32,7 +32,7 @@ TEST_CLASSES = {
 DATABASE_PATTERN = r"cc_transcription_qa_[0-9]{8}_[0-9]{6}_[0-9a-f]{10}"
 STAGE_PREFIX = "cc-transcription-qa"
 QUNIT_FILTER = "contact_center_ui transcription"
-QUNIT_EXPECTED_TESTS = 9
+QUNIT_EXPECTED_TESTS = 10
 
 
 def native_library():
