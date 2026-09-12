@@ -40,6 +40,7 @@ class Response:
 
 class TestTranscriptionAdapters(unittest.TestCase):
     def setUp(self):
+        super().setUp()
         self.config = service.ProviderConfig(
             base_url="https://api.openai.com/v1",
             model="gpt-transcribe",

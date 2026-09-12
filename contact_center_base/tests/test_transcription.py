@@ -252,6 +252,23 @@ class TestAudioTranscription(SavepointCase):
         )
         self.transcribe.assert_not_called()
 
+    def test_interrupted_pending_job_exposes_manual_recovery(self):
+        self._enable()
+        media = self._media()
+        self._request(media)
+        original_uuid = media.transcription_queue_job_uuid
+        interrupted = Job.load(self.env, original_uuid)
+        interrupted.set_done()
+        interrupted.store()
+        descriptor = media.with_user(self.agent)._transcription_descriptor()
+        self.assertEqual(descriptor["state"], "failed")
+        self.assertTrue(descriptor["can_request"])
+        self.assertFalse(descriptor["text"])
+        self._request(media)
+        self.assertNotEqual(media.transcription_queue_job_uuid, original_uuid)
+        self.assertEqual(media.transcription_state, "pending")
+        self.transcribe.assert_not_called()
+
     def test_automatic_only_inbound_ready_audio_and_on_download_transition(self):
         self._enable("automatic")
         ready = self._media()
@@ -463,6 +480,85 @@ class TestAudioTranscription(SavepointCase):
             self._enable(provider=other_provider)
         with self.assertRaises(AccessError):
             other_provider.with_user(self.admin).read(["model"])
+
+    def test_provider_in_use_cannot_move_to_another_company(self):
+        self._enable()
+        other_company = self.env["res.company"].create(
+            {"name": "Another speech provider company"}
+        )
+        with self.assertRaises(ValidationError), self.cr.savepoint():
+            self.provider.write({"company_id": other_company.id})
+        self.assertEqual(self.provider.company_id, self.account.company_id)
+
+    def test_provider_used_by_archived_account_cannot_change_company(self):
+        self._enable()
+        self.account.write({"active": False})
+        other_company = self.env["res.company"].create(
+            {"name": "Archived inbox provider company"}
+        )
+        with self.assertRaises(ValidationError), self.cr.savepoint():
+            self.provider.write({"company_id": other_company.id})
+        self.assertEqual(self.provider.company_id, self.account.company_id)
+
+    def test_diarization_provider_rejects_unsupported_prompt_configuration(self):
+        provider_model = self.env["contact.center.transcription.provider"]
+        for backend, base_url in [
+            ("openai", ""),
+            ("openai_compatible", "http://192.0.2.55:8000/v1"),
+        ]:
+            with self.subTest(backend=backend):
+                values = {
+                    "name": "Diarization configuration fixture",
+                    "backend": backend,
+                    "base_url": base_url,
+                    "model": "gpt-4o-transcribe-diarize",
+                    "api_key": "fixture-key",
+                    "prompt": "Unsupported transcription context",
+                }
+                with self.assertRaises(ValidationError), self.cr.savepoint():
+                    provider_model.create(values)
+                compatible = provider_model.create(dict(values, prompt=False))
+                self.assertEqual(compatible.model, "gpt-4o-transcribe-diarize")
+        self.transcribe.assert_not_called()
+
+    def test_supervisor_cannot_enable_transcription_through_create_defaults(self):
+        account_model = self.env["contact.center.account"].with_user(self.supervisor)
+        with self.assertRaises(AccessError), self.cr.savepoint():
+            account_model.with_context(
+                default_transcription_mode="automatic",
+                default_transcription_provider_id=self.provider.id,
+            ).create(
+                {
+                    "name": "Untrusted transcription defaults",
+                    "company_id": self.env.company.id,
+                    "platform": "whatsapp",
+                    "access_user_ids": [(6, 0, self.supervisor.ids)],
+                }
+            )
+
+    def test_media_create_rejects_private_result_from_context_defaults(self):
+        media = self._media()
+        with self.assertRaises(AccessError), self.cr.savepoint():
+            self.env["contact.center.media.binding"].sudo().with_context(
+                default_transcription_text="Forged transcript",
+                default_transcription_state="done",
+                contact_center_skip_enqueue=True,
+            ).create(
+                {
+                    "message_binding_id": media.message_binding_id.id,
+                    "sequence": 2,
+                    "kind": "audio",
+                    "state": "ready",
+                }
+            )
+
+    def test_provider_routing_revision_rejects_explicit_and_default_override(self):
+        provider_model = self.env["contact.center.transcription.provider"]
+        values = {"name": "Forged revision", "api_key": "fixture-key"}
+        with self.assertRaises(AccessError), self.cr.savepoint():
+            provider_model.create(dict(values, routing_revision=42))
+        with self.assertRaises(AccessError), self.cr.savepoint():
+            provider_model.with_context(default_routing_revision=42).create(values)
 
     def test_internal_fields_reject_admin_and_forged_context_writes(self):
         media = self._media()

@@ -18,7 +18,6 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-
 INFRA_ROOT = Path("/home/lucaszotelli/infra-ai-ops")
 REPOSITORY = Path(__file__).resolve().parents[1]
 NATIVE_RUNNER = (
@@ -165,6 +164,16 @@ print(json.dumps({{'database_absent': True, 'phonenumbers_version': phonenumbers
     }
 
 
+def native_command(native, database, staged):
+    validate_database(database)
+    command = native.native_command(database, staged)
+    if command.count("--no-http") != 1:
+        raise ValueError("The inherited native command changed its HTTP guard")
+    return command.replace(
+        "--no-http", "--no-http --http-interface=127.0.0.1 --http-port=0", 1
+    )
+
+
 def run(args):
     native = native_library()
     archive, source = native.pinned_archive(args.commit)
@@ -220,7 +229,7 @@ def run(args):
             flush=True,
         )
         output = remote.run(
-            native.native_command(database, staged),
+            native_command(native, database, staged),
             timeout=native.TEST_TIMEOUT_SECONDS + 60,
         )
         native.write_private(

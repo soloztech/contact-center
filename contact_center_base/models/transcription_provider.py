@@ -68,7 +68,9 @@ class ContactCenterTranscriptionProvider(models.Model):
 
     @api.model_create_multi
     def create(self, vals_list):
-        if any("routing_revision" in values for values in vals_list):
+        if any("routing_revision" in values for values in vals_list) or (
+            "default_routing_revision" in self.env.context
+        ):
             raise AccessError(_("The speech routing revision is managed internally."))
         return super().create(vals_list)
 
@@ -90,6 +92,24 @@ class ContactCenterTranscriptionProvider(models.Model):
                 dict(values, routing_revision=provider.routing_revision + 1)
             )
         return True
+
+    @api.constrains("company_id")
+    def _check_inbox_companies(self):
+        for provider in self:
+            if (
+                self.env["contact.center.account"]
+                .sudo()
+                .with_context(active_test=False)
+                .search_count(
+                    [
+                        ("transcription_provider_id", "=", provider.id),
+                        ("company_id", "!=", provider.company_id.id),
+                    ]
+                )
+            ):
+                raise ValidationError(
+                    _("The speech provider is used by an inbox in another company.")
+                )
 
     @api.constrains(
         "backend",
@@ -121,6 +141,14 @@ class ContactCenterTranscriptionProvider(models.Model):
             if len(provider.prompt or "") > 2000:
                 raise ValidationError(
                     _("Transcription context is limited to 2,000 characters.")
+                )
+            if (
+                provider.backend in ("openai", "openai_compatible")
+                and provider.model == "gpt-4o-transcribe-diarize"
+                and provider.prompt
+            ):
+                raise ValidationError(
+                    _("This diarization model does not support transcription context.")
                 )
             if not 1 <= provider.max_duration_seconds <= 3600:
                 raise ValidationError(

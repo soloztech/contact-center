@@ -90,6 +90,8 @@ Center.
   as `root.contact_center.transcription:1` alongside the existing JobRunner
   configuration. It performs no provider I/O in webhook ingress or UI requests.
 - Requests deduplicate by media identity and active job. Successful results are reused.
+  A lost or terminated queue job becomes available for manual retry when the conversation
+  is loaded again; it does not remain stuck in the processing state.
   Transient failures have bounded retries honoring `Retry-After`. An HTTP timeout or a
   database retry after external I/O can still repeat a billed request; the integration
   does not promise exactly-once provider billing.

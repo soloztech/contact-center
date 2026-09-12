@@ -24,7 +24,9 @@ class ContactCenterAccount(models.Model):
 
     @api.model_create_multi
     def create(self, vals_list):
-        if any(_CONFIG_FIELDS.intersection(values) for values in vals_list):
+        if any(_CONFIG_FIELDS.intersection(values) for values in vals_list) or any(
+            "default_" + name in self.env.context for name in _CONFIG_FIELDS
+        ):
             self._check_transcription_admin()
         return super().create(vals_list)
 

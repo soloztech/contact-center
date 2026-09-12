@@ -3,13 +3,13 @@ from psycopg2.errors import SerializationFailure
 from odoo import _, api, fields, models
 from odoo.exceptions import AccessError, ValidationError
 
-from odoo.addons.contact_center_base.services.job import (
+from odoo.addons.queue_job.exception import RetryableJobError
+
+from ..services.job import (
     ACTIVE_QUEUE_JOB_STATES,
     canonical_queue_job,
     queue_job_owns_record,
 )
-from odoo.addons.queue_job.exception import RetryableJobError
-
 from ..services.transcription import (
     MAX_AUDIO_BYTES,
     MAX_TEXT_CHARS,
@@ -81,7 +81,9 @@ class ContactCenterMediaBinding(models.Model):
 
     @api.model_create_multi
     def create(self, vals_list):
-        if any(_FIELDS.intersection(values) for values in vals_list):
+        if any(_FIELDS.intersection(values) for values in vals_list) or any(
+            "default_" + name in self.env.context for name in _FIELDS
+        ):
             self._check_transcription_write()
         records = super().create(vals_list)
         records._maybe_enqueue_transcription()
@@ -133,15 +135,27 @@ class ContactCenterMediaBinding(models.Model):
         }
         if self._deleted_content_is_hidden():
             return result
+        state = self.transcription_state
+        error_code = self.transcription_error_code or ""
+        if state == "pending" and not canonical_queue_job(
+            self,
+            self._transcription_identity(),
+            ACTIVE_QUEUE_JOB_STATES,
+            uuid_field="transcription_queue_job_uuid",
+            adopt=False,
+        ):
+            # A cancelled/failed/lost queue job must not leave an endless spinner.
+            # Projection is read-only; a retry takes the normal locked request path.
+            state, error_code = "failed", "job_unavailable"
         result.update(
             {
-                "state": self.transcription_state,
+                "state": state,
                 "text": self.transcription_text or ""
                 if self.transcription_state == "done"
                 else "",
-                "can_request": self.transcription_state in ("idle", "failed", "skipped")
+                "can_request": state in ("idle", "failed", "skipped")
                 and self._transcription_eligible(),
-                "error_code": self.transcription_error_code or "",
+                "error_code": error_code,
             }
         )
         return result

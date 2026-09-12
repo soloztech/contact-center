@@ -314,10 +314,11 @@ class OpenAICompatibleAdapter(TranscriptionAdapter):
     openai = False
 
     def validate_config(self, config):
-        super().validate_config(config)
+        result = super().validate_config(config)
         normalize_base_url(config.base_url, openai=self.openai)
         if self.openai and not config.api_key:
             raise TranscriptionError("invalid_credentials")
+        return result
 
     def transcribe(self, config, request):
         self.validate_config(config)
