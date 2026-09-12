@@ -3,11 +3,14 @@ from psycopg2 import IntegrityError
 from odoo import _, api, fields, models
 from odoo.exceptions import AccessError, ValidationError
 
+from odoo.addons.contact_center_base.services.adapter import AdapterError
+from odoo.addons.contact_center_base.services.dto import DTOValidationError
 from odoo.addons.meta_webhook_base.services.contracts import META_WEBHOOK_FRESHNESS
 from odoo.addons.meta_webhook_base.services.tokens import META_WEBHOOK_INTERNAL_TOKEN
 from odoo.addons.queue_job.exception import RetryableJobError
 
 from ..services.contracts import META_PROVIDER_SCHEMA_VERSION, META_TRANSPORT_CONTRACTS
+from ..services.messaging import ad_origin_referral_candidate
 from ..services.shared_webhook import (
     META_MESSAGING_CONSUMER_KEY,
     META_MESSAGING_SUBSCRIPTIONS,
@@ -410,16 +413,86 @@ class ContactCenterMetaWebhookDispatcher(models.AbstractModel):
                 )
                 ._register_delivery_candidates(delivery, candidates)
             )
-        specs.extend(
-            messaging_item_specs(
-                decoded_envelope,
-                delivery,
-                private_locator_references=references,
-                private_locator_rejections=rejections,
-                eligible_item_keys=eligible_item_keys,
+        messaging_specs = messaging_item_specs(
+            decoded_envelope,
+            delivery,
+            private_locator_references=references,
+            private_locator_rejections=rejections,
+            eligible_item_keys=eligible_item_keys,
+        )
+        self._contact_center_meta_capture_ad_origin_previews(
+            endpoint, decoded_envelope, messaging_specs
+        )
+        specs.extend(messaging_specs)
+        return tuple(specs)
+
+    @api.model
+    def _contact_center_meta_capture_ad_origin_previews(
+        self, endpoint, envelope, specs
+    ):
+        """Capture private ad images only for an unambiguous admitted inbox route."""
+        connections = (
+            self.env["contact.center.provider.connection"]
+            .sudo()
+            .search(
+                [
+                    ("adapter_key", "=", "meta"),
+                    ("company_id", "=", endpoint.company_id.id),
+                    ("meta_webhook_asset_id.endpoint_id", "=", endpoint.id),
+                    ("role", "=", "primary"),
+                    ("inbound_active", "=", True),
+                    ("account_id.active", "=", True),
+                ]
             )
         )
-        return tuple(specs)
+        for spec in specs:
+            payload = spec["payload_json"]
+            try:
+                raw_item = envelope["entry"][payload["entry_index"]]["messaging"][
+                    payload["item_index"]
+                ]
+            except (KeyError, IndexError, TypeError):
+                continue
+            candidate = ad_origin_referral_candidate(raw_item)
+            if not candidate or not candidate["url"]:
+                continue
+            contract = route_contract(payload)
+            if not contract:
+                continue
+            routed = connections.filtered(
+                lambda connection: connection.meta_transport_mode
+                == contract["transport_mode"]
+                and connection.meta_target_asset_id == contract["target_asset_id"]
+                and connection._meta_runtime_topology_is_ready(
+                    require_subscriptions=False
+                )
+            )
+            if len(routed) != 1:
+                continue
+            connection = routed.ensure_one()
+            try:
+                event = connection.get_adapter().normalize_event(connection, payload)
+            except (AdapterError, DTOValidationError):
+                continue
+            if event.is_from_me or not any(
+                attribution.touchpoint_type == "paid_ad_click"
+                for attribution in event.attribution
+            ):
+                continue
+            source_key = (
+                event.message.external_message_id if event.message else event.event_id
+            )
+            reference = (
+                self.env["contact.center.ad.preview.locator"]
+                .sudo()
+                ._register_thumbnail_locator(connection, source_key, candidate["url"])
+            )
+            if reference:
+                referral = payload["messaging"]
+                for key in candidate["path"]:
+                    referral = referral[key]
+                creative = dict(candidate["creative"], thumbnail_ref=reference)
+                referral["contact_center_ad_origin"] = creative
 
     @api.model
     def _contact_center_meta_admitted_item_keys(self, endpoint, specs, eligible):

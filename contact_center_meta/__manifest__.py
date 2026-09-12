@@ -1,7 +1,7 @@
 {
     "name": "Contact Center Meta",
     "summary": "Meta Messenger and Instagram provider foundation for Contact Center",
-    "version": "16.0.1.2.0",
+    "version": "16.0.1.3.0",
     "author": "Soloz Technologies",
     "website": "https://github.com/soloztech/contact-center",
     "license": "AGPL-3",

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="view_contact_center_account_ad_origin" model="ir.ui.view">
+        <field name="name">contact.center.account.ad.origin</field>
+        <field name="model">contact.center.account</field>
+        <field name="inherit_id" ref="view_contact_center_account_form" />
+        <field name="arch" type="xml">
+            <xpath expr="//notebook" position="inside">
+                <page
+                    string="Anúncios de origem"
+                    name="ad_origin"
+                    groups="contact_center_base.group_contact_center_admin"
+                >
+                    <group>
+                        <field
+                            name="ad_preview_enrichment_enabled"
+                            string="Completar dados pelo Marketing Center"
+                        />
+                    </group>
+                    <p
+                    >O cartão usa os dados recebidos com a mensagem. O enriquecimento preenche informações ausentes quando existe acesso autorizado ao anúncio no Marketing Center.</p>
+                    <button
+                        name="action_backfill_ad_previews"
+                        type="object"
+                        string="Buscar prévias no histórico"
+                        class="btn-secondary"
+                    />
+                    <p
+                    >Cada execução examina até 100 origens disponíveis. Conteúdo apagado não é recuperado; imagens antigas podem estar indisponíveis.</p>
+                    <button
+                        name="action_retry_ad_previews"
+                        type="object"
+                        string="Tentar completar prévias novamente"
+                        class="btn-secondary"
+                        attrs="{'invisible': [('ad_preview_enrichment_enabled', '=', False)]}"
+                    />
+                    <p
+                    >Após corrigir o acesso ao Marketing Center, esta ação agenda até 100 prévias incompletas. Tentativas em andamento e conteúdo expirado são preservados.</p>
+                </page>
+            </xpath>
+        </field>
+    </record>
+</odoo>

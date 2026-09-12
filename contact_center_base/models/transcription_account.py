@@ -1,18 +1,37 @@
+# Keep independent feature extensions in their own source files.
+# pylint: disable=consider-merging-classes-inherited
 from odoo import _, api, fields, models
 from odoo.exceptions import AccessError, ValidationError
 
-_CONFIG_FIELDS = {"transcription_mode", "transcription_provider_id"}
+_CONFIG_FIELDS = {
+    "transcription_mode",
+    "transcription_group_mode",
+    "transcription_provider_id",
+}
 _ADMIN = "contact_center_base.group_contact_center_admin"
+_MODES = [("disabled", "Disabled"), ("manual", "Manual"), ("automatic", "Automatic")]
 
 
 class ContactCenterAccount(models.Model):
     _inherit = "contact.center.account"
 
     transcription_mode = fields.Selection(
-        [("disabled", "Disabled"), ("manual", "Manual"), ("automatic", "Automatic")],
+        _MODES,
+        string="Direct Conversation Transcription",
         default="disabled",
         required=True,
         groups=_ADMIN,
+        help="Transcription mode for direct conversations in this inbox. "
+        "Existing transcription settings continue to apply to direct conversations.",
+    )
+    transcription_group_mode = fields.Selection(
+        _MODES,
+        string="Group Conversation Transcription",
+        default="disabled",
+        required=True,
+        groups=_ADMIN,
+        help="Independent transcription mode for group conversations in this inbox. "
+        "Disabled by default, including after an upgrade.",
     )
     transcription_provider_id = fields.Many2one(
         "contact.center.transcription.provider",
@@ -39,11 +58,28 @@ class ContactCenterAccount(models.Model):
         if not self.env.su and not self.env.user.has_group(_ADMIN):
             raise AccessError(_("Only administrators can configure transcription."))
 
-    @api.constrains("transcription_mode", "transcription_provider_id", "company_id")
+    def _transcription_mode_for_conversation(self, conversation_type):
+        """Keep the legacy field for direct chats; new scopes are opt-in."""
+        self.ensure_one()
+        field_name = {
+            "direct": "transcription_mode",
+            "group": "transcription_group_mode",
+        }.get(conversation_type)
+        return self[field_name] if field_name else "disabled"
+
+    @api.constrains(
+        "transcription_mode",
+        "transcription_group_mode",
+        "transcription_provider_id",
+        "company_id",
+    )
     def _check_transcription_configuration(self):
         for account in self.sudo():
             provider = account.transcription_provider_id
-            if account.transcription_mode != "disabled" and not provider:
+            if (
+                account.transcription_mode != "disabled"
+                or account.transcription_group_mode != "disabled"
+            ) and not provider:
                 raise ValidationError(
                     _("Select a speech provider before enabling transcription.")
                 )

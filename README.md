@@ -97,10 +97,16 @@ configuration and technical-ledger access.
   records appear in the timeline; extraction runs in the existing background queue
   using bounded public HTTP requests, never during webhook ingress.
 - Configurable audio transcription within Base and UI, disabled by default per
-  inbox. Manual or automatic processing uses an independent speech-adapter
+  inbox, with independent modes for direct and group conversations. Manual or
+  automatic processing uses an independent speech-adapter
   registry, with OpenAI and compatible HTTP services. Transcript text appears below
   the audio and follows conversation access and content deletion/retention.
   See [configuration and provider extensions](operations/audio-transcription.md).
+- Ad origin cards show available title, copy, public link and a private thumbnail
+  from WuzAPI or Meta referrals. Optional Marketing enrichment fills missing details
+  only after an authorized catalog match. Cards follow attribution visibility,
+  conversation access and content expiry.
+  See [ad preview configuration and lifecycle](operations/ad-origin-preview.md).
 - Per-inbox deleted-message display: a tombstone by default, or an attenuated retained
   snapshot when configured. Tombstone mode removes operational body, reactions and
   media.

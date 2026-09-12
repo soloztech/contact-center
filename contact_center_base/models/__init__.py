@@ -1,3 +1,5 @@
+# isort: skip_file
+# Model extensions must register after their base classes.
 from . import account
 from . import application
 from . import application_outbound
@@ -33,3 +35,5 @@ from . import transcription_account
 from . import transcription_media
 from . import transcription_retention
 from . import transcription_ui_api
+from . import ad_origin_preview
+from . import ad_origin_preview_hooks

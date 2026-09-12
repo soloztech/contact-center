@@ -1,7 +1,9 @@
 # Prévia do anúncio de origem na conversa
 
-Data: 2026-09-12. Estado: estudo de implementação; nenhuma funcionalidade de anúncio foi
-implementada ou ativada.
+Data: 2026-09-12. Este documento preserva o estudo anterior à implementação. O escopo
+foi implementado nos addons existentes; configuração e limites estão em
+[operação das prévias de anúncio](../operations/ad-origin-preview.md). As observações
+abaixo descrevem o estado analisado no início do estudo.
 
 O resultado desejado é mostrar, junto à mensagem inicial, o título do anúncio, um trecho
 do texto, um link público para a origem e uma miniatura. A frase enviada pelo contato —

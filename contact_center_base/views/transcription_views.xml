@@ -93,16 +93,22 @@
                     groups="contact_center_base.group_contact_center_admin"
                 >
                     <group>
-                        <field name="transcription_mode" string="Transcrição" />
+                        <field name="transcription_mode" string="Conversas diretas" />
+                        <field
+                            name="transcription_group_mode"
+                            string="Conversas em grupo"
+                        />
                         <field
                             name="transcription_provider_id"
                             string="Provedor"
                             domain="[('company_id', '=', company_id)]"
-                            attrs="{'invisible': [('transcription_mode', '=', 'disabled')], 'required': [('transcription_mode', '!=', 'disabled')]}"
+                            attrs="{'invisible': [('transcription_mode', '=', 'disabled'), ('transcription_group_mode', '=', 'disabled')], 'required': ['|', ('transcription_mode', '!=', 'disabled'), ('transcription_group_mode', '!=', 'disabled')]}"
                         />
                     </group>
                     <p
-                    >O modo automático transcreve novos áudios recebidos após o download.
+                    >Escolha um modo independente para conversas diretas e grupos desta caixa.
+                        O provedor selecionado atende os dois tipos; URL e chave da API ficam na configuração do provedor.
+                        O modo automático transcreve novos áudios recebidos após o download.
                         No modo manual, o atendente usa o botão Transcrever na mensagem.</p>
                 </page>
             </xpath>

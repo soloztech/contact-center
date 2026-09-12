@@ -1,4 +1,5 @@
 from . import (
+    test_ad_origin,
     test_adapter_config,
     test_architecture_contract,
     test_media,

@@ -433,7 +433,15 @@ class ContactCenterAttributionTouchpoint(models.Model):
         values = attribution.to_dict()
         creative = dict(values.get("creative") or {})
         # Presentation copy and remote preview URLs are intentionally not canonical.
-        for key in ("title", "body", "greeting", "media_url", "thumbnail_url"):
+        for key in (
+            "title",
+            "body",
+            "greeting",
+            "media_url",
+            "thumbnail_url",
+            "public_url",
+            "thumbnail_ref",
+        ):
             creative.pop(key, None)
         values["creative"] = creative
         return _sha256(_canonical_json(values))
