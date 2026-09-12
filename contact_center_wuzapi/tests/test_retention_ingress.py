@@ -16,7 +16,7 @@ class TestWuzapiRetentionIngress(WuzapiCase):
     def setUp(self):
         super().setUp()
         self.envelope = self.load_fixture("message_group_text_lid.json")
-        self.adapter = WuzapiAdapter()
+        self.adapter = WuzapiAdapter(self.env)
         self.service = self.env["contact.center.retention"]
         self.event = self.adapter.normalize_event(self.connection, self.envelope)
         self.binding = self.env["contact.center.application"]._resolve_group_channel(

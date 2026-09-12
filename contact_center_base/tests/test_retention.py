@@ -57,6 +57,7 @@ class TestHistoryRetention(SavepointCase):
                 "adapter_key": "test.retention",
                 "external_ref": str(uuid.uuid4()),
                 "role": "primary",
+                "active": True,
                 "state": "connected",
                 "inbound_active": True,
                 "outbound_active": False,
