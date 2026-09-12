@@ -206,8 +206,11 @@ class TestContactCenterAdOriginPreview(SavepointCase):
         self.assertEqual(locator.download_url, url)
         with self.assertRaises(PreviewError):
             self.locators._resolve(reference, self.connection, "different-message")
-        other = self.connection.copy(
+        other = self.env["contact.center.provider.connection"].create(
             {
+                "name": "Other private locator scope",
+                "account_id": self.account.id,
+                "adapter_key": "test.ad.preview",
                 "external_ref": str(uuid.uuid4()),
                 "role": "standby",
                 "inbound_active": False,

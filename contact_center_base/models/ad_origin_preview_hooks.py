@@ -288,9 +288,12 @@ class ContactCenterAttributionPreview(models.Model):
             ("message_binding_id.message_state", "!=", "deleted"),
         ]
         if account.ad_preview_enrichment_enabled:
+            # Missing-field predicates belong only to existing previews; an
+            # origin with no preview must remain eligible on its own.
             domain += [
                 "|",
                 ("ad_preview_ids", "=", False),
+                "&",
                 "&",
                 "&",
                 ("ad_preview_ids.expired", "=", False),
