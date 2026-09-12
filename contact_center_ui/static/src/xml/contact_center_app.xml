@@ -98,6 +98,17 @@
                                     >Grupo</span>
                                 </div>
                                 <button
+                                    t-if="retentionIndicator"
+                                    type="button"
+                                    class="cc-retention-indicator"
+                                    title="Ver regra de retenção do histórico"
+                                    aria-controls="cc-history-retention"
+                                    t-on-click="openRetentionPanel"
+                                >
+                                    <i class="fa fa-clock-o" aria-hidden="true" />
+                                    <span t-esc="retentionIndicator" />
+                                </button>
+                                <button
                                     t-if="store.hasConnectionHealth"
                                     type="button"
                                     t-attf-class="cc-mobile-fleet-status cc-mobile-fleet-status--#{fleetMeta.state}"

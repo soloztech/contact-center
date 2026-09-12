@@ -203,45 +203,20 @@
                                     <span>Empresa</span>
                                     <small t-if="company">Vínculo principal</small>
                                 </div>
-                                <t t-if="company">
-                                    <button
-                                        type="button"
-                                        class="cc-company-relation__name"
-                                        t-att-aria-label="'Abrir cadastro de ' + company.name"
-                                        t-on-click="() => this.openPartnerRecord(company.id)"
-                                    ><span t-esc="company.name" /><i
-                                            class="fa fa-external-link"
-                                            aria-hidden="true"
-                                        /></button>
-                                    <dl class="cc-company-relation__details">
-                                        <div t-if="company.vat"><dt>CNPJ / VAT</dt><dd
-                                                t-esc="company.vat"
-                                            /></div>
-                                        <div t-if="company.phone"><dt>Telefone</dt><dd
-                                                t-esc="company.phone"
-                                            /></div>
-                                        <div t-if="company.email"><dt>E-mail</dt><dd
-                                                t-esc="company.email"
-                                            /></div>
-                                    </dl>
-                                    <button
-                                        t-if="canManageCompany"
-                                        type="button"
-                                        class="cc-text-button cc-company-remove"
-                                        t-att-disabled="companyMutationPending"
-                                        t-on-click="() => this.unlinkCompany(company)"
-                                    >Desvincular empresa</button>
-                                </t>
+                                <CompanyRelationshipSummary
+                                    t-if="company"
+                                    company="company"
+                                    relationKind="'primary'"
+                                    canManage="canManageCompany"
+                                    mutationPending="companyMutationPending"
+                                    onOpen="(companyId) => this.openPartnerRecord(companyId)"
+                                    onUnlink="() => this.unlinkCompany(company)"
+                                />
                                 <p
                                     t-elif="companyProjectionUnavailable"
                                     class="cc-detail-copy"
                                 >Os dados da empresa vinculada não estão disponíveis neste painel.</p>
                                 <t t-if="canLinkCompany">
-                                    <p class="cc-detail-copy"><t
-                                            t-if="company"
-                                        >Vínculos secundários não alteram a empresa principal nem o cliente padrão de novas cotações.</t><t
-                                            t-else=""
-                                        >Vincule a empresa principal desta pessoa. O Odoo usará essa empresa como referência comercial e sincronizará os dados fiscais e de endereço.</t></p>
                                     <div class="cc-inline-actions">
                                         <button
                                             t-ref="companyLinkTrigger"
@@ -249,6 +224,7 @@
                                             class="cc-secondary-button"
                                             t-att-aria-expanded="state.companyLinker.open"
                                             aria-controls="cc-company-linker"
+                                            t-att-title="company ? 'O vínculo secundário mantém a empresa principal e o cliente padrão de novas cotações.' : 'Vincule a empresa principal para usá-la como referência comercial deste contato.'"
                                             t-att-disabled="companyMutationPending"
                                             t-on-click="() => store.openCompanyLinker('search')"
                                         ><t
@@ -415,35 +391,14 @@
                                     <div class="cc-company-relation__heading"><span
                                         >Empresa</span><small
                                         >Vínculo secundário</small></div>
-                                    <button
-                                        type="button"
-                                        class="cc-company-relation__name"
-                                        t-on-click="() => this.openPartnerRecord(secondaryCompany.id)"
-                                    ><span t-esc="secondaryCompany.name" /><i
-                                            class="fa fa-external-link"
-                                            aria-hidden="true"
-                                        /></button>
-                                    <dl class="cc-company-relation__details">
-                                        <div t-if="secondaryCompany.vat"><dt
-                                            >CNPJ / VAT</dt><dd
-                                                t-esc="secondaryCompany.vat"
-                                            /></div>
-                                        <div t-if="secondaryCompany.phone"><dt
-                                            >Telefone</dt><dd
-                                                t-esc="secondaryCompany.phone"
-                                            /></div>
-                                        <div t-if="secondaryCompany.email"><dt
-                                            >E-mail</dt><dd
-                                                t-esc="secondaryCompany.email"
-                                            /></div>
-                                    </dl>
-                                    <button
-                                        t-if="canManageCompany"
-                                        type="button"
-                                        class="cc-text-button cc-company-remove"
-                                        t-att-disabled="companyMutationPending"
-                                        t-on-click="() => this.unlinkCompany(secondaryCompany, 'secondary')"
-                                    >Desvincular empresa</button>
+                                    <CompanyRelationshipSummary
+                                        company="secondaryCompany"
+                                        relationKind="'secondary'"
+                                        canManage="canManageCompany"
+                                        mutationPending="companyMutationPending"
+                                        onOpen="(companyId) => this.openPartnerRecord(companyId)"
+                                        onUnlink="() => this.unlinkCompany(secondaryCompany, 'secondary')"
+                                    />
                                 </div>
                             </div>
                         </div>
@@ -690,6 +645,16 @@
                     >Este canal não possui uma identidade individual vinculada. Os dados operacionais e as mensagens continuam disponíveis.</p>
                 </section>
 
+                <HistoryRetention
+                    t-if="isGroup &amp;&amp; conversation.provider === 'wuzapi'"
+                    t-key="conversation.channel_id"
+                    store="store"
+                    channelId="conversation.channel_id"
+                    policy="conversation.retention || false"
+                    visible="state.detailsOpen"
+                    focusRequest="state.retentionFocusRequest || 0"
+                />
+
                 <AttributionTouchpoints
                     t-if="canViewAttribution"
                     attribution="state.attribution"
@@ -808,5 +773,42 @@
                 </section>
             </div>
         </aside>
+    </t>
+    <t t-name="contact_center_ui.CompanyRelationshipSummary" owl="1">
+        <div class="cc-company-summary">
+            <div
+                class="cc-company-summary__identity"
+                t-on-mouseenter="() => state.tooltipDismissed = false"
+                t-on-focusin="() => state.tooltipDismissed = false"
+                t-on-keydown="onKeydown"
+            >
+                <button
+                    type="button"
+                    class="cc-company-relation__name"
+                    t-att-aria-label="'Abrir cadastro de ' + props.company.name"
+                    t-att-aria-describedby="tooltipId"
+                    t-on-click="() => props.onOpen(props.company.id)"
+                ><span t-esc="props.company.name" /><i
+                        class="fa fa-external-link"
+                        aria-hidden="true"
+                    /></button>
+                <span
+                    t-att-id="tooltipId"
+                    class="cc-company-summary__tooltip"
+                    role="tooltip"
+                    t-att-hidden="state.tooltipDismissed"
+                    t-esc="details"
+                />
+            </div>
+            <button
+                t-if="props.canManage"
+                type="button"
+                class="cc-text-button cc-company-remove"
+                t-att-disabled="props.mutationPending"
+                t-att-aria-label="'Desvincular empresa ' + props.company.name"
+                title="Desvincular empresa"
+                t-on-click="props.onUnlink"
+            ><i class="fa fa-chain-broken" aria-hidden="true" /></button>
+        </div>
     </t>
 </templates>

@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<templates xml:space="preserve">
+    <t t-name="contact_center_ui.HistoryRetention" owl="1">
+        <section
+            id="cc-history-retention"
+            t-ref="section"
+            class="cc-detail-section cc-history-retention"
+            tabindex="-1"
+            aria-label="Retenção do histórico"
+            t-att-aria-busy="busy ? 'true' : 'false'"
+        >
+            <div class="cc-detail-section__heading"><h3>Retenção do histórico</h3></div>
+            <p
+                class="cc-history-retention__rule"
+                t-att-class="local.policy &amp;&amp; local.policy.enabled &amp;&amp; !local.policy.preserve ? 'is-active' : ''"
+                role="status"
+                t-esc="description"
+            />
+            <p
+                class="cc-detail-copy"
+            >A limpeza ocorre na próxima execução da rotina após vencer o prazo. Arquivos compartilhados com documentos ou outras conversas são preservados onde ainda são usados.</p>
+            <p
+                t-if="local.phase === 'loading'"
+                class="cc-detail-copy"
+            >Consultando regra atual…</p>
+            <div t-if="local.error" class="cc-history-retention__error" role="alert">
+                <span t-esc="local.error" />
+                <button
+                    type="button"
+                    class="cc-link-button"
+                    t-on-click="() => this.load()"
+                    t-att-disabled="busy"
+                >Atualizar regra</button>
+            </div>
+            <t t-if="local.policy &amp;&amp; local.policy.can_manage">
+                <button
+                    type="button"
+                    class="cc-history-retention__preserve"
+                    role="switch"
+                    t-att-aria-checked="local.policy.preserve ? 'true' : 'false'"
+                    t-att-disabled="!canManage || local.phase === 'error'"
+                    t-on-click="togglePreserve"
+                >
+                    <i
+                        t-att-class="local.policy.preserve ? 'fa fa-toggle-on' : 'fa fa-toggle-off'"
+                        aria-hidden="true"
+                    />
+                    <span>Preservar histórico deste grupo</span>
+                </button>
+                <p
+                    class="cc-detail-copy"
+                >Preserva as mensagens e mídias deste grupo para todos os atendentes. Não recupera conteúdo já excluído.</p>
+            </t>
+            <div t-if="local.preview" class="cc-history-retention__preview">
+                <strong>Voltar a aplicar a regra da caixa?</strong>
+                <p>O histórico que já ultrapassou <t
+                        t-esc="local.policy.days"
+                    /> dias também ficará elegível para exclusão.</p>
+                <p><strong t-esc="local.preview.message_count" /> mensagens e <strong
+                        t-esc="local.preview.media_count"
+                    /> mídias encontradas na simulação.</p>
+                <p
+                    class="cc-detail-copy"
+                >A exclusão ocorre pela rotina, após a confirmação. A quantidade pode mudar com novas mensagens ou operações em andamento.</p>
+                <div class="cc-history-retention__actions">
+                    <button
+                        type="button"
+                        class="cc-primary-button"
+                        t-on-click="confirmResume"
+                        t-att-disabled="!canManage"
+                    >Confirmar retomada</button>
+                    <button
+                        type="button"
+                        class="cc-secondary-button"
+                        t-on-click="cancelPreview"
+                        t-att-disabled="busy"
+                    >Cancelar</button>
+                </div>
+            </div>
+            <p
+                t-if="local.notice"
+                class="cc-history-retention__notice"
+                role="status"
+                t-esc="local.notice"
+            />
+        </section>
+    </t>
+</templates>

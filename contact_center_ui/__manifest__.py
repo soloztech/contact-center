@@ -1,7 +1,7 @@
 {
     "name": "Contact Center UI",
     "summary": "Standalone operational interface for Contact Center agents",
-    "version": "16.0.1.3.0",
+    "version": "16.0.1.4.0",
     "category": "Productivity/Discuss",
     "author": "Soloz Technologies",
     "website": "https://github.com/soloztech/contact-center",
@@ -26,6 +26,7 @@
             "contact_center_ui/static/src/js/voice_recorder.esm.js",
             "contact_center_ui/static/src/js/message_composer.esm.js",
             "contact_center_ui/static/src/js/contact_panel.esm.js",
+            "contact_center_ui/static/src/js/history_retention.esm.js",
             "contact_center_ui/static/src/js/contact_center_app.esm.js",
             "contact_center_ui/static/src/js/activity_group_view.esm.js",
             "contact_center_ui/static/src/xml/*.xml",
@@ -34,6 +35,7 @@
             "contact_center_ui/static/src/scss/conversation_resolution.scss",
             "contact_center_ui/static/src/scss/partner_companies.scss",
             "contact_center_ui/static/src/scss/link_preview.scss",
+            "contact_center_ui/static/src/scss/history_retention.scss",
         ],
         "web.qunit_suite_tests": [
             "contact_center_ui/static/tests/contact_center_model_tests.esm.js",
@@ -43,6 +45,7 @@
             "contact_center_ui/static/tests/conversation_resolution_tests.esm.js",
             "contact_center_ui/static/tests/partner_companies_tests.esm.js",
             "contact_center_ui/static/tests/link_preview_tests.esm.js",
+            "contact_center_ui/static/tests/history_retention_tests.esm.js",
         ],
     },
     "application": False,

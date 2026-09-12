@@ -111,7 +111,7 @@ jobs:
       - name: Checkout current production version for additive upgrade rehearsal
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: 5bd6381eb93809a25629e13ce0f03d6b92677fd7
+          ref: 4b27b1dcfa48a6782185b8f37614e9f637253d88
           path: .ci-installed-contact-center
           persist-credentials: false
       - name: Isolate current production source from candidate discovery

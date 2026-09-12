@@ -21,7 +21,7 @@ import uuid
 from pathlib import Path
 
 OLD_COMMIT = "33e662b1d95ba34a879c5f652719911c8902969f"
-INSTALLED_COMMIT = "5bd6381eb93809a25629e13ce0f03d6b92677fd7"
+INSTALLED_COMMIT = "4b27b1dcfa48a6782185b8f37614e9f637253d88"
 MODULES = (
     "contact_center_base",
     "contact_center_ui",
@@ -316,6 +316,19 @@ def registry_phase(env, phase, source, candidate, output):
     # projection by role. Assert the contract instead of inferring it from
     # whether the response happens to contain the capability.
     is_candidate_source = source.resolve() == candidate.resolve()
+    if is_candidate_source:
+        assert all(
+            not row.retention_enabled and row.retention_days == 7 for row in accounts
+        )
+        bindings = env["contact.center.channel.binding"].search([])
+        assert all(
+            not row.retention_preserve and not row.retention_expired_before
+            for row in bindings
+        )
+        assert not env["contact.center.retention.receipt"].search_count([])
+        assert env.ref(
+            "contact_center_base.ir_cron_contact_center_history_retention"
+        ).active
     assert item["capabilities"]["view_inbox_access"] is False
     assert item["access_users"] == item["access_teams"] == []
     assert item["responsible"]["id"] == users[0].id

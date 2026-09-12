@@ -1,12 +1,36 @@
 # Proposta de retenção de mensagens e mídias
 
-Data: 2026-09-11. Revisão de requisitos: 2026-09-12. Estado: **estudo; não implementado
-nem ativado**.
+Data: 2026-09-11. Revisão de requisitos: 2026-09-12. Estado: **implementação em
+validação; ativação desativada por padrão**.
+
+## Implementação de 12/09
+
+O serviço está em `contact_center_base/models/retention.py`, com barreira de entrada em
+`retention_ingress.py` e proteção das dependências em `retention_dependencies.py`. O
+adaptador WuzAPI identifica rota, data e alvos sem depender da normalização do corpo. As
+configurações e exceções exigem supervisor/administrador e são auditadas no backend.
+
+O cron processa um grupo por minuto, até 100 mensagens por lote. Antes da primeira
+purga, indexa os eventos legados da caixa em lotes de 500. Cópias em citações e edições
+são saneadas em etapas limitadas antes da exclusão do alvo. Anexos compartilhados são
+preservados; consumidores comerciais sem contrato de expiração adiam o lote.
+
+A interface inclui aviso do prazo, exceção por grupo e atualização da conversa aberta
+após a limpeza, mantendo o estado de leitura de cada usuário. A simulação conta
+mensagens e registros de mídia; não estima bytes físicos liberados. A coleta física de
+arquivos continua sendo responsabilidade do Odoo.
+
+Instalar esta versão não ativa nenhuma caixa nem executa uma limpeza inicial. A
+evidência de implantação e os testes executados ficam no incidente operacional
+`odoo16/incidents/2026-09-12-contact-center-retention.md` do repositório de
+infraestrutura.
+
+As seções abaixo preservam o estudo original e suas recomendações para evolução.
 
 Solicitação: permitir, por exemplo, manter somente sete dias de mensagens em grupos com
 muito volume, eliminando conteúdo antigo e mídias para controlar o crescimento do Odoo.
-Esta análise não acessou a produção, não executou SQL no banco, não excluiu registros e
-não criou cron.
+O estudo original não acessou a produção, não executou SQL no banco, não excluiu
+registros e não criou cron.
 
 ## Recomendação
 

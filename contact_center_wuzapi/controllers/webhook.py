@@ -504,6 +504,10 @@ def _conversation_ingress_response(connection, adapter, headers, body, envelope)
         "contact.center.conversation.ignore"
     ]._ignored_envelope(connection, envelope):
         response = _json_response({"accepted": True, "ignored": True}, 200)
+    if response is None and request.env[
+        "contact.center.retention"
+    ]._retention_envelope_is_expired(connection, envelope):
+        response = _json_response({"accepted": True, "expired": True}, 200)
     return response, block_reason
 
 

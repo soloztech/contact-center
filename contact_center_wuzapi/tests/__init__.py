@@ -1,5 +1,6 @@
 from . import (
     test_adapter,
+    test_retention_ingress,
     test_direct_start,
     test_group_metadata,
     test_onboarding,

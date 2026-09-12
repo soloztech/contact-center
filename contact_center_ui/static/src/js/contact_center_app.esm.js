@@ -100,6 +100,22 @@ export class ContactCenterApp extends Component {
         this.store.toggleDetails();
     }
 
+    get retentionIndicator() {
+        const policy = this.selectedConversation && this.selectedConversation.retention;
+        return policy &&
+            policy.effective === true &&
+            Number.isSafeInteger(policy.days) &&
+            policy.days > 0
+            ? `Histórico: ${policy.days} ${policy.days === 1 ? "dia" : "dias"}`
+            : "";
+    }
+
+    openRetentionPanel() {
+        this.ui.sidePanel = "contact";
+        this.store.state.detailsOpen = true;
+        this.store.state.retentionFocusRequest += 1;
+    }
+
     get conversationPolicy() {
         return conversationUiPolicy(this.selectedConversation);
     }

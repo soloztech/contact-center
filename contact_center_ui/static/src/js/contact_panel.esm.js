@@ -14,10 +14,61 @@ import {
     secondaryCompaniesForIdentity,
 } from "./contact_center_model.esm";
 import {AttributionTouchpoints} from "./attribution_touchpoints.esm";
+import {ConfirmationDialog} from "@web/core/confirmation_dialog/confirmation_dialog";
 import {DeferredImage} from "./deferred_image.esm";
+import {HistoryRetention} from "./history_retention.esm";
 import {deserializeDateTime} from "@web/core/l10n/dates";
 import {useService} from "@web/core/utils/hooks";
-import {ConfirmationDialog} from "@web/core/confirmation_dialog/confirmation_dialog";
+
+export function companyRelationshipDetails(company, relationKind = "primary") {
+    const lines = [company.name];
+    for (const [field, label] of [
+        ["vat", "CNPJ / VAT"],
+        ["phone", "Telefone"],
+        ["email", "E-mail"],
+    ]) {
+        if (company[field]) {
+            lines.push(`${label}: ${company[field]}`);
+        }
+    }
+    lines.push(
+        relationKind === "secondary"
+            ? "Vínculo secundário: não altera a empresa principal nem o cliente padrão de novas cotações."
+            : "Vínculo principal: referência comercial e cliente padrão de novas cotações. O Odoo sincroniza os dados fiscais e de endereço."
+    );
+    return lines.join("\n");
+}
+
+export class CompanyRelationshipSummary extends Component {
+    setup() {
+        this.state = useState({tooltipDismissed: false});
+    }
+
+    get details() {
+        return companyRelationshipDetails(this.props.company, this.props.relationKind);
+    }
+
+    get tooltipId() {
+        return `cc-company-tooltip-${this.props.relationKind}-${this.props.company.id}`;
+    }
+
+    onKeydown(event) {
+        if (event.key === "Escape") {
+            this.state.tooltipDismissed = true;
+            event.stopPropagation();
+        }
+    }
+}
+
+CompanyRelationshipSummary.template = "contact_center_ui.CompanyRelationshipSummary";
+CompanyRelationshipSummary.props = {
+    company: Object,
+    relationKind: String,
+    canManage: Boolean,
+    mutationPending: Boolean,
+    onOpen: Function,
+    onUnlink: Function,
+};
 
 export function effectiveAgentsForConversation(conversation, teams, agents) {
     if (!Array.isArray(agents)) {
@@ -539,6 +590,11 @@ export class ContactPanel extends Component {
     }
 }
 
-ContactPanel.components = {AttributionTouchpoints, DeferredImage};
+ContactPanel.components = {
+    AttributionTouchpoints,
+    CompanyRelationshipSummary,
+    DeferredImage,
+    HistoryRetention,
+};
 ContactPanel.props = {conversation: Object, state: Object, store: Object};
 ContactPanel.template = "contact_center_ui.ContactPanel";

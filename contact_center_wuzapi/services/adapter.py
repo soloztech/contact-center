@@ -2457,6 +2457,113 @@ class WuzapiAdapter(WuzapiDirectStartMixin, WuzapiGroupMetadataMixin, ProviderAd
             ],
         }
 
+    def retention_route(self, connection, envelope):
+        """Read bounded group routing/IDs without persisting a body or media URL."""
+        route = self.conversation_route(connection, envelope)
+        if not route or route["conversation_type"] != "group":
+            return None
+        raw = _lookup(envelope, "event")
+        event_type = _lookup(envelope, "type")
+        info = _lookup(raw, "Info") if event_type == "Message" else raw
+        if not isinstance(info, dict):
+            return None
+        try:
+            occurred_at = _parse_timestamp(_lookup(info, "Timestamp")).replace(
+                tzinfo=None
+            )
+        except AdapterError:
+            occurred_at = None
+        kind, message_id, ids = self._retention_event_ids(event_type, info, raw)
+        return dict(
+            route,
+            kind=kind,
+            occurred_at=occurred_at,
+            message_id=message_id if kind == "message" else "",
+            external_ids=sorted(set(ids)),
+            reply_ids=self._retention_quote_ids(_lookup(raw, "Message")),
+        )
+
+    def _retention_event_ids(self, event_type, info, raw):
+        kind, message_id, ids = "control", "", []
+        if event_type == "Message":
+            kind = "message"
+            value = _lookup(info, "ID", "Id")
+            if isinstance(value, str):
+                message_id = _provider_string(value, maximum=256)
+            if message_id:
+                ids = [message_id]
+            message = _lookup(raw, "Message") or {}
+            reaction = _lookup(message, "reactionMessage")
+            protocol = _lookup(message, "protocolMessage")
+            target_container = reaction if isinstance(reaction, dict) else protocol
+            if isinstance(target_container, dict):
+                key = _lookup(target_container, "key") or {}
+                target = _provider_string(_lookup(key, "ID", "Id"), maximum=256)
+                if target:
+                    kind = "mutation"
+                    ids = [target]
+            if _boolean(_lookup(raw, "IsEdit")) or str(_lookup(info, "Edit") or "") in (
+                "1",
+                "3",
+            ):
+                kind = "mutation"
+        elif event_type == "ReadReceipt":
+            kind = "receipt"
+            raw_ids = _lookup(raw, "MessageIDs", "MessageIds")
+            if isinstance(raw_ids, (list, tuple)):
+                ids = [
+                    value
+                    for value in (
+                        _provider_string(item, maximum=256)
+                        for item in raw_ids[:_MAX_RECEIPT_MESSAGE_IDS]
+                    )
+                    if value
+                ]
+        return kind, message_id, ids
+
+    def _retention_quote_ids(self, message):
+        reply_ids = set()
+
+        def collect(value, depth=0):
+            if depth > 32:
+                return
+            if isinstance(value, dict):
+                if _lookup(value, "quotedMessage") is not None:
+                    reference = _provider_string(
+                        _lookup(value, "stanzaId"), maximum=256
+                    )
+                    if reference:
+                        reply_ids.add(reference)
+                for child in value.values():
+                    collect(child, depth + 1)
+            elif isinstance(value, (list, tuple)):
+                for child in value:
+                    collect(child, depth + 1)
+
+        collect(message)
+        return sorted(reply_ids)
+
+    def retention_remove_quotes(self, envelope, expired_ids):
+        """Remove just a copied quote; preserve its author's current message."""
+        expired_ids = set(expired_ids)
+
+        def clean(value, depth=0):
+            if depth > 32:
+                return value
+            if isinstance(value, dict):
+                reference = _lookup(value, "stanzaId")
+                is_expired = isinstance(reference, str) and reference in expired_ids
+                return {
+                    key: clean(child, depth + 1)
+                    for key, child in value.items()
+                    if not (is_expired and _normalized_key(key) == "quotedmessage")
+                }
+            if isinstance(value, list):
+                return [clean(child, depth + 1) for child in value]
+            return value
+
+        return clean(envelope)
+
     def normalize_event(self, connection, envelope):
         if not isinstance(envelope, dict):
             raise AdapterError("WuzAPI webhook envelope must be a JSON object")

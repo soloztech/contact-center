@@ -406,6 +406,46 @@ export function normalizeQuickReplies(payload, channelId) {
     });
 }
 
+function validateRetentionPreview(policy, impact) {
+    if (
+        !policy.can_manage ||
+        !isPlainRecord(impact) ||
+        !Number.isSafeInteger(impact.message_count) ||
+        impact.message_count < 0 ||
+        !Number.isSafeInteger(impact.media_count) ||
+        impact.media_count < 0 ||
+        typeof impact.confirmation_token !== "string" ||
+        !impact.confirmation_token ||
+        typeof impact.cutoff !== "string" ||
+        !impact.cutoff
+    ) {
+        throw new TypeError("A simulação de retenção retornada é inválida.");
+    }
+}
+
+export function validateRetentionResponse(payload, channelId, preview = false) {
+    validateEnvelope(payload);
+    const policy = payload && payload.policy;
+    if (
+        payload.channel_id !== channelId ||
+        !isPlainRecord(policy) ||
+        ["supported", "enabled", "effective", "preserve", "can_manage"].some(
+            (name) => typeof policy[name] !== "boolean"
+        ) ||
+        !Number.isSafeInteger(policy.days) ||
+        policy.days <= 0 ||
+        !Number.isSafeInteger(policy.revision) ||
+        policy.revision < 0 ||
+        policy.effective !== (policy.supported && policy.enabled && !policy.preserve)
+    ) {
+        throw new TypeError("A política de retenção retornada é inválida.");
+    }
+    if (preview) {
+        validateRetentionPreview(policy, payload.preview);
+    }
+    return payload;
+}
+
 export function formatOdooUtcDateTime(value) {
     const date = value instanceof Date ? value : new Date(value);
     if (Number.isNaN(date.getTime())) {
@@ -967,6 +1007,7 @@ export class ContactCenterStore {
             uploading: false,
             replyTo: false,
             detailsOpen: window.innerWidth >= 1200,
+            retentionFocusRequest: 0,
             inboxDensity: loadInboxDensityPreference(inboxDensityStorage),
             mobilePane: "list",
             realtime: "connecting",
@@ -1031,6 +1072,7 @@ export class ContactCenterStore {
         this.startConversationPending = false;
         this.preservedConversationChannelId = false;
         this.timelineRequest = 0;
+        this.retentionTimelineRequest = 0;
         this.timelineForwardChannelId = false;
         this.timelineForwardCursor = false;
         this.timelineForwardPageCount = 0;
@@ -4062,6 +4104,38 @@ export class ContactCenterStore {
         }
     }
 
+    async getRetentionPolicy(channelId, preview = false) {
+        if (!this.loadedConversation(channelId) || this.destroyed) {
+            throw new Error("A conversa não está disponível.");
+        }
+        const payload = await this.call("get_retention_policy", [channelId], {preview});
+        return validateRetentionResponse(payload, channelId, preview);
+    }
+
+    async setRetentionPreserve(channelId, preserve, confirmationToken = false) {
+        const conversation = this.loadedConversation(channelId);
+        if (!conversation || this.destroyed || typeof preserve !== "boolean") {
+            throw new Error("A conversa não está disponível.");
+        }
+        const payload = await this.call(
+            "set_retention_preserve",
+            [channelId, preserve],
+            {
+                confirmation_token: confirmationToken,
+            }
+        );
+        validateRetentionResponse(payload, channelId);
+        if (payload.policy.preserve !== preserve) {
+            throw new TypeError("O servidor não confirmou a preservação do grupo.");
+        }
+        const current = this.loadedConversation(channelId);
+        if (!this.destroyed && current) {
+            current.retention = payload.policy;
+            this.scheduleSynchronization(false, false);
+        }
+        return payload;
+    }
+
     async markConversationUnread(channelId) {
         if (
             !this.loadedConversation(channelId) ||
@@ -5212,8 +5286,68 @@ export class ContactCenterStore {
         return true;
     }
 
+    handleRetentionNotification(payload) {
+        if (payload.retention_purged !== true) {
+            return false;
+        }
+        this.listRequest += 1;
+        const channelId = payload.channel_id;
+        const conversation = this.loadedConversation(channelId);
+        if (conversation) {
+            // Even surviving messages can contain a reply quoting erased text.
+            // Only the post-purge projection can safely render those snapshots.
+            conversation.last_message = false;
+        }
+        if (channelId !== this.state.selectedChannelId) {
+            this.scheduleSynchronization(false, false);
+            return true;
+        }
+        this.timelineRequest += 1;
+        this.resetTimelineContinuity();
+        this.cancelSeenRetry();
+        this.state.messages = [];
+        this.state.replyTo = false;
+        this.state.timelineHasMore = false;
+        this.state.timelineHasMoreForward = false;
+        this.state.nextBeforeMessageId = false;
+        this.state.nextAfterChronologicalMessageId = false;
+        this.state.timelineFirstUnreadMessageId = false;
+        this.state.timelinePhase = "loading";
+        this.reloadAfterRetentionPurge(channelId);
+        return true;
+    }
+
+    async reloadAfterRetentionPurge(channelId) {
+        const request = ++this.retentionTimelineRequest;
+        const current = () =>
+            !this.destroyed &&
+            this.state.selectedChannelId === channelId &&
+            request === this.retentionTimelineRequest;
+        try {
+            const refreshed = await this.refreshLoadedConversations({silent: true});
+            if (!current()) {
+                return false;
+            }
+            if (!refreshed) {
+                this.state.timelinePhase = "error";
+                return false;
+            }
+            // Honor the authoritative personal unread anchor. Purging is not a
+            // command to jump to the tail or mark new messages as read.
+            return await this.loadTimeline({reset: true, anchorUnread: true});
+        } catch (_error) {
+            if (current()) {
+                this.state.timelinePhase = "error";
+            }
+            return false;
+        }
+    }
+
     synchronizeNotification(payload) {
         this.handleDeliveryNotification(payload);
+        if (this.handleRetentionNotification(payload)) {
+            return;
+        }
         if (!SYNCHRONIZING_EVENTS.has(payload.event_type)) {
             return;
         }

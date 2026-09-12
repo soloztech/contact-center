@@ -1,11 +1,112 @@
 /** @odoo-module **/
 /* global QUnit */
 
-import {secondaryCompaniesForIdentity} from "@contact_center_ui/js/contact_center_model.esm";
+import {
+    CompanyRelationshipSummary,
+    ContactPanel,
+} from "@contact_center_ui/js/contact_panel.esm";
+import {click, getFixture, mount, nextTick} from "@web/../tests/helpers/utils";
 import {ContactCenterStore} from "@contact_center_ui/js/contact_center_store.esm";
-import {ContactPanel} from "@contact_center_ui/js/contact_panel.esm";
+import {makeTestEnv} from "@web/../tests/helpers/mock_env";
+import {secondaryCompaniesForIdentity} from "@contact_center_ui/js/contact_center_model.esm";
 
 QUnit.module("contact_center_ui > partner companies", () => {
+    QUnit.test(
+        "compact primary and secondary company details remain safe and keyboard accessible",
+        async (assert) => {
+            const target = getFixture();
+            const env = await makeTestEnv();
+            for (const relationKind of ["primary", "secondary"]) {
+                const opened = [];
+                let removed = 0;
+                const summary = await mount(CompanyRelationshipSummary, target, {
+                    env,
+                    props: {
+                        company: {
+                            id: 20,
+                            name: 'Empresa <img src=x onerror="alert(1)">',
+                            vat: "12.345.678/0001-00",
+                            phone: "+55 11 99999-0000",
+                            email: "empresa@example.invalid",
+                        },
+                        relationKind,
+                        canManage: true,
+                        mutationPending: false,
+                        onOpen: (id) => opened.push(id),
+                        onUnlink: () => removed++,
+                    },
+                });
+                const link = target.querySelector(".cc-company-relation__name");
+                const tooltip = target.querySelector("[role='tooltip']");
+                assert.strictEqual(link.getAttribute("aria-describedby"), tooltip.id);
+                assert.ok(tooltip.textContent.includes("12.345.678/0001-00"));
+                assert.ok(tooltip.textContent.includes("empresa@example.invalid"));
+                assert.ok(tooltip.textContent.includes("+55 11 99999-0000"));
+                assert.ok(
+                    tooltip.textContent.includes(
+                        relationKind === "primary"
+                            ? "Vínculo principal"
+                            : "Vínculo secundário"
+                    )
+                );
+                assert.containsNone(target, "img", "company values remain text");
+                assert.containsNone(
+                    target,
+                    "dl",
+                    "details do not occupy permanent rows"
+                );
+                await click(link);
+                assert.deepEqual(opened, [20]);
+                link.focus();
+                await nextTick();
+                assert.notOk(tooltip.hidden);
+                link.dispatchEvent(
+                    new KeyboardEvent("keydown", {key: "Escape", bubbles: true})
+                );
+                await nextTick();
+                assert.ok(tooltip.hidden, "Escape dismisses the focused tooltip");
+                await click(target, ".cc-company-remove");
+                assert.strictEqual(
+                    removed,
+                    1,
+                    "existing unlink handler remains reachable"
+                );
+                summary.__owl__.app.destroy();
+            }
+        }
+    );
+
+    QUnit.test(
+        "compact company actions keep permission and pending guards",
+        async (assert) => {
+            const target = getFixture();
+            const env = await makeTestEnv();
+            for (const [canManage, mutationPending] of [
+                [false, false],
+                [true, true],
+            ]) {
+                const summary = await mount(CompanyRelationshipSummary, target, {
+                    env,
+                    props: {
+                        company: {id: 30, name: "Empresa"},
+                        relationKind: "secondary",
+                        canManage,
+                        mutationPending,
+                        onOpen: () => undefined,
+                        onUnlink: () => assert.step("unexpected unlink"),
+                    },
+                });
+                if (canManage) {
+                    assert.ok(target.querySelector(".cc-company-remove").disabled);
+                } else {
+                    assert.containsNone(target, ".cc-company-remove");
+                }
+                summary.__owl__.app.destroy();
+            }
+            assert.verifySteps([]);
+        }
+    );
+
     QUnit.test(
         "secondary companies have valid distinct keys and never repeat the primary",
         (assert) => {
