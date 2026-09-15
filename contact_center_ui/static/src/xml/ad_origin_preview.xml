@@ -53,8 +53,7 @@
                 <DeferredImage
                     t-if="showImage"
                     t-key="imageKey"
-                    src="preview.thumbnail_url"
-                    alt="preview.title || 'Imagem do anúncio de origem'"
+                    t-props="{src: preview.thumbnail_url, alt: preview.title || 'Imagem do anúncio de origem'}"
                     width="640"
                     height="360"
                     priority="10"
