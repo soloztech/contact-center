@@ -1,8 +1,8 @@
 # Spec: `contact.center.ui.api.start_conversation` (contact-center, Odoo 16)
 
-> **Estudo histórico arquivado em 15/09/2026.** A implementação evoluiu desde
-> esta análise. Consulte a [arquitetura atual](../../architecture.md),
-> o [guia CRM](../../crm-and-attribution.md) e o [roadmap](../../roadmap.md).
+> **Estudo histórico arquivado em 15/09/2026.** A implementação evoluiu desde esta
+> análise. Consulte a [arquitetura atual](../../architecture.md), o
+> [guia CRM](../../crm-and-attribution.md) e o [roadmap](../../roadmap.md).
 
 Research notes (2026-09-10) for whoever implements the method in
 https://github.com/soloztech/contact-center (branch `16.0`). This is based on reading

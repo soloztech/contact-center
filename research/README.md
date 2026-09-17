@@ -6,19 +6,19 @@ normative project decisions remain in [`plan.md`](../plan.md).
 
 ## Topics
 
-| Document                                                                         | Purpose                                                                                                                                               |
-| -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`odoo-mail-guest-identity.md`](odoo-mail-guest-identity.md)                     | Defines how external participants are represented with `mail.guest`, resolved through a canonical identity, and optionally linked to `res.partner`.   |
-| [`whatsapp-jid-lid-identifiers.md`](whatsapp-jid-lid-identifiers.md)             | Documents PN JIDs, LIDs, device JIDs, provider payload fields, alias persistence, resolution rules, and required test cases.                          |
-| [`wuzapi-media-transport.md`](wuzapi-media-transport.md)                         | Records the pinned WuzAPI media-download contract, webhook sanitization boundary, attachment flow and S3 revalidation gate.                           |
-| [`wuzapi-session-lifecycle.md`](wuzapi-session-lifecycle.md)                     | Records the exact lifecycle events, polling contract, own-identity validation, cycle deduplication, safe recovery and the ~20-number fleet baseline.  |
-| [`wuzapi-event-coverage.md`](wuzapi-event-coverage.md)                           | Classifies every pinned WuzAPI webhook family as projected, intentionally unsupported or deferred, including the observability contract.              |
-| [`wuzapi-group-metadata.md`](wuzapi-group-metadata.md)                           | Records authoritative group metadata pulls, hint events, technical PN/LID rosters, complete/partial snapshots, avatar bounds and the aggregate UI.    |
-| [`inbox-owner-team-access.md`](inbox-owner-team-access.md)                       | Defines the union of direct inbox ownership and shared team access, including the optional authoritative CRM roster projection.                       |
-| [`service-pipeline-core.md`](service-pipeline-core.md)                           | Defines the optional Kanban addon's service pipelines and cases, immutable transitions, and CRM bridge contracts.                                     |
-| [`meta-click-to-whatsapp-attribution.md`](meta-click-to-whatsapp-attribution.md) | Audits Meta/CTWA webhook metadata and defines the provider-neutral DTO, immutable touchpoint ledger, dedupe/enrichment and future CRM bridge.         |
-| [`meta-messenger-instagram.md`](meta-messenger-instagram.md)                     | Records official Messenger/Instagram contracts and the implemented Phase 6.1–6.5 shared-runtime architecture, greenfield validation and future gates. |
-| [`ai-sdr-copilot-evaluation-2026-09-10.md`](ai-sdr-copilot-evaluation-2026-09-10.md) | Independent assessment of AI copilot, internal assistant and SDR options, with Odoo integration boundaries, source checks and a proposed pilot. |
+| Document                                                                             | Purpose                                                                                                                                               |
+| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`odoo-mail-guest-identity.md`](odoo-mail-guest-identity.md)                         | Defines how external participants are represented with `mail.guest`, resolved through a canonical identity, and optionally linked to `res.partner`.   |
+| [`whatsapp-jid-lid-identifiers.md`](whatsapp-jid-lid-identifiers.md)                 | Documents PN JIDs, LIDs, device JIDs, provider payload fields, alias persistence, resolution rules, and required test cases.                          |
+| [`wuzapi-media-transport.md`](wuzapi-media-transport.md)                             | Records the pinned WuzAPI media-download contract, webhook sanitization boundary, attachment flow and S3 revalidation gate.                           |
+| [`wuzapi-session-lifecycle.md`](wuzapi-session-lifecycle.md)                         | Records the exact lifecycle events, polling contract, own-identity validation, cycle deduplication, safe recovery and the ~20-number fleet baseline.  |
+| [`wuzapi-event-coverage.md`](wuzapi-event-coverage.md)                               | Classifies every pinned WuzAPI webhook family as projected, intentionally unsupported or deferred, including the observability contract.              |
+| [`wuzapi-group-metadata.md`](wuzapi-group-metadata.md)                               | Records authoritative group metadata pulls, hint events, technical PN/LID rosters, complete/partial snapshots, avatar bounds and the aggregate UI.    |
+| [`inbox-owner-team-access.md`](inbox-owner-team-access.md)                           | Defines the union of direct inbox ownership and shared team access, including the optional authoritative CRM roster projection.                       |
+| [`service-pipeline-core.md`](service-pipeline-core.md)                               | Defines the optional Kanban addon's service pipelines and cases, immutable transitions, and CRM bridge contracts.                                     |
+| [`meta-click-to-whatsapp-attribution.md`](meta-click-to-whatsapp-attribution.md)     | Audits Meta/CTWA webhook metadata and defines the provider-neutral DTO, immutable touchpoint ledger, dedupe/enrichment and future CRM bridge.         |
+| [`meta-messenger-instagram.md`](meta-messenger-instagram.md)                         | Records official Messenger/Instagram contracts and the implemented Phase 6.1–6.5 shared-runtime architecture, greenfield validation and future gates. |
+| [`ai-sdr-copilot-evaluation-2026-09-10.md`](ai-sdr-copilot-evaluation-2026-09-10.md) | Independent assessment of AI copilot, internal assistant and SDR options, with Odoo integration boundaries, source checks and a proposed pilot.       |
 
 ## Architectural boundary
 

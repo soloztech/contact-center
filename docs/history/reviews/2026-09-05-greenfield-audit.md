@@ -1,10 +1,9 @@
 # Auditoria greenfield — Contact Center
 
-> **Registro histórico arquivado em 15/09/2026.** Este texto descreve a revisão
-> ou o plano da época. Não define o estado atual nem autoriza operações.
-> Consulte o [README do projeto](../../../README.md) e o
-> [roadmap atual](../../roadmap.md). O arquivamento não declara todos os
-> achados resolvidos.
+> **Registro histórico arquivado em 15/09/2026.** Este texto descreve a revisão ou o
+> plano da época. Não define o estado atual nem autoriza operações. Consulte o
+> [README do projeto](../../../README.md) e o [roadmap atual](../../roadmap.md). O
+> arquivamento não declara todos os achados resolvidos.
 
 Data: 2026-09-05. Fonte inicial: `324fec1`, branch `16.0`, sem alterações locais.
 
@@ -191,7 +190,7 @@ executada. Os dois GitHubs ainda apontavam para o prerelease `16.0.20260904.3-rc
 criado antes destas correções.
 
 A janela 2026-09-05 07:00–10:00 BRT foi cancelada pelo próprio critério do
-[procedimento de implantação](../../../operations/production-cutover-rollback.md). A promoção
-exige os commits finais dos dois repositórios, CI desse conjunto, evidência operacional
-no ambiente alvo e nova janela registrada. O rate limit permanece adiado conforme
-decisão do operador.
+[procedimento de implantação](../../../operations/production-cutover-rollback.md). A
+promoção exige os commits finais dos dois repositórios, CI desse conjunto, evidência
+operacional no ambiente alvo e nova janela registrada. O rate limit permanece adiado
+conforme decisão do operador.

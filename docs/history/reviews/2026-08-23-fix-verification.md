@@ -1,10 +1,9 @@
 # Verificação das correções M1–M6 e M9 (auditoria de 2026-08-22)
 
-> **Registro histórico arquivado em 15/09/2026.** Este texto descreve a revisão
-> ou o plano da época. Não define o estado atual nem autoriza operações.
-> Consulte o [README do projeto](../../../README.md) e o
-> [roadmap atual](../../roadmap.md). O arquivamento não declara todos os
-> achados resolvidos.
+> **Registro histórico arquivado em 15/09/2026.** Este texto descreve a revisão ou o
+> plano da época. Não define o estado atual nem autoriza operações. Consulte o
+> [README do projeto](../../../README.md) e o [roadmap atual](../../roadmap.md). O
+> arquivamento não declara todos os achados resolvidos.
 
 > Atualização documental de 2026-08-23: o M4 passou a estar registrado no `plan.md`, no
 > README do projeto, na disposição da auditoria e no incident/runbook

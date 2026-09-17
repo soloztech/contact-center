@@ -1,10 +1,9 @@
 # Cross-check da disposição da auditoria independente — 2026-08-25
 
-> **Registro histórico arquivado em 15/09/2026.** Este texto descreve a revisão
-> ou o plano da época. Não define o estado atual nem autoriza operações.
-> Consulte o [README do projeto](../../../README.md) e o
-> [roadmap atual](../../roadmap.md). O arquivamento não declara todos os
-> achados resolvidos.
+> **Registro histórico arquivado em 15/09/2026.** Este texto descreve a revisão ou o
+> plano da época. Não define o estado atual nem autoriza operações. Consulte o
+> [README do projeto](../../../README.md) e o [roadmap atual](../../roadmap.md). O
+> arquivamento não declara todos os achados resolvidos.
 
 - Fontes confrontadas: `reviews/2026-08-25-independent-audit-disposition.md` e o marco
   de `plan.md` (linhas 1583-1615), contra o **código atual** (árvore de trabalho sobre

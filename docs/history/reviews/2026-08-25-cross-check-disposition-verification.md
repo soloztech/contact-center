@@ -1,10 +1,9 @@
 # Verificação da disposição do cross-check — 2026-08-25
 
-> **Registro histórico arquivado em 15/09/2026.** Este texto descreve a revisão
-> ou o plano da época. Não define o estado atual nem autoriza operações.
-> Consulte o [README do projeto](../../../README.md) e o
-> [roadmap atual](../../roadmap.md). O arquivamento não declara todos os
-> achados resolvidos.
+> **Registro histórico arquivado em 15/09/2026.** Este texto descreve a revisão ou o
+> plano da época. Não define o estado atual nem autoriza operações. Consulte o
+> [README do projeto](../../../README.md) e o [roadmap atual](../../roadmap.md). O
+> arquivamento não declara todos os achados resolvidos.
 
 - Fonte: `reviews/2026-08-25-independent-audit-cross-check-disposition.md`
 - Método: verificação direta no código atual, símbolo a símbolo, pelo coordenador.

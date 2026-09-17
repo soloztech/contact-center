@@ -33,9 +33,9 @@ window has elapsed. This document does not authorize a later deploy.
 
 Before a new window, record its date, operator, canary deadline, go/no-go deadline and
 rollback reserve against the exact coordinated source revisions and updated
-[audit evidence](../docs/history/reviews/2026-09-05-greenfield-audit.md). Require all acceptance
-gates to pass at least one hour before the window; otherwise cancel it. Retain 24 hours
-of heightened observation after go-live.
+[audit evidence](../docs/history/reviews/2026-09-05-greenfield-audit.md). Require all
+acceptance gates to pass at least one hour before the window; otherwise cancel it.
+Retain 24 hours of heightened observation after go-live.
 
 The explicit product decision for this first window is to defer edge rate limiting. That
 waiver does not remove ingress telemetry: webhook request rate, response code, latency,
@@ -198,9 +198,9 @@ uncertain final send must remain fenced under rollback mode C. Multiple selected
 are independent messages, not a native album.
 
 The subsequent
-[channel capability revision](../docs/history/reviews/2026-09-06-channel-capabilities.md) replaces
-the outgoing card type list with `outbound_structured_content` specifications. Its
-evidence supersedes the above test counts for release acceptance. On an existing
+[channel capability revision](../docs/history/reviews/2026-09-06-channel-capabilities.md)
+replaces the outgoing card type list with `outbound_structured_content` specifications.
+Its evidence supersedes the above test counts for release acceptance. On an existing
 laboratory database, run the normal connection capability refresh after updating the
 complete source pair; the old capability key intentionally does not enable cards. Verify
 the actual advertised action types and limits for each pilot connection before sending.

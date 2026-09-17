@@ -1,10 +1,9 @@
 # Política de exibição de mensagem apagada — validação
 
-> **Registro histórico arquivado em 15/09/2026.** Este texto descreve a revisão
-> ou o plano da época. Não define o estado atual nem autoriza operações.
-> Consulte o [README do projeto](../../../README.md) e o
-> [roadmap atual](../../roadmap.md). O arquivamento não declara todos os
-> achados resolvidos.
+> **Registro histórico arquivado em 15/09/2026.** Este texto descreve a revisão ou o
+> plano da época. Não define o estado atual nem autoriza operações. Consulte o
+> [README do projeto](../../../README.md) e o [roadmap atual](../../roadmap.md). O
+> arquivamento não declara todos os achados resolvidos.
 
 Data: 2026-09-01  
 Escopo: `contact_center_base` e `contact_center_ui`  

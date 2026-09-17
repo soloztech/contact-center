@@ -1,8 +1,8 @@
 # Iniciar conversa — revisão crítica da implementação
 
-> **Estudo histórico arquivado em 15/09/2026.** A implementação evoluiu desde
-> esta análise. Consulte a [arquitetura atual](../../architecture.md),
-> o [guia CRM](../../crm-and-attribution.md) e o [roadmap](../../roadmap.md).
+> **Estudo histórico arquivado em 15/09/2026.** A implementação evoluiu desde esta
+> análise. Consulte a [arquitetura atual](../../architecture.md), o
+> [guia CRM](../../crm-and-attribution.md) e o [roadmap](../../roadmap.md).
 
 Data: 2026-09-10. Referência consultada: `start_conversation_spec.md`, preservada sem
 alterações. Este documento registra decisões de implementação; não comprova homologação

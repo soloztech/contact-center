@@ -1,10 +1,9 @@
 # Contact Center — plano
 
-> **Registro histórico arquivado em 15/09/2026.** Este texto descreve a revisão
-> ou o plano da época. Não define o estado atual nem autoriza operações.
-> Consulte o [README do projeto](../../../README.md) e o
-> [roadmap atual](../../roadmap.md). O arquivamento não declara todos os
-> achados resolvidos.
+> **Registro histórico arquivado em 15/09/2026.** Este texto descreve a revisão ou o
+> plano da época. Não define o estado atual nem autoriza operações. Consulte o
+> [README do projeto](../../../README.md) e o [roadmap atual](../../roadmap.md). O
+> arquivamento não declara todos os achados resolvidos.
 
 > Contact center multi-provider e multicanal para Odoo 16. Primeiro adapter: WuzAPI para
 > WhatsApp.
@@ -1010,7 +1009,8 @@ o commit.
   persistência. WuzAPI permanece com `--skipmedia=true`; mídia inbound é baixada depois
   do commit pelos endpoints autenticados `/chat/download*`, validada e armazenada em
   `ir.attachment` privado. O S3 nativo da revisão fixada não é baseline; qualquer adoção
-  futura depende da revalidação registrada em `../../../research/wuzapi-media-transport.md`.
+  futura depende da revalidação registrada em
+  `../../../research/wuzapi-media-transport.md`.
 
 ## Operação em homologação
 
@@ -1502,7 +1502,8 @@ Contrato funcional preservado pelo backend aceito:
   recuperável da árvore de código anterior. Produção não foi acessada.
 - Evidências finais de deploy, upgrade e validate:
   `scans/raw/20260824-odoo16-contact-center-phase5-2-group-metadata/`.
-- Evidência consolidada em `../reviews/2026-08-24-phase5-2-group-metadata-validation.md`.
+- Evidência consolidada em
+  `../reviews/2026-08-24-phase5-2-group-metadata-validation.md`.
 
 ### Fase 5.3 — Operações de grupo — ✅ concluída e validada em 2026-08-24
 
@@ -1633,7 +1634,8 @@ Contrato funcional preservado pelo backend aceito:
 - A sessão Chromium limpa mostrou avatar individual real na lista e painel por URL
   local, sem erro no console. Runtime hash:
   `6570fffb30128a3a3a3a2594f75aa1cff025767eed67d14140371be93d405438`.
-- Evidência consolidada em `../reviews/2026-08-24-direct-avatar-alignment-validation.md`.
+- Evidência consolidada em
+  `../reviews/2026-08-24-direct-avatar-alignment-validation.md`.
 
 #### Follow-up — controles por caixa, webhooks e áudio — ✅ implantado e validado em 2026-08-25
 
@@ -1654,9 +1656,9 @@ Contrato funcional preservado pelo backend aceito:
   incluindo MP4 fragmentado, sem confiar na duração informada pelo cliente.
 - O estudo read-only das quatro contas comerciais registrou os sinais `externalAdReply`,
   `ctwaClid`, `conversionSource` e entry points em
-  `../../../research/meta-click-to-whatsapp-attribution.md`. A decisão de modelar atribuição como
-  touchpoint imutável da conversa foi implementada no incremento seguinte; somente o
-  bridge CRM permanece posterior.
+  `../../../research/meta-click-to-whatsapp-attribution.md`. A decisão de modelar
+  atribuição como touchpoint imutável da conversa foi implementada no incremento
+  seguinte; somente o bridge CRM permanece posterior.
 - Versões homologadas no SERVIDOR05: OCA `queue_job` `16.0.3.0.2`, base `16.0.1.18.0`,
   WuzAPI `16.0.1.15.0` e UI `16.0.1.15.0`. Passaram **208/208** testes base e
   **320/320** integrados. QUnit UI passou **61/61**, 545/545 asserções, nos bundles
@@ -1667,8 +1669,8 @@ Contrato funcional preservado pelo backend aceito:
   ambos os QUnit terminaram sem erro ou warning de console.
 - Evidências de deploy/teste/validação estão em
   `scans/raw/20260824-odoo16-contact-center-phase4-pilot-hardening/` e consolidadas em
-  `../reviews/2026-08-25-per-inbox-webhooks-voice-validation.md`. Produção não foi acessada
-  nem alterada.
+  `../reviews/2026-08-25-per-inbox-webhooks-voice-validation.md`. Produção não foi
+  acessada nem alterada.
 
 #### Follow-up — identidade entre caixas e atribuição — implantado no SERVIDOR05 em 2026-08-25
 
@@ -1701,7 +1703,8 @@ Contrato funcional preservado pelo backend aceito:
   três vínculos de evidência (`1 + 2`). A recaptura foi idempotente, ambos os
   touchpoints ligaram mensagem/canal/identity e a projeção opt-in foi validada em dois
   canais sem expor URLs, IDs externos ou extensões do provider.
-- Evidência consolidada em `../reviews/2026-08-25-cross-inbox-attribution-validation.md`.
+- Evidência consolidada em
+  `../reviews/2026-08-25-cross-inbox-attribution-validation.md`.
 
 #### Limites preservados
 
@@ -2118,8 +2121,8 @@ permanecem responsabilidade futura de coordenação no `meta_core`.
   falhas ou erros. Árvore implantada
   `23bb787a9d6fbd8b408633dd04ad7a67819e2a0865f87319fb2b44d0e37749c7`.
 - Resposta técnica e refutações em
-  `../reviews/2026-08-29-service-split-disposition-verification-response.md`; evidências em
-  `scans/raw/20260829-odoo16-contact-center-disposition-followup/`. Produção não foi
+  `../reviews/2026-08-29-service-split-disposition-verification-response.md`; evidências
+  em `scans/raw/20260829-odoo16-contact-center-disposition-followup/`. Produção não foi
   acessada ou alterada.
 
 #### Follow-up de convergência dos waiters — `16.0.1.24.6`
@@ -2158,9 +2161,9 @@ permanecem responsabilidade futura de coordenação no `meta_core`.
   fechar a corrida de snapshot do PostgreSQL. Binding e comando preservam afinidade
   estrita com o provider de origem.
 - A WuzAPI passou a normalizar o catálogo conversacional definido em
-  `../../../research/wuzapi-event-coverage.md`, incluindo conteúdo rico, lifecycle, chamadas e
-  mudança de identidade. Eventos selecionados ainda sem contrato de produto convergem ao
-  ledger `unsupported`, sem inventar conversa ou mensagem.
+  `../../../research/wuzapi-event-coverage.md`, incluindo conteúdo rico, lifecycle,
+  chamadas e mudança de identidade. Eventos selecionados ainda sem contrato de produto
+  convergem ao ledger `unsupported`, sem inventar conversa ou mensagem.
 - Cards de chamada/segurança são imutáveis e provider-neutral. `mark_read` é uma ação
   assíncrona opcional da conta/capability e não interfere no ponteiro local da UI.
 - A rotação de HMAC é coordenada com a WuzAPI por job revisionado, aceita as chaves
@@ -2327,8 +2330,8 @@ permanecem responsabilidade futura de coordenação no `meta_core`.
   e `.../20260831T230933867551Z`. O procedimento e o rollback estão em
   `odoo16/reference/contact-center-meta-shared-cutover.md`.
 - Estado consolidado e evidências do corte final em
-  `../reviews/2026-08-31-phase1-4-completion-validation.md`. Produção não foi acessada ou
-  alterada.
+  `../reviews/2026-08-31-phase1-4-completion-validation.md`. Produção não foi acessada
+  ou alterada.
 
 #### Visualização inline de PDF — UI `16.0.1.18.8` — ✅ implantada no SERVIDOR05
 
@@ -2497,8 +2500,8 @@ caixa para aceitar dono individual, equipe de acesso ou a união de ambos.
   **887/887** asserções nos bundles minificado e `debug=assets`, sem erros ou avisos de
   console.
 - Evidência detalhada em
-  `../reviews/2026-09-01-forwarded-message-identification-validation.md`. Produção não foi
-  acessada nem alterada.
+  `../reviews/2026-09-01-forwarded-message-identification-validation.md`. Produção não
+  foi acessada nem alterada.
 
 #### Política por caixa para mensagem apagada — base `16.0.1.34.0`, UI `16.0.1.22.0` — ✅ implantada no SERVIDOR05
 
@@ -2704,8 +2707,8 @@ está em `../reviews/2026-09-02-native-first-first-implementation-release.md`.
 - O gate original de concorrência do catálogo de pipelines foi absorvido pelo hardening
   greenfield de 2026-09-03 abaixo; o marco histórico desta fase permanece como registro
   do risco que motivou a revisão.
-- Decisão detalhada em `../reviews/2026-09-02-productivity-operational-design.md`. Produção
-  não foi alterada.
+- Decisão detalhada em `../reviews/2026-09-02-productivity-operational-design.md`.
+  Produção não foi alterada.
 
 #### Fundação greenfield e contrato de release — ✅ R5 validada integralmente em 2026-09-03
 

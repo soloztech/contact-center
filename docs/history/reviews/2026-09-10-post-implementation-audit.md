@@ -1,10 +1,9 @@
 # Auditoria pós-implementação — 2026-09-08 a 2026-09-10
 
-> **Registro histórico arquivado em 15/09/2026.** Este texto descreve a revisão
-> ou o plano da época. Não define o estado atual nem autoriza operações.
-> Consulte o [README do projeto](../../../README.md) e o
-> [roadmap atual](../../roadmap.md). O arquivamento não declara todos os
-> achados resolvidos.
+> **Registro histórico arquivado em 15/09/2026.** Este texto descreve a revisão ou o
+> plano da época. Não define o estado atual nem autoriza operações. Consulte o
+> [README do projeto](../../../README.md) e o [roadmap atual](../../roadmap.md). O
+> arquivamento não declara todos os achados resolvidos.
 
 Data: 2026-09-10. Fonte: branch `16.0`, `c5d37bb~1..5bd6381` (22 commits, 255 arquivos),
 sem alterações locais versionadas. `origin/16.0` está no mesmo commit. Auditoria somente

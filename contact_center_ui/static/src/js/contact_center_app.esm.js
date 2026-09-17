@@ -83,7 +83,8 @@ export class ContactCenterApp extends Component {
 
     get canViewTechnicalChannel() {
         return technicalChannelActionEnabled(
-            this.store.capabilities, this.selectedConversation
+            this.store.capabilities,
+            this.selectedConversation
         );
     }
 

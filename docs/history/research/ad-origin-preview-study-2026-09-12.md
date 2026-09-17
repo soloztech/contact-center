@@ -1,13 +1,13 @@
 # Prévia do anúncio de origem na conversa
 
-> **Estudo histórico arquivado em 15/09/2026.** A implementação evoluiu desde
-> esta análise. Consulte a [arquitetura atual](../../architecture.md),
-> o [guia CRM](../../crm-and-attribution.md) e o [roadmap](../../roadmap.md).
+> **Estudo histórico arquivado em 15/09/2026.** A implementação evoluiu desde esta
+> análise. Consulte a [arquitetura atual](../../architecture.md), o
+> [guia CRM](../../crm-and-attribution.md) e o [roadmap](../../roadmap.md).
 
 Data: 2026-09-12. Este documento preserva o estudo anterior à implementação. O escopo
 foi implementado nos addons existentes; configuração e limites estão em
-[operação das prévias de anúncio](../../../operations/ad-origin-preview.md). As observações
-abaixo descrevem o estado analisado no início do estudo.
+[operação das prévias de anúncio](../../../operations/ad-origin-preview.md). As
+observações abaixo descrevem o estado analisado no início do estudo.
 
 O resultado desejado é mostrar, junto à mensagem inicial, o título do anúncio, um trecho
 do texto, um link público para a origem e uma miniatura. A frase enviada pelo contato —
@@ -58,17 +58,17 @@ não pertence à mídia principal. O envelope resultante é persistido em
 cópia integral recuperável do webhook.
 
 O normalizador faz outra seleção:
-[`services/adapter.py:285`](../../../contact_center_wuzapi/services/adapter.py#L285) define os
-campos de `externalAdReply` que podem atravessar `_attribution_context()`. Título,
-corpo, saudação e URLs de preview não estão nessa lista. Em `:1193`,
+[`services/adapter.py:285`](../../../contact_center_wuzapi/services/adapter.py#L285)
+define os campos de `externalAdReply` que podem atravessar `_attribution_context()`.
+Título, corpo, saudação e URLs de preview não estão nessa lista. Em `:1193`,
 `_attribution_values()` reconhece a origem; em `:1299` monta apenas
 `creative.media_type`; em `:1323` conserva `source_url`.
 
 A pesquisa anterior já identificava esses campos de apresentação e registrava a perda
 deliberada de thumbnails para o caso de atribuição, que não precisava de imagem:
-[`../../../research/meta-click-to-whatsapp-attribution.md`](../../../research/meta-click-to-whatsapp-attribution.md). Isso
-documenta capacidade histórica dos payloads analisados naquela pesquisa; não prova que
-todos os novos anúncios fornecerão todos os campos.
+[`../../../research/meta-click-to-whatsapp-attribution.md`](../../../research/meta-click-to-whatsapp-attribution.md).
+Isso documenta capacidade histórica dos payloads analisados naquela pesquisa; não prova
+que todos os novos anúncios fornecerão todos os campos.
 
 Não promover `meta.source_id` automaticamente a `meta.ad_id`. O contrato atual preserva
 a ambiguidade do identificador recebido. Um bloco com apenas título ou thumbnail também
@@ -100,15 +100,16 @@ conectada.
 
 [`services/dto.py:66`](../../../contact_center_base/services/dto.py#L66) permite somente
 `media_type` em `creative`.
-[`models/attribution.py:432`](../../../contact_center_base/models/attribution.py#L432) já
-exclui copy e URLs de preview do fingerprint canônico, mas isso não significa que o DTO
-atual aceite esses campos. São decisões separadas.
+[`models/attribution.py:432`](../../../contact_center_base/models/attribution.py#L432)
+já exclui copy e URLs de preview do fingerprint canônico, mas isso não significa que o
+DTO atual aceite esses campos. São decisões separadas.
 
 O ledger guarda `source_url`, UTM, tipo de mídia, identificadores e vínculos. A projeção
-em [`models/attribution.py:940`](../../../contact_center_base/models/attribution.py#L940)
+em
+[`models/attribution.py:940`](../../../contact_center_base/models/attribution.py#L940)
 oferece apenas classificação, plataforma, rótulos UTM, tipo e data.
-[`get_attribution()`](../../../contact_center_base/models/ui_api.py#L2292) autoriza a conversa
-antes dessa projeção. O frontend também possui whitelist em
+[`get_attribution()`](../../../contact_center_base/models/ui_api.py#L2292) autoriza a
+conversa antes dessa projeção. O frontend também possui whitelist em
 [`normalizeAttributionItem()`](../../../contact_center_ui/static/src/js/contact_center_model.esm.js#L646);
 adicionar campos só no backend não os fará aparecer.
 
@@ -226,8 +227,8 @@ existente e dimensões reservadas para evitar mudança do layout.
 
 O link “Ver anúncio” é um caso diferente: pode abrir um permalink público validado, com
 `noopener noreferrer`. O helper `_public_social_url()` em
-[`messaging.py:890`](../../../contact_center_meta/services/messaging.py#L890) é uma referência
-local útil, mas sua whitelist não cobre todo link CTWA, como `fb.me`. Ampliar
+[`messaging.py:890`](../../../contact_center_meta/services/messaging.py#L890) é uma
+referência local útil, mas sua whitelist não cobre todo link CTWA, como `fb.me`. Ampliar
 deliberadamente os tipos aceitos; não apenas remover parâmetros de uma URL cujo
 funcionamento dependa deles. Manter o `source_url` técnico sob a política atual.
 
@@ -285,9 +286,9 @@ retenção atual preserva os touchpoints e seus identificadores, desligando
 A expiração automática por prazo hoje é opt-in e limitada a grupos WhatsApp via WuzAPI
 (`retention.py:193`); não presumir que esteja ativa para conversas diretas ou Meta. A
 exclusão integral da conversa também desliga o vínculo da conversa em
-[`attribution.py:322`](../../../contact_center_base/models/attribution.py#L322). O Marketing
-bridge continua apontando a evidência preservada; não criar revisão nova apenas por
-limpeza do chat.
+[`attribution.py:322`](../../../contact_center_base/models/attribution.py#L322). O
+Marketing bridge continua apontando a evidência preservada; não criar revisão nova
+apenas por limpeza do chat.
 
 Para a apresentação, adotar inicialmente cache com prazo e expiração junto ao conteúdo
 de origem, sem preservar cópia da frase do cliente. Antes de desligar os vínculos,

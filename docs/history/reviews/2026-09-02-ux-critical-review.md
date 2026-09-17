@@ -1,10 +1,9 @@
 # Análise crítica de UX — Central de Atendimento (ui 1.23.0 · base 1.35.0 · crm 2.0.1)
 
-> **Registro histórico arquivado em 15/09/2026.** Este texto descreve a revisão
-> ou o plano da época. Não define o estado atual nem autoriza operações.
-> Consulte o [README do projeto](../../../README.md) e o
-> [roadmap atual](../../roadmap.md). O arquivamento não declara todos os
-> achados resolvidos.
+> **Registro histórico arquivado em 15/09/2026.** Este texto descreve a revisão ou o
+> plano da época. Não define o estado atual nem autoriza operações. Consulte o
+> [README do projeto](../../../README.md) e o [roadmap atual](../../roadmap.md). O
+> arquivamento não declara todos os achados resolvidos.
 
 > **Status:** fotografia do baseline anterior ao release UX `20260902T053039152348Z`.
 > C1, C4, M1, M2, M4 e a parte de salto de M7 receberam implementação posterior. A

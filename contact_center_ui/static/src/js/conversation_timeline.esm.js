@@ -590,7 +590,8 @@ export class ConversationTimeline extends Component {
                         this.store.capabilities.view_source_webhook === true
                 );
                 const technicalCapability = technicalMessageActionEnabled(
-                    this.store.capabilities, message
+                    this.store.capabilities,
+                    message
                 );
                 const sourceInboxEventId =
                     message &&

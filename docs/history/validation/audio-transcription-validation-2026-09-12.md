@@ -1,10 +1,9 @@
 # Audio transcription validation — 2026-09-12
 
-> **Registro histórico arquivado em 15/09/2026.** Este texto descreve a revisão
-> ou o plano da época. Não define o estado atual nem autoriza operações.
-> Consulte o [README do projeto](../../../README.md) e o
-> [roadmap atual](../../roadmap.md). O arquivamento não declara todos os
-> achados resolvidos.
+> **Registro histórico arquivado em 15/09/2026.** Este texto descreve a revisão ou o
+> plano da época. Não define o estado atual nem autoriza operações. Consulte o
+> [README do projeto](../../../README.md) e o [roadmap atual](../../roadmap.md). O
+> arquivamento não declara todos os achados resolvidos.
 
 Audio transcription is included in the existing Base and UI addons, version
 `16.0.1.5.0`. The default remains disabled. Configuration selects an OpenAI or
@@ -31,8 +30,9 @@ All 64 selected native tests ran, with zero errors or failures. All 16 standalon
 passed. Provider calls were mocked; these results do not measure recognition accuracy or
 confirm access to a real provider account.
 
-The reproducible runner is [`transcription_qa.py`](../../../operations/transcription_qa.py). Evidence is
-stored in the infra workspace under
+The reproducible runner is
+[`transcription_qa.py`](../../../operations/transcription_qa.py). Evidence is stored in
+the infra workspace under
 `scans/raw/20260912-contact-center-transcription-qa-native-02/summary.json`. The fresh
 synthetic database is `cc_transcription_qa_20260912_184940_60258564f4`; the staged
 source is `/tmp/cc-transcription-qa.RozG3BgF` inside the LAB container.
