@@ -2813,6 +2813,24 @@ class ContactCenterUiApi(models.AbstractModel):
                 _("The responsible agent is outside the inbox access scope.")
             )
 
+        state = values.get("contact_center_state", channel.contact_center_state)
+        if (
+            state == "resolved"
+            and not responsible
+            and ("state" in patch or "responsible_id" in patch)
+        ):
+            # A resolved conversation always keeps an owner. Resolving an
+            # unassigned conversation claims it for the actor; an explicit
+            # assignment cannot leave a resolved conversation ownerless.
+            if "responsible_id" in patch:
+                raise ValidationError(
+                    _("A resolved conversation requires a responsible agent.")
+                )
+            if self.env.user not in access_users:
+                raise AccessError(_("You do not belong to this inbox access scope."))
+            responsible = self.env.user
+            values["contact_center_responsible_id"] = responsible.id
+
         if "tag_ids" in patch:
             tags = self._conversation_update_tags(channel, patch["tag_ids"])
             values["contact_center_tag_ids"] = [(6, 0, tags.ids)]
@@ -2837,6 +2855,11 @@ class ContactCenterUiApi(models.AbstractModel):
             channel,
             previous_state=previous_state,
             previous_responsible=previous_responsible,
+            claimed=(
+                not previous_responsible
+                and "responsible_id" not in patch
+                and channel.contact_center_responsible_id == self.env.user
+            ),
         )
         self._application()._notify_ui(
             channel,

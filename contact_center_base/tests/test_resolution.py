@@ -173,8 +173,9 @@ class TestContactCenterResolution(SavepointCase):
         result = self._api().resolve_conversation(**arguments)
         self.assertEqual(result["item"]["state"], "resolved")
         self.assertFalse(result["replayed"])
-        note = self._notes(channel)
-        self.assertEqual(len(note), 1)
+        claim, note = self._notes(channel)
+        self.assertEqual(len(self._notes(channel)), 2)
+        self.assertIn("claimed", html2plaintext(claim.message_id.body))
         self.assertEqual(note.message_id.author_id, self.agent.partner_id)
         self.assertEqual(note.requested_by_id, self.agent)
         self.assertEqual(note.message_id.subtype_id, self.env.ref("mail.mt_note"))
@@ -199,12 +200,12 @@ class TestContactCenterResolution(SavepointCase):
         arguments = self._arguments(channel)
         self._api().resolve_conversation(**arguments)
         self.assertTrue(self._api().resolve_conversation(**arguments)["replayed"])
-        self.assertEqual(len(self._notes(channel)), 1)
+        self.assertEqual(len(self._notes(channel)), 2)
         self._process(self._event(event.conversation_ref))
         result = self._api().resolve_conversation(**arguments)
         self.assertTrue(result["replayed"])
         self.assertEqual(result["item"]["state"], "open")
-        self.assertEqual(len(self._notes(channel)), 2)
+        self.assertEqual(len(self._notes(channel)), 3)
         self.assertEqual(len(self._reopen_notes(channel)), 1)
 
     def test_replay_validates_actor_and_original_payload(self):
@@ -217,7 +218,7 @@ class TestContactCenterResolution(SavepointCase):
             self._api().resolve_conversation(
                 **{**arguments, "justification": "Other justification"}
             )
-        self.assertEqual(len(self._notes(channel)), 1)
+        self.assertEqual(len(self._notes(channel)), 2)
 
     def test_stale_dialog_cannot_resolve_a_new_customer_message(self):
         channel, event = self._conversation()
@@ -235,7 +236,7 @@ class TestContactCenterResolution(SavepointCase):
         self._api().resolve_conversation(**first)
         with self.assertRaises(ValidationError):
             self._api(self.colleague).resolve_conversation(**second)
-        self.assertEqual(len(self._notes(channel)), 1)
+        self.assertEqual(len(self._notes(channel)), 2)
 
     def test_resolution_requires_active_same_company_reason_and_justification(self):
         channel, _event = self._conversation()
@@ -331,6 +332,7 @@ class TestContactCenterResolution(SavepointCase):
             api.resolve_conversation(**arguments)
         channel.invalidate_recordset()
         self.assertEqual(channel.contact_center_state, "open")
+        self.assertFalse(channel.contact_center_responsible_id)
         self.assertFalse(self._notes(channel))
         self.assertFalse(
             self.env["contact.center.resolution.request"].search_count(
@@ -466,6 +468,55 @@ class TestContactCenterResolution(SavepointCase):
         self._api().update_conversation(channel.id, {"state": "resolved"})
         self.assertEqual(channel.contact_center_state, "resolved")
         self.assertEqual(len(self._notes(channel)), 1)
+        self.assertEqual(channel.contact_center_responsible_id, self.agent)
+        body = html2plaintext(self._notes(channel).message_id.body)
+        self.assertIn("resolved", body)
+        self.assertIn("claimed", body)
+
+    def test_resolving_an_unassigned_conversation_claims_it_for_the_actor(self):
+        channel, _event = self._conversation()
+        self.assertFalse(channel.contact_center_responsible_id)
+        result = self._api().resolve_conversation(**self._arguments(channel))
+        self.assertEqual(channel.contact_center_state, "resolved")
+        self.assertEqual(channel.contact_center_responsible_id, self.agent)
+        self.assertEqual(result["item"]["responsible"]["id"], self.agent.id)
+        claim, resolution = self._notes(channel)
+        self.assertEqual(claim.requested_by_id, self.agent)
+        self.assertIn("claimed", html2plaintext(claim.message_id.body))
+        self.assertIn("resolved", html2plaintext(resolution.message_id.body))
+        self.assertEqual(
+            self.env["contact.center.resolution.request"]
+            .search([("channel_id", "=", channel.id)])
+            .requested_by_id,
+            self.agent,
+        )
+
+    def test_resolution_preserves_an_existing_responsible(self):
+        channel, _event = self._conversation()
+        self._api(self.supervisor).update_conversation(
+            channel.id, {"responsible_id": self.colleague.id}
+        )
+        notes_before = len(self._notes(channel))
+        self._api().resolve_conversation(**self._arguments(channel))
+        self.assertEqual(channel.contact_center_state, "resolved")
+        self.assertEqual(channel.contact_center_responsible_id, self.colleague)
+        self.assertEqual(len(self._notes(channel)), notes_before + 1)
+
+    def test_resolved_conversation_cannot_lose_its_responsible(self):
+        channel, _event = self._conversation()
+        self._api().resolve_conversation(**self._arguments(channel))
+        supervisor = self._api(self.supervisor)
+        with self.assertRaises(ValidationError), self.cr.savepoint():
+            supervisor.update_conversation(channel.id, {"responsible_id": False})
+        channel.invalidate_recordset(["contact_center_responsible_id"])
+        self.assertEqual(channel.contact_center_responsible_id, self.agent)
+        supervisor.update_conversation(
+            channel.id, {"responsible_id": self.colleague.id}
+        )
+        self.assertEqual(channel.contact_center_responsible_id, self.colleague)
+        supervisor.update_conversation(channel.id, {"state": "open"})
+        supervisor.update_conversation(channel.id, {"responsible_id": False})
+        self.assertFalse(channel.contact_center_responsible_id)
 
     def test_reason_management_opens_separately_for_supervisors(self):
         action = self.env.ref(
