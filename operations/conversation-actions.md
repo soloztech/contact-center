@@ -77,10 +77,10 @@ em nota interna. Conversa resolvida sempre tem responsável: quem resolve uma co
 sem responsável assume-a na mesma transação, e a nota registra quem assumiu antes da
 resolução. Um responsável já definido é preservado, e não se pode remover o responsável
 de uma conversa resolvida — reabra-a antes. Se a conversa mudar durante a decisão,
-confira-a e reabra o diálogo; não se aceita silenciosamente uma revisão mais recente. Os motivos são específicos de
-cada empresa operadora e podem ser mantidos pelo supervisor. Os três motivos iniciais
-pertencem à empresa principal da instalação; outras empresas configuram seus próprios
-motivos, sem cópia automática.
+confira-a e reabra o diálogo; não se aceita silenciosamente uma revisão mais recente. Os
+motivos são específicos de cada empresa operadora e podem ser mantidos pelo supervisor.
+Os três motivos iniciais pertencem à empresa principal da instalação; outras empresas
+configuram seus próprios motivos, sem cópia automática.
 
 ## Contato, empresa principal e empresas secundárias
 
