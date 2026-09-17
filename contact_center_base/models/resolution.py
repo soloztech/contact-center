@@ -270,6 +270,11 @@ class ContactCenterUiApiResolution(models.AbstractModel):
             reason=reason.name,
             justification=justification,
         )
+        # A resolved conversation always keeps an owner. The actor claims an
+        # unassigned conversation first, under the same lock and transaction,
+        # so the audit trail records who took it before resolving it.
+        if not channel.contact_center_responsible_id:
+            self.claim_conversation(channel.id)
         result = self.with_context(
             contact_center_resolution_transition_token=_RESOLUTION_TRANSITION_TOKEN
         ).update_conversation(channel.id, {"state": "resolved"})

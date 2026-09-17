@@ -34,7 +34,9 @@ Canonical conversations use only ``open``, ``resolved`` and ``archived`` operati
 states. A genuinely new inbound message accepted after provider deduplication always
 reopens a resolved conversation, while an archived conversation deliberately remains
 archived. Webhook replays, receipts, mutations and self-side echoes do not change its
-lifecycle, and the existing responsible agent is preserved.
+lifecycle, and the existing responsible agent is preserved. A resolved conversation
+always has a responsible agent: resolving an unassigned conversation claims it for the
+actor in the same transaction, and an assignment cannot leave it without one.
 
 Pinning and muting are sparse preferences scoped to one user and conversation. Pinning
 changes only that user's list order. Muting suppresses only that user's browser

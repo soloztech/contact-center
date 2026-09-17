@@ -729,3 +729,14 @@ msgid ""
 msgstr ""
 "Permitir várias empresas por contato. A principal permanece como referência "
 "comercial. Desativar preserva os vínculos existentes."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/ui_api.py:2827
+msgid "A resolved conversation requires a responsible agent."
+msgstr "Uma conversa resolvida precisa de um responsável."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/ui_api.py:2830
+#: code:addons/contact_center_base/models/ui_api.py:2943
+msgid "You do not belong to this inbox access scope."
+msgstr "Você não faz parte do escopo de acesso desta caixa."
