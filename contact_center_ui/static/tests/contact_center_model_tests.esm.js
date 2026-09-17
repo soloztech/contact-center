@@ -49,8 +49,8 @@ import {
     partnerCompanyForIdentity,
     realtimeStatusMeta,
     sourceWebhookActionEnabled,
-    technicalMessageActionEnabled,
     technicalChannelActionEnabled,
+    technicalMessageActionEnabled,
     validateEnvelope,
     validateMediaFile,
 } from "@contact_center_ui/js/contact_center_model.esm";
