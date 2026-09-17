@@ -77,13 +77,15 @@ Python; as validações QUnit continuam manuais, registradas em `reviews/`.
 
 ## Higiene de repositório e ambiente
 
-### 8. Trabalho não commitado no checkout principal
+### 8. Atalhos técnicos estão na `16.0` e não estão em produção
 
-`odoo16/addons/contact-center` do ambiente de operação tem alterações não commitadas de
-outra tarefa: atalhos técnicos de mensagem e canal (`view_technical_message` e
-`view_technical_channel` em `models/ui_api.py`, mais JS e XML) e uma reorganização da
-documentação. Integrar com `origin/16.0` antes de commitar, para não desfazer entregas
-já publicadas.
+Os atalhos técnicos de mensagem e canal (`view_technical_message` e
+`view_technical_channel` em `models/ui_api.py`, mais JS, XML e teste de permissão) foram
+integrados à `16.0` em 17/09/2026, junto com a reorganização da documentação, no merge
+`80741cd`. A produção continua servindo a release `resolve-owner-fa0800f0e5e4`, anterior
+a eles: publicar exige nova release, reinício dos dois serviços e autorização própria.
+Validação até aqui: 760 testes Python de `contact_center_base` e `contact_center_ui` sem
+falhas, com HTTP habilitado. As suítes QUnit continuam fora do CI, conforme o item 7.
 
 ### 9. Descoberta automática de addons no laboratório
 
