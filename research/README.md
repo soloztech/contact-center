@@ -18,6 +18,7 @@ normative project decisions remain in [`plan.md`](../plan.md).
 | [`service-pipeline-core.md`](service-pipeline-core.md)                           | Defines the optional Kanban addon's service pipelines and cases, immutable transitions, and CRM bridge contracts.                                     |
 | [`meta-click-to-whatsapp-attribution.md`](meta-click-to-whatsapp-attribution.md) | Audits Meta/CTWA webhook metadata and defines the provider-neutral DTO, immutable touchpoint ledger, dedupe/enrichment and future CRM bridge.         |
 | [`meta-messenger-instagram.md`](meta-messenger-instagram.md)                     | Records official Messenger/Instagram contracts and the implemented Phase 6.1–6.5 shared-runtime architecture, greenfield validation and future gates. |
+| [`ai-sdr-copilot-evaluation-2026-09-10.md`](ai-sdr-copilot-evaluation-2026-09-10.md) | Independent assessment of AI copilot, internal assistant and SDR options, with Odoo integration boundaries, source checks and a proposed pilot. |
 
 ## Architectural boundary
 

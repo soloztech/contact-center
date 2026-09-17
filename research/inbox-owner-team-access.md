@@ -5,7 +5,7 @@ Date: 2026-08-31
 Status: implemented and deployed to SERVIDOR05 on 2026-09-01 in
 `contact_center_base 16.0.1.31.0` and `contact_center_crm 16.0.2.0.1`. Release evidence
 and test totals are recorded in
-[`../reviews/2026-09-01-owner-team-pipeline-crm-release-validation.md`](../reviews/2026-09-01-owner-team-pipeline-crm-release-validation.md).
+[`../docs/history/reviews/2026-09-01-owner-team-pipeline-crm-release-validation.md`](../docs/history/reviews/2026-09-01-owner-team-pipeline-crm-release-validation.md).
 
 ## Reference inspected
 

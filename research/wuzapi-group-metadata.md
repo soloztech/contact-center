@@ -161,7 +161,7 @@ viewer opened normally, the health panel settled at five of five connected, and 
 console had zero errors.
 
 Evidence is recorded in
-[`reviews/2026-08-24-phase5-2-group-metadata-validation.md`](../reviews/2026-08-24-phase5-2-group-metadata-validation.md).
+[`reviews/2026-08-24-phase5-2-group-metadata-validation.md`](../docs/history/reviews/2026-08-24-phase5-2-group-metadata-validation.md).
 The deployed runtime code tree hash is
 `39721ec9cdbb368999f0587b5a20da53f2a7f988f2f70040fb0b7b0e3cd23481`. Final deploy,
 base/UI upgrade, and validation evidence is under

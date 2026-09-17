@@ -54,3 +54,18 @@ capabilities stay disabled unless both the inbox policy and provider adapter opt
 The generic *Provider Connections* form exposes a stable extension notebook. Provider
 addons register their selector entry and add conditional settings there without adding
 provider fields to the core.
+
+CRM and attribution boundary
+============================
+
+This module depends on native ``mail``, ``rating``, ``web`` and OCA ``queue_job``;
+it does not depend on CRM, Sales, Accounting or Marketing Center. Attribution
+records retain provider observations, their evidence level and external identifiers.
+They do not qualify a customer, create a ``crm.lead`` or choose a campaign.
+
+A conversation, a linked contact, a commercial association and an attribution
+observation are separate records with separate lifecycles. Install
+``contact_center_crm`` to browse a customer's native business records and
+``contact_center_kanban`` only when service cases and explicit CRM actions are needed.
+Optional cross-project attribution bridges are distributed by
+`Marketing Center <https://github.com/soloztech/marketing-center/tree/16.0>`_.

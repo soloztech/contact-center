@@ -5,7 +5,7 @@ Data da decisão: 2026-08-31.
 Status: implementado e implantado no SERVIDOR05 em 2026-09-01 no
 `contact_center_base 16.0.1.30.1` e `contact_center_crm 16.0.2.0.1`. Evidência e totais
 de teste:
-[`../reviews/2026-09-01-owner-team-pipeline-crm-release-validation.md`](../reviews/2026-09-01-owner-team-pipeline-crm-release-validation.md).
+[`../docs/history/reviews/2026-09-01-owner-team-pipeline-crm-release-validation.md`](../docs/history/reviews/2026-09-01-owner-team-pipeline-crm-release-validation.md).
 
 Decisão arquitetural de 2026-09-04: a implementação foi extraída integralmente para o
 addon opcional `contact_center_kanban`. O registro acima permanece como evidência

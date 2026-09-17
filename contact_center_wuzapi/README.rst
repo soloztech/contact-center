@@ -47,6 +47,20 @@ roles and PN/LID aliases without creating Odoo people or channel memberships. Av
 bytes are bounded to 2 MiB and returned to the core for private local persistence;
 provider/CDN URLs are not exposed to the UI.
 
+Acquisition evidence is separate from CRM intake
+================================================
+
+The addon depends on ``contact_center_base`` and has no CRM dependency. WhatsApp
+``externalAdReply``, entry-point and UTM observations are normalized into Base's
+attribution DTOs. An isolated ``conversionSource=fbads`` hint is classified as
+``paid_ad_signal`` with ``provider_hint`` evidence; it neither identifies a campaign
+nor qualifies the conversation for CRM.
+
+A supported ad referral with an identifier, or an explicit CTWA entry point, can
+carry stronger provider evidence. Identifiers such as an ad source and a CTWA click
+ID retain distinct roles. Even stronger evidence does not create a lead. Commercial
+actions and optional Marketing Center attribution have their own policies.
+
 **Table of contents**
 
 .. contents::
@@ -93,6 +107,24 @@ metadata reads require an active, healthy, identity-verified provider connection
 complete snapshot TTL is six hours; partial results retry after 15 minutes. Avatar
 downloads are limited to 2 MiB and never expose the provider token or remote URL to the
 browser.
+
+Message and origin diagnosis
+============================
+
+#. Check the account's primary connection, authenticated webhook admission and inbox
+   event/job before interpreting a missing message as a provider failure.
+#. Check current verified identity and health before outbound operations. Preserve
+   the original request and provider references when investigating uncertain sends.
+#. For origin evidence, inspect the normalized touchpoint and its identifiers. An
+   ``fbads`` hint without a usable identifier can legitimately remain unresolved.
+#. Check attribution visibility separately from evidence capture. A hidden or absent
+   card is not a reason to create a lead or assign a guessed campaign.
+
+The `CRM and attribution guide (Portuguese)
+<https://github.com/soloztech/contact-center/blob/16.0/docs/crm-and-attribution.md>`_ describes
+explicit commercial actions. Cross-project matching is documented in
+`Marketing Center
+<https://github.com/soloztech/marketing-center/blob/16.0/docs/crm-intake-and-attribution.md>`_.
 
 Known issues / Roadmap
 ======================

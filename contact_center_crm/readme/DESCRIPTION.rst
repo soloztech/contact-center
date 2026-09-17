@@ -16,3 +16,22 @@ depends on this addon.
 Sales and Accounting are optional: their tabs become available when the native
 models are installed and the agent has read access. No financial access is
 granted by this addon. Supplier bills and cancelled documents are excluded.
+
+Integration ownership
+=====================
+
+``contact.center.crm.conversation.link`` records explicit historical associations
+between conversations and native ``crm.lead`` records. The local API's
+``link_crm_opportunity`` and ``unlink_crm_opportunity`` operations maintain that
+ledger independently of customer-panel reads. Native CRM remains authoritative for
+the business record. An existing document being visible in the panel does not mean
+it is associated with this conversation.
+
+This addon does not turn messages, ad referrals or ``fbads`` hints into leads and
+does not assign native UTM fields. Optional acquisition-evidence and CRM-link projection belong to `Marketing Center
+<https://github.com/soloztech/marketing-center/tree/16.0>`_ and its separately
+installed bridges.
+
+Automatic external-campaign mapping to native CRM UTM fields and GCLID-to-campaign
+lookup are not implemented product workflows. Catalog evidence and a CRM link do
+not imply either result.

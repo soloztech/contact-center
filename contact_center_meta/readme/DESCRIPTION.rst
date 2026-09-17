@@ -20,3 +20,18 @@ Outbound media uses a private multipart upload followed by an attachment-ID send
 the original Odoo attachment is never made public. Each command sends one attachment
 without a caption. Ambiguous uploads can be retried; ambiguous message sends stay
 uncertain and are not automatically repeated.
+
+Messaging and marketing are separate integrations
+=================================================
+
+Dependencies are ``contact_center_base``, ``meta_api_base`` and ``meta_webhook_base``.
+The two shared foundations are supplied by
+`Marketing Center <https://github.com/soloztech/marketing-center/tree/16.0>`_.
+Their presence does not install the functional ``marketing_center_meta`` addon.
+
+``contact_center_meta`` handles Messenger and Page-linked Instagram conversations.
+``marketing_center_meta`` handles marketing catalog/reporting and native Meta lead
+form submissions; its optional CRM intake bridge is ``marketing_center_meta_crm``.
+A message or referral handled here is not a lead-form submission and does not trigger
+that bridge. Referral identifiers remain evidence until a separate authorized
+attribution integration resolves them.

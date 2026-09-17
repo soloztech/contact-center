@@ -7,7 +7,7 @@
 
 This document records the official Meta messaging contracts, the initial read-only
 inventory and the dedicated laboratory connection completed on 2026-08-25. Normative
-implementation decisions remain in [`plan.md`](../plan.md). Secrets, access tokens,
+implementation decisions remain in [`plan.md`](../docs/history/plans/plan.md). Secrets, access tokens,
 verify tokens, cookies and raw conversations are not stored in this repository.
 
 ## Implementation status

@@ -28,3 +28,21 @@ Messenger accepts JPEG/PNG/GIF; Instagram accepts JPEG/PNG. Supported audio form
 are AAC, M4A/MP4 and WAV, plus MP3/OGG for Messenger. Supported video formats are
 MP4, OGG, AVI, MOV and WebM. Documents are limited to PDF. Captions and voice notes
 are not enabled for Meta media sends.
+
+Routing and attribution diagnosis
+=================================
+
+Start with the shared endpoint's authenticated delivery and consumer result. Then
+verify the exact Page/Instagram messaging asset, logical account, primary connection
+and Contact Center inbox event/job. Unknown or ambiguous assets have no fallback
+inbox. Shared webhook acceptance alone does not prove messaging delivery succeeded.
+
+For an outbound failure, verify health, token grants, asset identity and the current
+24-hour response window before inspecting the outbox result. An uncertain send
+requires provider evidence; it must not be retried as a new business request.
+
+For an ad-origin card, inspect the referral's observed identifiers and evidence level.
+A safe title or thumbnail does not identify a campaign by itself. Optional catalog
+matching and CRM attribution follow the separate
+`Marketing Center contract
+<https://github.com/soloztech/marketing-center/blob/16.0/docs/crm-intake-and-attribution.md>`_.

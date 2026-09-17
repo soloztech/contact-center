@@ -33,7 +33,7 @@ window has elapsed. This document does not authorize a later deploy.
 
 Before a new window, record its date, operator, canary deadline, go/no-go deadline and
 rollback reserve against the exact coordinated source revisions and updated
-[audit evidence](../reviews/2026-09-05-greenfield-audit.md). Require all acceptance
+[audit evidence](../docs/history/reviews/2026-09-05-greenfield-audit.md). Require all acceptance
 gates to pass at least one hour before the window; otherwise cancel it. Retain 24 hours
 of heightened observation after go-live.
 
@@ -198,7 +198,7 @@ uncertain final send must remain fenced under rollback mode C. Multiple selected
 are independent messages, not a native album.
 
 The subsequent
-[channel capability revision](../reviews/2026-09-06-channel-capabilities.md) replaces
+[channel capability revision](../docs/history/reviews/2026-09-06-channel-capabilities.md) replaces
 the outgoing card type list with `outbound_structured_content` specifications. Its
 evidence supersedes the above test counts for release acceptance. On an existing
 laboratory database, run the normal connection capability refresh after updating the

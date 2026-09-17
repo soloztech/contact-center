@@ -79,6 +79,21 @@ The generic *Provider Connections* form exposes a stable extension notebook. Pro
 addons register their selector entry and add conditional settings there without adding
 provider fields to the core.
 
+CRM and attribution boundary
+============================
+
+This module depends on native ``mail``, ``rating``, ``web`` and OCA ``queue_job``;
+it does not depend on CRM, Sales, Accounting or Marketing Center. Attribution
+records retain provider observations, their evidence level and external identifiers.
+They do not qualify a customer, create a ``crm.lead`` or choose a campaign.
+
+A conversation, a linked contact, a commercial association and an attribution
+observation are separate records with separate lifecycles. Install
+``contact_center_crm`` to browse a customer's native business records and
+``contact_center_kanban`` only when service cases and explicit CRM actions are needed.
+Optional cross-project attribution bridges are distributed by
+`Marketing Center <https://github.com/soloztech/marketing-center/tree/16.0>`_.
+
 **Table of contents**
 
 .. contents::
@@ -182,6 +197,23 @@ Install ``contact_center_kanban`` when service cases, configurable pipelines, Ka
 stages or transition history are required. Conversation follow-ups belong to the
 base addon and remain available without Kanban. The base addon has
 no models, fields, hooks or database assumptions from that optional workflow.
+
+Diagnosing attribution without changing CRM
+===========================================
+
+#. Confirm the logical account, company, active primary connection and conversation.
+#. Inspect the inbox event and its linked queue job before retrying delivery.
+#. Inspect the touchpoint type, evidence level and observed identifiers. A provider
+   hint such as ``fbads`` is not an identified campaign or a qualified lead.
+#. Check the account's ``attribution_ui_enabled`` setting and the viewer's access
+   when technical evidence exists but its safe projection is absent from the inbox.
+#. If CRM association or campaign resolution is expected, inspect that separate
+   integration and its policy; reprocessing a message is not a CRM qualification action.
+
+See the `CRM and attribution guide (Portuguese)
+<https://github.com/soloztech/contact-center/blob/16.0/docs/crm-and-attribution.md>`_ and the
+`Marketing Center intake contract
+<https://github.com/soloztech/marketing-center/blob/16.0/docs/crm-intake-and-attribution.md>`_.
 
 Bug Tracker
 ===========
