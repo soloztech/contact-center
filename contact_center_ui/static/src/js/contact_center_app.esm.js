@@ -8,6 +8,7 @@ import {
     conversationResolutionAction,
     conversationUiPolicy,
     initials,
+    technicalChannelActionEnabled,
 } from "./contact_center_model.esm";
 import {useOwnedDialogs, useService} from "@web/core/utils/hooks";
 import {BrowserAttention} from "./browser_attention.esm";
@@ -20,6 +21,7 @@ import {ConversationTimeline} from "./conversation_timeline.esm";
 import {DeferredImage} from "./deferred_image.esm";
 import {MessageComposer} from "./message_composer.esm";
 import {browser} from "@web/core/browser/browser";
+import {_t} from "@web/core/l10n/translation";
 import {registry} from "@web/core/registry";
 
 export function conversationComposerAvailable(policy, capabilities) {
@@ -37,6 +39,7 @@ export class ContactCenterApp extends Component {
             sidePanel: "contact",
         });
         this.addDialog = useOwnedDialogs();
+        this.action = useService("action");
         this.attention = new BrowserAttention();
         this.store = new ContactCenterStore({
             orm: useService("orm"),
@@ -76,6 +79,28 @@ export class ContactCenterApp extends Component {
             classes.push("cc-inbox-compact");
         }
         return classes.join(" ");
+    }
+
+    get canViewTechnicalChannel() {
+        return technicalChannelActionEnabled(
+            this.store.capabilities, this.selectedConversation
+        );
+    }
+
+    async viewTechnicalChannel() {
+        if (!this.canViewTechnicalChannel) {
+            return false;
+        }
+        await this.action.doAction({
+            type: "ir.actions.act_window",
+            name: _t("Canal técnico"),
+            res_model: "mail.channel",
+            res_id: this.selectedConversation.channel_id,
+            views: [[false, "form"]],
+            view_mode: "form",
+            target: "new",
+        });
+        return true;
     }
 
     get selectedConversation() {

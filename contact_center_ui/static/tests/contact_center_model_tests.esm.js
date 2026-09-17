@@ -49,6 +49,8 @@ import {
     partnerCompanyForIdentity,
     realtimeStatusMeta,
     sourceWebhookActionEnabled,
+    technicalMessageActionEnabled,
+    technicalChannelActionEnabled,
     validateEnvelope,
     validateMediaFile,
 } from "@contact_center_ui/js/contact_center_model.esm";
@@ -246,6 +248,29 @@ QUnit.module("contact_center_ui > conversation lifecycle", (hooks) => {
         store.scheduleSynchronization = () => undefined;
         return store;
     }
+
+    QUnit.test("technical channel shortcut requires its own system capability", (assert) => {
+        assert.ok(technicalChannelActionEnabled({view_technical_channel: true}, {channel_id: 32}));
+        for (const capability of [false, undefined, "true", 1]) {
+            assert.notOk(technicalChannelActionEnabled({view_technical_channel: capability}, {channel_id: 32}));
+        }
+        for (const id of [false, 0, -1, "32", 1.5, undefined]) {
+            assert.notOk(technicalChannelActionEnabled({view_technical_channel: true}, {channel_id: id}));
+        }
+        assert.notOk(technicalChannelActionEnabled({view_technical_message: true}, {channel_id: 32}));
+    });
+
+    QUnit.test("technical message shortcut requires system capability and persisted ID", (assert) => {
+        assert.ok(technicalMessageActionEnabled({view_technical_message: true}, {message_id: 84}));
+        for (const capability of [false, undefined, "true", 1]) {
+            assert.notOk(technicalMessageActionEnabled({view_technical_message: capability}, {message_id: 84}));
+        }
+        for (const id of [false, 0, -1, "84", 1.5, undefined]) {
+            assert.notOk(technicalMessageActionEnabled({view_technical_message: true}, {message_id: id}));
+        }
+        assert.notOk(technicalMessageActionEnabled({}, {message_id: 84}));
+        assert.notOk(technicalMessageActionEnabled({view_source_webhook: true}, {message_id: 84}));
+    });
 
     QUnit.test(
         "destructive conversation actions require effective server capabilities",

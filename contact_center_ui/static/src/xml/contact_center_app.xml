@@ -159,6 +159,16 @@
                                         aria-hidden="true"
                                     />
                                 </button>
+                                <button
+                                    t-if="canViewTechnicalChannel"
+                                    type="button"
+                                    class="cc-icon-button"
+                                    title="Ver canal técnico"
+                                    aria-label="Ver canal técnico"
+                                    t-on-click="viewTechnicalChannel"
+                                >
+                                    <i class="fa fa-cog" aria-hidden="true" />
+                                </button>
                                 <ConversationTags
                                     t-if="store.capabilities.manage_tags"
                                     t-key="selectedConversation.channel_id"

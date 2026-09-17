@@ -432,6 +432,10 @@ class TestSourceWebhookLink(SavepointCase):
         serialized = system_api._serialize_message(system_message, system_binding)
         self.assertEqual(serialized["source_inbox_event_id"], source.id)
         self.assertTrue(system_api.bootstrap()["capabilities"]["view_source_webhook"])
+        self.assertTrue(system_api.bootstrap()["capabilities"]["view_technical_message"])
+        self.assertFalse(cc_admin_api.bootstrap()["capabilities"]["view_technical_message"])
+        self.assertTrue(system_api.bootstrap()["capabilities"]["view_technical_channel"])
+        self.assertFalse(cc_admin_api.bootstrap()["capabilities"]["view_technical_channel"])
 
     def test_control_source_ui_keeps_existing_system_only_permission(self):
         channel, channel_binding = self._channel_binding()

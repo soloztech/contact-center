@@ -16,6 +16,7 @@ import {
     messagePreviewText,
     messageStatusMeta,
     sourceWebhookActionEnabled,
+    technicalMessageActionEnabled,
 } from "./contact_center_model.esm";
 import {deserializeDateTime, formatDate} from "@web/core/l10n/dates";
 import {useBus, useService} from "@web/core/utils/hooks";
@@ -538,6 +539,7 @@ export class ConversationTimeline extends Component {
 
     hasActions(message) {
         return (
+            technicalMessageActionEnabled(this.store.capabilities, message) ||
             sourceWebhookActionEnabled(this.store.capabilities, message) ||
             downloadableMessageMedia(message).length > 0 ||
             (!isControlTimelineMessage(message) &&
@@ -549,6 +551,10 @@ export class ConversationTimeline extends Component {
 
     mediaDownloads(message) {
         return downloadableMessageMedia(message);
+    }
+
+    canViewTechnicalMessage(message) {
+        return technicalMessageActionEnabled(this.store.capabilities, message);
     }
 
     canViewSourceWebhook(message) {
@@ -583,6 +589,9 @@ export class ConversationTimeline extends Component {
                     this.store.capabilities &&
                         this.store.capabilities.view_source_webhook === true
                 );
+                const technicalCapability = technicalMessageActionEnabled(
+                    this.store.capabilities, message
+                );
                 const sourceInboxEventId =
                     message &&
                     Number.isSafeInteger(message.source_inbox_event_id) &&
@@ -593,7 +602,7 @@ export class ConversationTimeline extends Component {
                     actions.react
                 )}:${Boolean(actions.edit)}:${Boolean(
                     actions.delete
-                )}:${sourceCapability}:${sourceInboxEventId}`;
+                )}:${sourceCapability}:${sourceInboxEventId}:${technicalCapability}`;
             })
             .join("|");
     }
@@ -1121,6 +1130,25 @@ export class ConversationTimeline extends Component {
         }
         this.closeActions();
         this.store.setReply(message);
+    }
+
+    async viewTechnicalMessage(message) {
+        const currentMessage = this.messageById(message && message.message_id);
+        if (!this.canViewTechnicalMessage(currentMessage)) {
+            this.reconcileInteractionPolicy();
+            return false;
+        }
+        this.closeActions();
+        await this.action.doAction({
+            type: "ir.actions.act_window",
+            name: _t("Mensagem técnica"),
+            res_model: "mail.message",
+            res_id: currentMessage.message_id,
+            views: [[false, "form"]],
+            view_mode: "form",
+            target: "new",
+        });
+        return true;
     }
 
     async viewSourceWebhook(message) {

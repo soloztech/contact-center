@@ -1449,6 +1449,27 @@ export function messageActionEnabled(conversation, message, action) {
     );
 }
 
+export function technicalChannelActionEnabled(capabilities, conversation) {
+    return Boolean(
+        isPlainObject(capabilities) &&
+            capabilities.view_technical_channel === true &&
+            isPlainObject(conversation) &&
+            Number.isSafeInteger(conversation.channel_id) &&
+            conversation.channel_id > 0
+    );
+}
+
+/** Only technical administrators may open a persisted native message. */
+export function technicalMessageActionEnabled(capabilities, message) {
+    return Boolean(
+        isPlainObject(capabilities) &&
+            capabilities.view_technical_message === true &&
+            isPlainObject(message) &&
+            Number.isSafeInteger(message.message_id) &&
+            message.message_id > 0
+    );
+}
+
 /**
  * Gate the diagnostic source-webhook action on both server authorization and
  * a normalized inbox-event reference. Exact booleans and positive integers

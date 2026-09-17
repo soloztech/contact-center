@@ -1754,6 +1754,8 @@ class ContactCenterUiApi(models.AbstractModel):
                 "create_central_company": True,
                 "rename_guest": True,
                 "view_source_webhook": self.env.user.has_group("base.group_system"),
+                "view_technical_message": self.env.user.has_group("base.group_system"),
+                "view_technical_channel": self.env.user.has_group("base.group_system"),
             },
             "accounts": [
                 {
