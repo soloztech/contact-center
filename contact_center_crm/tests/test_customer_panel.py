@@ -14,21 +14,23 @@ class TestCustomerPanel(ConversationCrmCase):
         other_channel = self._channel(self.account, self.person)
         self.api.link_crm_opportunity(self.channel.id, self.lead.id)
         self.env.flush_all()
-        with patch.object(
-            type(self.api), "_crm_links", side_effect=AssertionError("Ledger queried")
-        ):
-            first = self.api.get_customer_records(self.channel.id)
-            second = self.api.get_customer_records(other_channel.id)
-        self.assertEqual(first["items"], second["items"])
+        first = self.api.get_customer_records(self.channel.id)
+        second = self.api.get_customer_records(other_channel.id)
+        self.assertEqual(
+            [item["id"] for item in first["items"]],
+            [item["id"] for item in second["items"]],
+        )
+        self.assertTrue(any(item["linked"] for item in first["items"]))
+        self.assertFalse(any(item["linked"] for item in second["items"]))
         self.assertNotEqual(first["channel_id"], second["channel_id"])
 
-    def test_an_old_link_to_a_different_customer_does_not_leak_into_panel(self):
+    def test_explicit_crm_link_remains_visible_after_customer_change(self):
         self.api.link_crm_opportunity(self.channel.id, self.lead.id)
         unrelated = self.env["res.partner"].create({"name": "Different customer"})
         self.lead.partner_id = unrelated
         self.lead.flush_recordset()
         result = self.api.get_customer_records(self.channel.id)
-        self.assertNotIn(self.lead.id, [item["id"] for item in result["items"]])
+        self.assertIn(self.lead.id, [item["id"] for item in result["items"]])
         self.assertTrue(
             self.env["contact.center.crm.conversation.link"].search_count(
                 [("channel_id", "=", self.channel.id), ("lead_id", "=", self.lead.id)]
@@ -83,7 +85,7 @@ class TestCustomerPanel(ConversationCrmCase):
             self.env.company.currency_id.decimal_places,
         )
         self.assertRegex(items[lead.id]["date"], r"^\d{4}-\d{2}-\d{2}$")
-        self.assertNotIn("linked", items[lead.id])
+        self.assertFalse(items[lead.id]["linked"])
 
     def test_invalid_tab_and_search_cannot_select_arbitrary_models(self):
         for tab in ("res.users", "", ["opportunities"]):

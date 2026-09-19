@@ -3595,6 +3595,27 @@ class ContactCenterUiApi(models.AbstractModel):
             media_refs=media_refs,
             structured_content=structured_content,
         )
+        return self._serialize_send_result(channel, message, outbox)
+
+    @api.model
+    def _send_automation_message(self, channel_id, body, *, client_request_id):
+        """Internal text send under the executing user's ordinary inbox access.
+
+        The caller persists and reuses its request UUID. No actor or origin can
+        be supplied through RPC arguments or context to the public send method.
+        """
+        channel, _member = self._authorized_channel(channel_id)
+        if not client_request_id:
+            raise ValidationError(_("An automation send requires a request UUID."))
+        message, outbox = self._application()._send_message(
+            channel,
+            body,
+            client_request_id=client_request_id,
+            message_origin="automation",
+        )
+        return self._serialize_send_result(channel, message, outbox)
+
+    def _serialize_send_result(self, channel, message, outbox):
         binding = outbox.message_binding_id
         return {
             "schema_version": SCHEMA_VERSION,

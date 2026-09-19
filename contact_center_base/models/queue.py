@@ -1746,7 +1746,7 @@ class ContactCenterOutboxCommand(models.Model):
                 not message_binding
                 or message_binding.provider_connection_id != self.provider_connection_id
                 or message_binding.direction != "outbound"
-                or message_binding.origin != "agent"
+                or message_binding.origin not in ("agent", "automation")
                 or not message_binding.client_message_id
                 or not media_shape_valid
                 or not reply_shape_valid

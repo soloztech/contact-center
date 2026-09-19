@@ -15,7 +15,7 @@ import {validateEnvelope} from "@contact_center_ui/js/contact_center_model.esm";
 
 const PAGE_SIZE = 20;
 export const CUSTOMER_TABS = [
-    {id: "opportunities", label: "Oportunidades", model: "crm.lead"},
+    {id: "opportunities", label: "Leads e oportunidades", model: "crm.lead"},
     {id: "quotations", label: "Cotações", model: "sale.order"},
     {id: "orders", label: "Pedidos", model: "sale.order"},
     {id: "invoices", label: "Faturas", model: "account.move"},
@@ -106,6 +106,9 @@ function normalizeItem(item, tab, channelId) {
         type: typeof item.type === "string" ? item.type : "",
         typeLabel: typeof item.type_label === "string" ? item.type_label : "",
         active: item.active !== false,
+        linked: item.linked === true,
+        phoneMatch: item.phone_match === true,
+        canLink: item.can_link === true,
         paymentState: label(item.payment_state),
         documentTools: normalizeDocumentTools(item, channelId),
         attachments: emptyAttachments(),
@@ -146,7 +149,7 @@ export function normalizeCustomerPage(payload, channelId, tabId) {
         throw new TypeError("Inconsistent customer tab availability");
     }
     const partner = reference(payload.partner);
-    const canRead = Boolean(available && partner);
+    const canRead = Boolean(available && (partner || tabId === "opportunities"));
     const items = canRead
         ? payload.items.map((item) => normalizeItem(item, tab, channelId))
         : [];
@@ -248,6 +251,7 @@ export class CrmPanelModel {
             canCreateQuotation: false,
             quotationBusy: false,
             draftBusy: false,
+            linkBusy: false,
         });
     }
 
@@ -298,10 +302,7 @@ export class CrmPanelModel {
         this.state.partner = projection.partner;
         this.state.company = projection.company;
         this.state.canCreateQuotation = projection.canCreateQuotation;
-        const items =
-            append && projection.phase === "ready" && projection.partner
-                ? this.page.items
-                : [];
+        const items = append && projection.phase === "ready" ? this.page.items : [];
         this.page.items = Array.from(
             new Map(
                 [...items, ...projection.items].map((item) => [item.id, item])
@@ -580,6 +581,52 @@ export class CrmPanelModel {
             return false;
         } finally {
             this.state.quotationBusy = false;
+        }
+    }
+
+    async toggleCrmLink(recordId) {
+        const item = this.page.items.find((entry) => entry.id === recordId);
+        if (
+            !this.current() ||
+            this.state.linkBusy ||
+            this.page.phase !== "ready" ||
+            !item ||
+            item.model !== "crm.lead" ||
+            (!item.canLink && !item.linked)
+        ) {
+            return false;
+        }
+        const tabId = this.state.activeTab;
+        this.state.linkBusy = true;
+        this.state.operationError = "";
+        this.state.operationStatus = "";
+        try {
+            const response = await this.store.call(
+                item.linked ? "unlink_crm_opportunity" : "link_crm_opportunity",
+                [this.channelId, item.id]
+            );
+            validateEnvelope(response);
+            if (
+                response.channel_id !== this.channelId ||
+                response.opportunity_id !== item.id ||
+                response.linked !== !item.linked
+            ) {
+                throw new TypeError("Unexpected CRM link response");
+            }
+            if (!this.current() || this.state.activeTab !== tabId) {
+                return false;
+            }
+            this.state.operationStatus = response.linked
+                ? "Registro vinculado à conversa."
+                : "Vínculo removido. O registro do CRM foi preservado.";
+            return await this.load();
+        } catch (_error) {
+            if (this.current() && this.state.activeTab === tabId) {
+                this.state.operationError = "Não foi possível atualizar o vínculo.";
+            }
+            return false;
+        } finally {
+            this.state.linkBusy = false;
         }
     }
 

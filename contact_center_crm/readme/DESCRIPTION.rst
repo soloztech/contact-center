@@ -1,12 +1,19 @@
 Agents can open the customer panel from the handshake button in the Contact
-Center inbox. Four tabs show opportunities, quotations, orders and customer
+Center inbox. Four tabs show leads and opportunities, quotations, orders and customer
 invoices, with links to their native Odoo forms.
 
-Records belong to the contact and their commercial company. Conversations
-associated with the same customer show the same records within the agent's
-native access rights and the inbox's company. Reading the panel does not create
-conversation associations or change marketing attribution. Existing historical
-conversation-to-lead associations remain separate from this customer view.
+CRM records include explicit conversation associations and exact phone candidates,
+including prospects without a customer record. The panel labels links separately
+from suggestions and requires explicit selection before linking. Customer sales
+documents belong to the contact and their commercial company. Every projection
+respects native access rights and the inbox company. Reading the panel does not
+create associations or change marketing attribution.
+
+The **Conversar** action on a CRM record reuses the existing Contact Center
+conversation admission API and links the result. It does not send messages,
+create a partner or change the lead's type or stage. Optional automation addons
+can reuse ``crm.lead._contact_center_start_and_link(account, phone=None)``, which
+returns an authorized ``mail.channel`` record. Message dispatch remains separate.
 
 This addon requires the chat UI and native CRM. It does not install Kanban,
 create service cases, choose sales teams or change opportunity stages. Optional
@@ -32,6 +39,6 @@ does not assign native UTM fields. Optional acquisition-evidence and CRM-link pr
 <https://github.com/soloztech/marketing-center/tree/16.0>`_ and its separately
 installed bridges.
 
-Automatic external-campaign mapping to native CRM UTM fields and GCLID-to-campaign
-lookup are not implemented product workflows. Catalog evidence and a CRM link do
-not imply either result.
+External-campaign mapping to native CRM UTM fields and GCLID enrichment belong
+to Marketing Center. This module does not perform those lookups while opening
+or linking a conversation.

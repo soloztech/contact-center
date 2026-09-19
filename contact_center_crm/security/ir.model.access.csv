@@ -1,2 +1,3 @@
 id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
 access_crm_conversation_link_internal,Private CRM conversation link ledger,model_contact_center_crm_conversation_link,base.group_user,0,0,0,0
+access_crm_start_agent,Start CRM conversation,model_contact_center_crm_start,contact_center_base.group_contact_center_agent,1,1,1,1

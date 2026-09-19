@@ -179,6 +179,7 @@ class ContactCenterApplicationOutbound(models.AbstractModel):
         normalized_media_refs,
         reply_to_message_id,
         structured_content=None,
+        message_origin="agent",
     ):
         existing_outbox = (
             self.env["contact.center.outbox.command"]
@@ -205,6 +206,7 @@ class ContactCenterApplicationOutbound(models.AbstractModel):
             )
             if (
                 persisted_message.get("text") != clean_body
+                or existing_outbox.message_binding_id.origin != message_origin
                 or (persisted_message.get("structured_content") or {})
                 != (structured_content or {})
                 or persisted_media_refs != normalized_media_refs
@@ -490,6 +492,7 @@ class ContactCenterApplicationOutbound(models.AbstractModel):
         reply_to_message_id,
         uploads,
         structured_content=None,
+        message_origin="agent",
     ):
         message = channel._contact_center_post(
             origin="outbound",
@@ -514,7 +517,7 @@ class ContactCenterApplicationOutbound(models.AbstractModel):
                     "channel_binding_id": binding.id,
                     "provider_connection_id": connection.id,
                     "direction": "outbound",
-                    "origin": "agent",
+                    "origin": message_origin,
                     "content_type": (structured_content or {}).get("type")
                     or (uploads.kind if len(uploads) == 1 else "text"),
                     "structured_content_json": structured_content or {},
@@ -935,8 +938,11 @@ class ContactCenterApplicationOutbound(models.AbstractModel):
         client_request_id=None,
         media_refs=None,
         structured_content=None,
+        message_origin="agent",
     ):
         self._check_agent()
+        if message_origin not in ("agent", "automation"):
+            raise ValidationError(_("Invalid outbound message origin."))
         channel.ensure_one()
         channel.check_access_rights("read")
         channel.check_access_rule("read")
@@ -976,12 +982,13 @@ class ContactCenterApplicationOutbound(models.AbstractModel):
             normalized_media_refs,
             reply_to_message_id,
             structured_content=structured_content,
+            message_origin=message_origin,
         )
         if existing_outbox:
             return existing_outbox.message_binding_id.message_id, existing_outbox
         sender_signature = (
             {}
-            if structured_content
+            if structured_content or message_origin == "automation"
             else self._outbound_signature(binding.account_id, clean_body)
         )
         connection = self._outbound_connection(
@@ -1028,6 +1035,7 @@ class ContactCenterApplicationOutbound(models.AbstractModel):
             reply_to_message_id,
             uploads,
             structured_content=structured_content,
+            message_origin=message_origin,
         )
         address_dtos, target_address = self._outbound_route(
             binding, _("The conversation has no outbound routing address.")

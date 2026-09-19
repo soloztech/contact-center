@@ -371,13 +371,19 @@ ul.auto-toc {
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! -->
 <p><a class="reference external image-reference" href="https://odoo-community.org/page/development-status"><img alt="Beta" src="https://img.shields.io/badge/maturity-Beta-yellow.png" /></a> <a class="reference external image-reference" href="http://www.gnu.org/licenses/agpl-3.0-standalone.html"><img alt="License: AGPL-3" src="https://img.shields.io/badge/license-AGPL--3-blue.png" /></a> <a class="reference external image-reference" href="https://github.com/soloztech/contact-center/tree/16.0/contact_center_crm"><img alt="soloztech/contact-center" src="https://img.shields.io/badge/github-soloztech%2Fcontact--center-lightgray.png?logo=github" /></a></p>
 <p>Agents can open the customer panel from the handshake button in the Contact
-Center inbox. Four tabs show opportunities, quotations, orders and customer
+Center inbox. Four tabs show leads and opportunities, quotations, orders and customer
 invoices, with links to their native Odoo forms.</p>
-<p>Records belong to the contact and their commercial company. Conversations
-associated with the same customer show the same records within the agent’s
-native access rights and the inbox’s company. Reading the panel does not create
-conversation associations or change marketing attribution. Existing historical
-conversation-to-lead associations remain separate from this customer view.</p>
+<p>CRM records include explicit conversation associations and exact phone candidates,
+including prospects without a customer record. The panel labels links separately
+from suggestions and requires explicit selection before linking. Customer sales
+documents belong to the contact and their commercial company. Every projection
+respects native access rights and the inbox company. Reading the panel does not
+create associations or change marketing attribution.</p>
+<p>The <strong>Conversar</strong> action on a CRM record reuses the existing Contact Center
+conversation admission API and links the result. It does not send messages,
+create a partner or change the lead’s type or stage. Optional automation addons
+can reuse <tt class="docutils literal">crm.lead._contact_center_start_and_link(account, phone=None)</tt>, which
+returns an authorized <tt class="docutils literal">mail.channel</tt> record. Message dispatch remains separate.</p>
 <p>This addon requires the chat UI and native CRM. It does not install Kanban,
 create service cases, choose sales teams or change opportunity stages. Optional
 pipeline and stage synchronization lives in <tt class="docutils literal">contact_center_kanban</tt>, which
@@ -385,28 +391,39 @@ depends on this addon.</p>
 <p>Sales and Accounting are optional: their tabs become available when the native
 models are installed and the agent has read access. No financial access is
 granted by this addon. Supplier bills and cancelled documents are excluded.</p>
+<div class="section" id="integration-ownership">
+<h1>Integration ownership</h1>
+<p><tt class="docutils literal">contact.center.crm.conversation.link</tt> records explicit historical associations
+between conversations and native <tt class="docutils literal">crm.lead</tt> records. The local API’s
+<tt class="docutils literal">link_crm_opportunity</tt> and <tt class="docutils literal">unlink_crm_opportunity</tt> operations maintain that
+ledger independently of customer-panel reads. Native CRM remains authoritative for
+the business record. An existing document being visible in the panel does not mean
+it is associated with this conversation.</p>
+<p>This addon does not turn messages, ad referrals or <tt class="docutils literal">fbads</tt> hints into leads and
+does not assign native UTM fields. Optional acquisition-evidence and CRM-link projection belong to <a class="reference external" href="https://github.com/soloztech/marketing-center/tree/16.0">Marketing Center</a> and its separately
+installed bridges.</p>
+<p>External-campaign mapping to native CRM UTM fields and GCLID enrichment belong
+to Marketing Center. This module does not perform those lookups while opening
+or linking a conversation.</p>
 <p><strong>Table of contents</strong></p>
-<div class="contents local topic" id="contents">
-<ul class="simple">
-<li><a class="reference internal" href="#usage" id="toc-entry-1">Usage</a></li>
-<li><a class="reference internal" href="#bug-tracker" id="toc-entry-2">Bug Tracker</a></li>
-<li><a class="reference internal" href="#credits" id="toc-entry-3">Credits</a><ul>
-<li><a class="reference internal" href="#authors" id="toc-entry-4">Authors</a></li>
-<li><a class="reference internal" href="#contributors" id="toc-entry-5">Contributors</a></li>
-<li><a class="reference internal" href="#maintainers" id="toc-entry-6">Maintainers</a></li>
-</ul>
-</li>
-</ul>
 </div>
 <div class="section" id="usage">
-<h1><a class="toc-backref" href="#toc-entry-1">Usage</a></h1>
+<h1>Usage</h1>
 <p>Open a conversation in the Contact Center inbox and click the handshake icon
-next to the contact details button. Select <tt class="docutils literal">Oportunidades</tt>, <tt class="docutils literal">Cotações</tt>,
+next to the contact details button. Select <tt class="docutils literal">Leads e oportunidades</tt>, <tt class="docutils literal">Cotações</tt>,
 <tt class="docutils literal">Pedidos</tt> or <tt class="docutils literal">Faturas</tt> to browse the linked contact’s commercial records.</p>
 <p>Search and pagination apply to the selected tab. Opening a record uses the
 native Odoo form; the panel refreshes when that form closes. An agent needs
-access both to the conversation and to the document. If there is no linked
-contact, the panel asks for one instead of searching all customers.</p>
+access both to the conversation and to the document. CRM records include explicit
+conversation links and exact normalized phone matches, even without a contact.
+Phone suggestions require clicking <strong>Vincular à conversa</strong>; no match is linked
+automatically, including when there is a single candidate. Sales and invoice tabs
+still require a linked contact.</p>
+<p>From a lead or opportunity, click <strong>Conversar</strong>, select an eligible WhatsApp inbox
+and one of the lead’s phone numbers. The wizard opens or reuses the conversation
+and records the association, without creating a customer or sending a message.
+Update the lead first if its phone is missing or invalid. Existing CRM type and
+stage are preserved.</p>
 <p>Quotations are draft or sent sale orders; confirmed and locked sale orders
 appear under orders. Customer invoices and credit notes appear under invoices,
 with credit notes distinguished by type and negative amounts. A tab explains
@@ -418,8 +435,34 @@ lifecycle. Browsing customer records does not change those associations.</p>
 backfill scripts in <tt class="docutils literal">release_migrations</tt> through the atomic release runner.
 Do not upgrade only this addon over the former CRM/Kanban bridge installation.</p>
 </div>
+<div class="section" id="configuration-and-diagnosis">
+<h1>Configuration and diagnosis</h1>
+<ol class="arabic simple">
+<li>Install <tt class="docutils literal">contact_center_crm</tt> with its declared <tt class="docutils literal">contact_center_ui</tt> and <tt class="docutils literal">crm</tt>
+dependencies. No Kanban mapping is required for the customer panel.</li>
+<li>Grant the agent the intended inbox access and native document permissions.
+Installing this addon does not grant Sales or Accounting access.</li>
+<li>Link the conversation’s identity to the correct contact for sales documents.
+CRM also supports explicit conversation links and exact registered phones.</li>
+<li>Treat a panel read and a commercial association as different operations. The
+explicit link API requires a permitted, active CRM record belonging to the
+customer or an exact normalized phone; a repeated existing link reuses its
+association. CRM ACLs and company scope apply to every suggestion and link.</li>
+<li>Use Kanban’s own actions if an Atendimento must create or link a CRM record.
+Its company, sales-team and stage prerequisites are additional to panel access.</li>
+</ol>
+<p>An empty CRM tab means there are no readable linked records, customer records or
+exact phone candidates in this company. An unavailable tab means a missing native
+model or read permission. Neither condition should be repaired by creating a
+duplicate lead. <strong>Vinculado a esta conversa</strong> identifies an explicit association;
+<strong>Mesmo telefone — confirme o vínculo</strong> identifies a suggestion only.</p>
+<p>When allowed by native Sales, <strong>New Quotation</strong> opens the native form with the
+commercial customer and inbox company as defaults. The user saves the quotation
+explicitly; opening this form does not create a CRM lead.</p>
+<p>For campaign evidence, see the <a class="reference external" href="https://github.com/soloztech/marketing-center/blob/16.0/docs/crm-intake-and-attribution.md">cross-project intake and attribution contract</a>.</p>
+</div>
 <div class="section" id="bug-tracker">
-<h1><a class="toc-backref" href="#toc-entry-2">Bug Tracker</a></h1>
+<h1>Bug Tracker</h1>
 <p>Bugs are tracked on <a class="reference external" href="https://github.com/soloztech/contact-center/issues">GitHub Issues</a>.
 In case of trouble, please check there if your issue has already been reported.
 If you spotted it first, help us to smash it by providing a detailed and welcomed
@@ -427,21 +470,21 @@ If you spotted it first, help us to smash it by providing a detailed and welcome
 <p>Do not contact contributors directly about support or help with technical issues.</p>
 </div>
 <div class="section" id="credits">
-<h1><a class="toc-backref" href="#toc-entry-3">Credits</a></h1>
+<h1>Credits</h1>
 <div class="section" id="authors">
-<h2><a class="toc-backref" href="#toc-entry-4">Authors</a></h2>
+<h2>Authors</h2>
 <ul class="simple">
 <li>Soloz Technologies</li>
 </ul>
 </div>
 <div class="section" id="contributors">
-<h2><a class="toc-backref" href="#toc-entry-5">Contributors</a></h2>
+<h2>Contributors</h2>
 <ul class="simple">
 <li>Lucas Zotelli</li>
 </ul>
 </div>
 <div class="section" id="maintainers">
-<h2><a class="toc-backref" href="#toc-entry-6">Maintainers</a></h2>
+<h2>Maintainers</h2>
 <p>This module is part of the <a class="reference external" href="https://github.com/soloztech/contact-center/tree/16.0/contact_center_crm">soloztech/contact-center</a> project on GitHub.</p>
 <p>You are welcome to contribute.</p>
 </div>

@@ -108,7 +108,7 @@
                         <form
                             class="cc-crm-panel__search"
                             t-on-submit.prevent="() => model.load()"
-                            t-if="page.phase === 'ready' &amp;&amp; state.partner"
+                            t-if="page.phase === 'ready' &amp;&amp; (state.partner || state.activeTab === 'opportunities')"
                         >
                             <label
                                 class="cc-crm-panel__search-label"
@@ -141,14 +141,14 @@
                             t-on-click="() => model.load()"
                         >Tentar novamente</button>
                         <p
-                            t-if="page.phase === 'ready' &amp;&amp; !state.partner"
+                            t-if="page.phase === 'ready' &amp;&amp; !state.partner &amp;&amp; state.activeTab !== 'opportunities'"
                             class="cc-detail-copy"
                         >Vincule um contato nos detalhes da conversa para consultar os registros comerciais do cliente e da empresa.</p>
                         <p
-                            t-if="page.phase === 'ready' &amp;&amp; state.partner &amp;&amp; !page.items.length &amp;&amp; !page.error"
+                            t-if="page.phase === 'ready' &amp;&amp; (state.partner || state.activeTab === 'opportunities') &amp;&amp; !page.items.length &amp;&amp; !page.error"
                             class="cc-detail-copy"
                             role="status"
-                            t-esc="page.appliedQuery ? 'Nenhum registro encontrado para esta busca.' : 'Este cliente ainda não tem registros disponíveis nesta aba.'"
+                            t-esc="page.appliedQuery ? 'Nenhum registro encontrado para esta busca.' : 'Nenhum registro vinculado ou correspondente disponível nesta aba.'"
                         />
                         <ul class="cc-crm-panel__list" t-if="page.items.length">
                             <li
@@ -208,6 +208,28 @@
                                             t-esc="item.paymentState"
                                         /></div>
                                 </dl>
+                                <div
+                                    t-if="item.model === 'crm.lead' &amp;&amp; (item.linked || item.phoneMatch || item.canLink)"
+                                    class="cc-customer-record__tools"
+                                >
+                                    <span
+                                        t-if="item.linked"
+                                        class="cc-detail-copy"
+                                    >Vinculado a esta conversa</span>
+                                    <span
+                                        t-elif="item.phoneMatch"
+                                        class="cc-detail-copy"
+                                    >Mesmo telefone — confirme o vínculo</span>
+                                    <button
+                                        t-if="item.canLink || item.linked"
+                                        type="button"
+                                        class="cc-record-link"
+                                        t-att-disabled="state.linkBusy"
+                                        t-on-click="() => model.toggleCrmLink(item.id)"
+                                    ><t
+                                            t-esc="item.linked ? 'Desvincular' : 'Vincular à conversa'"
+                                        /></button>
+                                </div>
                                 <t t-if="item.documentTools">
                                     <div class="cc-customer-record__tools">
                                         <a

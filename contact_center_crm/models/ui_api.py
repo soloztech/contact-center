@@ -1,7 +1,9 @@
 from odoo import _, api, fields, models
 from odoo.exceptions import AccessError, ValidationError
+from odoo.osv import expression
 
 from odoo.addons.contact_center_base.services.dto import SCHEMA_VERSION
+from odoo.addons.contact_center_base.services.phone import normalize_start_phone
 
 CUSTOMER_RECORD_MODELS = {
     "opportunities": "crm.lead",
@@ -67,9 +69,38 @@ class ContactCenterUiApi(models.AbstractModel):
 
     def _crm_customer_domain(self, channel):
         partner, company = self._crm_customer(channel)
-        if not partner:
+        domains = [self._crm_phone_domain(channel)]
+        if partner:
+            domains.append([("partner_id.commercial_partner_id", "=", company.id)])
+        return expression.OR(domains)
+
+    def _crm_phone_domain(self, channel):
+        """Exact registered phone aliases only; never match a suffix or LID."""
+        binding = self._binding_for_channel(channel)
+        numbers = set()
+        if binding and binding.conversation_type == "direct":
+            for alias in binding.identity_id.alias_ids.filtered(
+                lambda alias: alias.account_id == binding.account_id
+                and alias.namespace in ("whatsapp.pn", "phone")
+                and alias.confidence in ("protocol", "manual")
+            ):
+                value = alias.value_normalized or ""
+                if alias.namespace == "whatsapp.pn":
+                    number, separator, domain = value.partition("@")
+                    if not separator or domain not in ("s.whatsapp.net", "c.us"):
+                        continue
+                    value = "+" + number
+                try:
+                    numbers.add(normalize_start_phone(value))
+                except ValueError:
+                    continue
+        if not numbers:
             return [("id", "=", 0)]
-        return [("partner_id.commercial_partner_id", "=", company.id)]
+        return [
+            "|",
+            ("contact_center_phone_normalized", "in", sorted(numbers)),
+            ("contact_center_mobile_normalized", "in", sorted(numbers)),
+        ]
 
     def _crm_scope_domain(self, channel):
         return [("company_id", "in", [False, channel.contact_center_company_id.id])]
@@ -204,11 +235,12 @@ class ContactCenterUiApi(models.AbstractModel):
                 channel, company
             ),
         }
-        if not available or not partner:
+        if not available or (not partner and tab != "opportunities"):
             return result
         # The conversation authorizes access and identifies the customer only.
         # Native document ACL/rules apply, including when another company is
-        # active in the caller's browser. No conversation-link ledger is queried.
+        # active in the caller's browser. Explicit CRM links also remain visible
+        # before a prospect has a partner, and after customer details change.
         documents = (
             self.env[CUSTOMER_RECORD_MODELS[tab]]
             .with_company(channel.contact_center_company_id)
@@ -217,9 +249,21 @@ class ContactCenterUiApi(models.AbstractModel):
                 active_test=False,
             )
         )
+        linked_ids = set()
         domain = [("partner_id.commercial_partner_id", "=", company.id)]
         if tab == "opportunities":
-            domain += self._crm_scope_domain(channel)
+            linked_ids = set(self._crm_links(channel).mapped("lead_id").ids)
+            domain = expression.AND(
+                [
+                    self._crm_scope_domain(channel),
+                    expression.OR(
+                        [
+                            self._crm_customer_domain(channel),
+                            [("id", "in", sorted(linked_ids))],
+                        ]
+                    ),
+                ]
+            )
         else:
             domain += [("company_id", "=", channel.contact_center_company_id.id)]
             if tab == "invoices":
@@ -244,6 +288,23 @@ class ContactCenterUiApi(models.AbstractModel):
                 "has_more": len(records) > limit,
             }
         )
+        if tab == "opportunities":
+            phone_ids = set(
+                documents.search(
+                    self._crm_phone_domain(channel)
+                    + [("id", "in", records[:limit].ids)]
+                ).ids
+            )
+            can_link = channel.check_access_rights("write", raise_exception=False)
+            if can_link:
+                try:
+                    channel.check_access_rule("write")
+                except AccessError:
+                    can_link = False
+            for item in result["items"]:
+                item["linked"] = item["id"] in linked_ids
+                item["phone_match"] = item["id"] in phone_ids
+                item["can_link"] = bool(can_link and item["active"])
         return result
 
     def _customer_can_create_quotation(self, channel, partner):
@@ -394,7 +455,7 @@ class ContactCenterUiApi(models.AbstractModel):
             + [("id", "=", lead.id), ("active", "=", True)]
         ):
             raise ValidationError(
-                _("Choose an opportunity belonging to this customer.")
+                _("Choose a lead or opportunity for this customer or exact phone.")
             )
         self.env["contact.center.crm.conversation.link"]._link(channel, lead)
         return {

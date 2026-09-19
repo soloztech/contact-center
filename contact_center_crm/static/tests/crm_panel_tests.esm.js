@@ -440,7 +440,7 @@ QUnit.module("contact_center_crm > customer records", (hooks) => {
     );
 
     QUnit.test(
-        "normalizes customer records without conversation link state",
+        "normalizes customer records with explicit conversation link state",
         (assert) => {
             const result = normalizeCustomerPage(page(), 404, "opportunities");
             assert.strictEqual(result.partner.id, 21);
@@ -448,7 +448,7 @@ QUnit.module("contact_center_crm > customer records", (hooks) => {
             assert.strictEqual(result.items[0].amount, 1000);
             assert.strictEqual(result.items[0].user, false);
             assert.strictEqual(result.items[0].date, "2026-09-07");
-            assert.notOk("linked" in result.items[0]);
+            assert.notOk(result.items[0].linked);
             assert.deepEqual(
                 result.tabs.map(({id}) => id),
                 ["opportunities", "quotations", "orders", "invoices"]
@@ -915,19 +915,101 @@ QUnit.module("contact_center_crm > customer records", (hooks) => {
         }
     );
 
+    QUnit.test("CRM records remain usable without a contact", async (assert) => {
+        const model = modelFor(async () =>
+            page([customerRecord(11)], {partner: false, commercial_partner: false})
+        );
+        await model.load();
+        assert.notOk(model.state.partner);
+        assert.deepEqual(
+            model.page.items.map((item) => item.id),
+            [11]
+        );
+        assert.notOk(model.page.hasMore);
+        assert.ok(await model.openRecord(11));
+    });
+
     QUnit.test(
-        "a missing contact never falls back to conversation-linked records",
+        "phone candidates are explicitly linked once and refreshed without a contact",
         async (assert) => {
-            const model = modelFor(async () =>
-                page([customerRecord(11)], {partner: false, commercial_partner: false})
-            );
+            const pending = makeDeferred();
+            let linked = false;
+            let writes = 0;
+            const model = modelFor(async (method, args) => {
+                if (method === "get_customer_records") {
+                    return page(
+                        [
+                            customerRecord(11, "opportunities", {
+                                type: "lead",
+                                phone_match: true,
+                                can_link: true,
+                                linked,
+                            }),
+                        ],
+                        {partner: false, commercial_partner: false}
+                    );
+                }
+                assert.strictEqual(method, "link_crm_opportunity");
+                assert.deepEqual(args, [404, 11]);
+                writes += 1;
+                await pending;
+                linked = true;
+                return {schema_version: 1, channel_id: 404, opportunity_id: 11, linked};
+            });
             await model.load();
-            assert.notOk(model.state.partner);
-            assert.deepEqual(model.page.items, []);
-            assert.notOk(model.page.hasMore);
-            assert.notOk(await model.openRecord(11));
+            assert.strictEqual(
+                writes,
+                0,
+                "loading suggestions never links automatically"
+            );
+            assert.ok(model.page.items[0].phoneMatch);
+            const operation = model.toggleCrmLink(11);
+            assert.notOk(await model.toggleCrmLink(11));
+            pending.resolve();
+            assert.ok(await operation);
+            assert.strictEqual(writes, 1);
+            assert.ok(model.page.items[0].linked);
         }
     );
+
+    QUnit.test("partnerless CRM pagination keeps previous leads", async (assert) => {
+        const model = modelFor(async (_method, args) =>
+            page([customerRecord(args[3] ? 12 : 11)], {
+                partner: false,
+                commercial_partner: false,
+                has_more: !args[3],
+            })
+        );
+        await model.load();
+        await model.load({append: true});
+        assert.deepEqual(
+            model.page.items.map((item) => item.id),
+            [11, 12]
+        );
+    });
+
+    QUnit.test("sales documents still require a customer", (assert) => {
+        const result = normalizeCustomerPage(
+            page([saleRecord()], {tab: "quotations", partner: false}),
+            404,
+            "quotations"
+        );
+        assert.deepEqual(result.items, []);
+    });
+
+    QUnit.test("CRM link failures remain visible and allow retry", async (assert) => {
+        const model = modelFor(async (method) => {
+            if (method === "get_customer_records") {
+                return page([customerRecord(11, "opportunities", {can_link: true})]);
+            }
+            throw new Error("Denied");
+        });
+        await model.load();
+        assert.notOk(await model.toggleCrmLink(11));
+        assert.ok(model.state.operationError);
+        assert.notOk(model.state.linkBusy);
+        assert.notOk(model.page.items[0].linked);
+    });
 
     QUnit.test(
         "all tabs open the correct native model and refresh on close",

@@ -1,6 +1,8 @@
 from odoo import _, api, fields, models
 from odoo.exceptions import ValidationError
 
+from odoo.addons.contact_center_base.services.phone import normalize_start_phone
+
 from .conversation_link import (
     CRM_CONVERSATION_GRAPH_LOCK_TOKEN,
     conversation_graph_is_locked,
@@ -14,6 +16,101 @@ class CrmLead(models.Model):
     contact_center_conversation_count = fields.Integer(
         compute="_compute_contact_center_conversation_count"
     )
+    contact_center_phone_normalized = fields.Char(
+        compute="_compute_contact_center_phones", store=True, index=True
+    )
+    contact_center_mobile_normalized = fields.Char(
+        compute="_compute_contact_center_phones", store=True, index=True
+    )
+
+    @api.depends("phone", "mobile", "country_id", "company_id.country_id")
+    def _compute_contact_center_phones(self):
+        for lead in self:
+            country = lead.country_id or lead.company_id.country_id
+            for source in ("phone", "mobile"):
+                try:
+                    value = normalize_start_phone(lead[source], country.code or "BR")
+                except ValueError:
+                    value = False
+                lead["contact_center_%s_normalized" % source] = value
+
+    def _contact_center_start_and_link(self, account, phone=None):
+        """Open/reuse an authorized conversation; never send or create a partner.
+
+        Shared entry point for the manual wizard and optional automation addons.
+        It returns a mail.channel record in the caller's environment.
+        """
+        self.ensure_one()
+        self.check_access_rights("read")
+        self.check_access_rule("read")
+        api_model = self.env["contact.center.ui.api"]
+        account.ensure_one()
+        account = api_model._start_account(account.id)
+        if self.company_id and self.company_id != account.company_id:
+            raise ValidationError(_("Choose an inbox from the lead's company."))
+        candidates = {
+            value
+            for value in (
+                self.contact_center_mobile_normalized,
+                self.contact_center_phone_normalized,
+            )
+            if value
+        }
+        if phone is None:
+            normalized = (
+                self.contact_center_mobile_normalized
+                or self.contact_center_phone_normalized
+            )
+        else:
+            normalized = api_model._start_normalized_phone(account, phone)[
+                "normalized_phone"
+            ]
+        if not normalized or normalized not in candidates:
+            raise ValidationError(
+                _(
+                    "Choose a valid phone from this lead. Update the lead first if needed."
+                )
+            )
+        # Roll back conversation admission as well if final CRM authorization or
+        # linking fails. Provider address lookup itself does not send a message.
+        with self.env.cr.savepoint():
+            result = api_model.start_conversation(account.id, "+" + normalized)
+            channel = api_model._crm_channel(result["channel_id"], mutate=True)
+            self.env["contact.center.crm.conversation.link"]._link(channel, self)
+            # _link locks and reauthorizes the lead after provider I/O. Recheck
+            # the selected address under that lock before committing the graph.
+            self.invalidate_recordset(
+                ["contact_center_mobile_normalized", "contact_center_phone_normalized"]
+            )
+            if normalized not in (
+                self.contact_center_mobile_normalized,
+                self.contact_center_phone_normalized,
+            ):
+                raise ValidationError(
+                    _("The lead's phone changed. Open the conversation again.")
+                )
+        return channel
+
+    def action_contact_center_converse(self):
+        self.ensure_one()
+        self.check_access_rights("read")
+        self.check_access_rule("read")
+        self.env["contact.center.ui.api"]._application()._check_agent()
+        phone = (
+            self.contact_center_mobile_normalized
+            or self.contact_center_phone_normalized
+        )
+        return {
+            "type": "ir.actions.act_window",
+            "name": _("Conversar"),
+            "res_model": "contact.center.crm.start",
+            "view_mode": "form",
+            "target": "new",
+            "context": {
+                "default_lead_id": self.id,
+                "default_phone": "+" + phone if phone else False,
+            },
+        }
 
     def _contact_center_lock_conversation_graph(
         self, *, channel_ids=(), touch_leads=False, touch_channels=False

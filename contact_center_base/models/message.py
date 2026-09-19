@@ -476,6 +476,10 @@ class ContactCenterMessageBinding(models.Model):
         )
 
     def write(self, values):
+        if "origin" in values and any(
+            binding.origin != values["origin"] for binding in self
+        ):
+            raise ValidationError(_("The message origin is immutable."))
         if "source_inbox_event_id" in values:
             requested_id = _record_id(values.get("source_inbox_event_id"))
             if requested_id is None:

@@ -3546,6 +3546,144 @@ class TestContactCenter(SavepointCase):
             first_reply["outbox_command_id"], repeated_reply["outbox_command_id"]
         )
 
+    def test_internal_automation_send_uses_one_canonical_queued_message(self):
+        channel, binding, _identity = self._channel_binding()
+        api = self.env["contact.center.ui.api"].with_user(self.agent)
+        self.account.outbound_signature_enabled = True
+        request_id = str(uuid.uuid4())
+        with trap_jobs() as trap:
+            first = api._send_automation_message(
+                channel.id, "Automatic welcome", client_request_id=request_id
+            )
+            replay = api._send_automation_message(
+                channel.id, "Automatic welcome", client_request_id=request_id
+            )
+            trap.assert_jobs_count(1)
+        self.assertEqual(first["message_id"], replay["message_id"])
+        self.assertEqual(first["outbox_command_id"], replay["outbox_command_id"])
+        self.assertEqual(first["client_request_id"], request_id)
+        self.assertEqual(first["state"], "pending")
+        self.assertEqual(first["message"]["origin"], "automation")
+        outbox = self.env["contact.center.outbox.command"].browse(
+            first["outbox_command_id"]
+        )
+        self.assertEqual(outbox.channel_binding_id, binding)
+        self.assertEqual(outbox.message_binding_id.origin, "automation")
+        self.assertEqual(
+            outbox.message_binding_id.message_id.author_id, self.agent.partner_id
+        )
+        self.assertFalse(outbox.command_json.get("options", {}).get("sender_signature"))
+        outbox._process_one()  # The registered test.fake adapter has no external I/O.
+        self.assertEqual(outbox.message_binding_id.origin, "automation")
+        self.assertEqual(outbox.message_binding_id.delivery_state, "sent")
+
+    def test_internal_automation_replay_cannot_change_content_or_origin(self):
+        channel, binding, _identity = self._channel_binding()
+        api = (
+            self.env["contact.center.ui.api"]
+            .with_user(self.agent)
+            .with_context(contact_center_skip_enqueue=True)
+        )
+        request_id = str(uuid.uuid4())
+        result = api._send_automation_message(
+            channel.id, "Automatic welcome", client_request_id=request_id
+        )
+        with self.assertRaises(ValidationError):
+            api._send_automation_message(
+                channel.id, "Changed welcome", client_request_id=request_id
+            )
+        with self.assertRaises(ValidationError):
+            api.send_message(
+                channel.id, "Automatic welcome", client_request_id=request_id
+            )
+        message_binding = (
+            self.env["contact.center.outbox.command"]
+            .browse(result["outbox_command_id"])
+            .message_binding_id
+        )
+        with self.assertRaises(ValidationError):
+            message_binding.write({"origin": "agent"})
+        manual_request_id = str(uuid.uuid4())
+        api.send_message(channel.id, "Human reply", client_request_id=manual_request_id)
+        with self.assertRaises(ValidationError):
+            api._send_automation_message(
+                channel.id, "Human reply", client_request_id=manual_request_id
+            )
+        self.assertEqual(
+            self.env["contact.center.outbox.command"].search_count(
+                [("channel_binding_id", "=", binding.id)]
+            ),
+            2,
+        )
+
+    def test_internal_automation_keeps_agent_access_and_provider_admission(self):
+        channel, binding, _identity = self._channel_binding()
+        api = (
+            self.env["contact.center.ui.api"]
+            .with_user(self.agent)
+            .with_context(contact_center_skip_enqueue=True)
+        )
+        for request_id in (None, "", "not-a-uuid"):
+            with self.assertRaises(ValidationError):
+                api._send_automation_message(
+                    channel.id, "Invalid admission", client_request_id=request_id
+                )
+        with self.assertRaises(AccessError):
+            api.with_user(self.env.ref("base.public_user"))._send_automation_message(
+                channel.id, "Forbidden", client_request_id=str(uuid.uuid4())
+            )
+        outside = (
+            self.env["res.users"]
+            .with_context(no_reset_password=True)
+            .create(
+                {
+                    "name": "Unassigned automation executor",
+                    "login": "cc-unassigned-automation-%s" % uuid.uuid4(),
+                    "company_id": self.env.company.id,
+                    "company_ids": [(6, 0, self.env.company.ids)],
+                    "groups_id": [(6, 0, self.agent_group.ids)],
+                }
+            )
+        )
+        with self.assertRaises(AccessError):
+            api.with_user(outside)._send_automation_message(
+                channel.id, "No inbox access", client_request_id=str(uuid.uuid4())
+            )
+        self.connection.capabilities_json = {"send_message": False}
+        with self.assertRaises(UserError):
+            api._send_automation_message(
+                channel.id, "Unsupported", client_request_id=str(uuid.uuid4())
+            )
+        self.assertFalse(
+            self.env["contact.center.outbox.command"].search(
+                [("channel_binding_id", "=", binding.id)]
+            )
+        )
+        self.assertFalse(
+            self.env["contact.center.message.binding"].search(
+                [("channel_binding_id", "=", binding.id)]
+            )
+        )
+
+    def test_public_send_cannot_select_automation_origin_or_another_actor(self):
+        channel, _binding, _identity = self._channel_binding()
+        api = (
+            self.env["contact.center.ui.api"]
+            .with_user(self.agent)
+            .with_context(
+                contact_center_skip_enqueue=True,
+                message_origin="automation",
+                origin="automation",
+                actor_user_id=self.admin.id,
+            )
+        )
+        with self.assertRaises(TypeError):
+            api.send_message(channel.id, "Forged", message_origin="automation")
+        result = api.send_message(channel.id, "Normal manual reply")
+        message = self.env["mail.message"].browse(result["message_id"])
+        self.assertEqual(result["message"]["origin"], "agent")
+        self.assertEqual(message.author_id, self.agent.partner_id)
+
     def test_ui_resend_creates_one_new_audited_attempt_and_never_reopens_source(self):
         channel, binding, _identity = self._channel_binding()
         api = (

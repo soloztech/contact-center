@@ -181,7 +181,8 @@ class TestConversationCrm(ConversationCrmCase):
         result = self.api.get_customer_records(self.channel.id)
         self.assertFalse(result["partner"])
         self.assertEqual(self._links().mapped("lead_id"), self.lead)
-        self.assertFalse(result["items"])
+        self.assertEqual([item["id"] for item in result["items"]], [self.lead.id])
+        self.assertTrue(result["items"][0]["linked"])
 
     def test_customer_pagination_is_independent_of_links_without_duplicates(self):
         self.api.link_crm_opportunity(self.channel.id, self.lead.id)
