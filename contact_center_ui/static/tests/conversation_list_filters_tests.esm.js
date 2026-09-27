@@ -522,6 +522,7 @@ QUnit.module("contact_center_ui > sidebar filter flyout", (hooks) => {
                     query: "Ana",
                     responsibility: "mine",
                     unreadOnly: true,
+                    excludeMuted: true,
                     conversationType: "direct",
                     tagId: 3,
                     activityTiming: "today",
@@ -538,7 +539,7 @@ QUnit.module("contact_center_ui > sidebar filter flyout", (hooks) => {
                     );
                 }, 1000);
                 const {list, target} = await mountList(store);
-                assert.strictEqual(list.activeFilterCount, 7);
+                assert.strictEqual(list.activeFilterCount, 8);
                 await click(target, ".cc-inbox-filter-toggle");
                 await click(target, ".cc-inbox-filter-clear");
                 assert.deepEqual(store.state.filters, {
@@ -548,6 +549,7 @@ QUnit.module("contact_center_ui > sidebar filter flyout", (hooks) => {
                     responsibility: "all",
                     responsibleId: false,
                     unreadOnly: false,
+                    excludeMuted: false,
                     conversationType: false,
                     tagId: false,
                     tagIds: [],
@@ -668,7 +670,8 @@ QUnit.module("contact_center_ui > sidebar filter flyout", (hooks) => {
                     previousSelected: 20,
                 });
                 assert.strictEqual(store.state.selectedChannelId, false);
-                store.replaceConversation(original);
+                // Inserted explicitly, as an opening flow does.
+                store.replaceConversation(original, {insert: true});
                 assert.strictEqual(
                     store.state.conversations.length,
                     1,
@@ -908,6 +911,46 @@ QUnit.module("contact_center_ui > sidebar filter flyout", (hooks) => {
                 );
                 assert.ok(list.ui.startOpen);
                 assert.ok(list.canSubmitStart, "the agent can retry after an error");
+            } finally {
+                store.destroy();
+            }
+        }
+    );
+
+    QUnit.test(
+        "an older start answer never undoes a newer preference of the channel",
+        async (assert) => {
+            const store = filterStore();
+            try {
+                const newer = {pinned: false, muted: false, revision: 4};
+                store.state.conversations = [
+                    {
+                        channel_id: 22,
+                        state: "open",
+                        account: {id: 1},
+                        preference: newer,
+                    },
+                ];
+                store.call = async () => ({
+                    schema_version: SUPPORTED_SCHEMA_VERSION,
+                    channel_id: 22,
+                    created: false,
+                    normalized_phone: "5511912345678",
+                    item: {
+                        channel_id: 22,
+                        state: "open",
+                        account: {id: 1},
+                        preference: {pinned: false, muted: true, revision: 3},
+                    },
+                });
+                store.selectConversation = async (id) => {
+                    store.state.selectedChannelId = id;
+                    return true;
+                };
+                // The follow-up list refresh fails.
+                store.loadConversations = async () => false;
+                assert.ok(await store.startConversation(1, "(11) 91234-5678"));
+                assert.deepEqual(store.selectedConversation.preference, newer);
             } finally {
                 store.destroy();
             }

@@ -1462,6 +1462,29 @@ class ContactCenterUiApiProductivity(models.AbstractModel):
         }
 
     @api.model
+    def systray_summary(self):
+        """Unread conversations for the top bar, counted like the preset lists.
+
+        Each count is the ``total`` that ``list_conversations`` returns for the
+        same filters, so "Mine unread (n)" opens exactly n conversations.
+        """
+
+        if not self.env.user.has_group(
+            "contact_center_base.group_contact_center_agent"
+        ):
+            return {"schema_version": SCHEMA_VERSION, "enabled": False}
+        channels = self.env["mail.channel"]
+        preset = {"unread_only": True, "exclude_muted": True}
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "enabled": True,
+            "mine_unread": channels.search_count(
+                self._conversation_list_domain(dict(preset, responsibility="mine"))
+            ),
+            "all_unread": channels.search_count(self._conversation_list_domain(preset)),
+        }
+
+    @api.model
     def _conversation_list_domain(self, filters):
         domain = super()._conversation_list_domain(filters)
         filters = filters or {}
@@ -1492,6 +1515,18 @@ class ContactCenterUiApiProductivity(models.AbstractModel):
             domain = expression.AND(
                 [domain, [("id", "in", unread_members.channel_id.ids)]]
             )
+        exclude_muted = filters.get("exclude_muted", False)
+        if exclude_muted not in (False, True, None):
+            raise ValidationError(_("The muted filter must be boolean."))
+        if exclude_muted:
+            # Muting is personal: only this user's silenced conversations leave.
+            muted = self.env["contact.center.conversation.preference"].search(
+                [("user_id", "=", self.env.user.id), ("muted", "=", True)]
+            )
+            if muted:
+                domain = expression.AND(
+                    [domain, [("id", "not in", muted.channel_id.ids)]]
+                )
         conversation_type = filters.get("conversation_type")
         if conversation_type:
             if conversation_type not in ("direct", "group"):

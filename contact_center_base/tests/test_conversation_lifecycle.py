@@ -175,7 +175,7 @@ class TestConversationLifecycleAndPreference(SavepointCase):
         )
         self.assertEqual(
             api_b.get_conversation(channel.id)["item"]["preference"],
-            {"pinned": False, "pinned_at": False, "muted": False},
+            {"pinned": False, "pinned_at": False, "muted": False, "revision": 0},
         )
 
         preferences = self.env["contact.center.conversation.preference"].with_user(
@@ -195,17 +195,21 @@ class TestConversationLifecycleAndPreference(SavepointCase):
                 self.outsider
             ).set_conversation_preference(channel.id, {"pinned": True})
 
-    def test_false_preferences_remove_sparse_row(self):
+    def test_false_preferences_keep_the_row_and_its_order(self):
         channel, _binding, _guest = self._conversation("sparse")
         api = self.env["contact.center.ui.api"].with_user(self.agent_a)
-        api.set_conversation_preference(channel.id, {"pinned": True, "muted": True})
+        first = api.set_conversation_preference(
+            channel.id, {"pinned": True, "muted": True}
+        )["item"]["preference"]
         muted_only = api.set_conversation_preference(channel.id, {"pinned": False})[
             "item"
         ]["preference"]
         self.assertFalse(muted_only["pinned"])
         self.assertTrue(muted_only["muted"])
-        api.set_conversation_preference(channel.id, {"pinned": False, "muted": False})
-        self.assertFalse(
+        cleared = api.set_conversation_preference(
+            channel.id, {"pinned": False, "muted": False}
+        )["item"]["preference"]
+        preference = (
             self.env["contact.center.conversation.preference"]
             .sudo()
             .search(
@@ -214,6 +218,58 @@ class TestConversationLifecycleAndPreference(SavepointCase):
                     ("user_id", "=", self.agent_a.id),
                 ]
             )
+        )
+        self.assertEqual(len(preference), 1, "a cleared preference keeps its row")
+        self.assertFalse(preference.pinned_at or preference.muted)
+        self.assertEqual(
+            [first["revision"], muted_only["revision"], cleared["revision"]],
+            [1, 2, 3],
+            "every change advances the order",
+        )
+        self.assertEqual(preference.revision, cleared["revision"])
+
+    def test_the_revision_is_the_database_order_for_every_writer(self):
+        channel, _binding, _guest = self._conversation("revision")
+        api = self.env["contact.center.ui.api"].with_user(self.agent_a)
+        preferences = self.env["contact.center.conversation.preference"].with_user(
+            self.agent_a
+        )
+        with mock.patch.object(
+            type(self.env["contact.center.application"]),
+            "_notify_ui",
+            autospec=True,
+        ) as notify:
+            item = api.set_conversation_preference(channel.id, {"muted": True})["item"]
+        event = notify.call_args.args[3]
+        self.assertEqual(event["preference"]["revision"], 1)
+        self.assertEqual(item["preference"]["revision"], 1)
+        listed = api.list_conversations(filters={})["items"]
+        self.assertEqual(
+            [
+                row["preference"]["revision"]
+                for row in listed
+                if row["channel_id"] == channel.id
+            ],
+            [1],
+        )
+        preference = preferences.search([("channel_id", "=", channel.id)])
+        # A direct write the ACL allows to the agent advances it too.
+        preference.write({"muted": False})
+        self.assertEqual(preference.revision, 2)
+        self.assertEqual(
+            api.get_conversation(channel.id)["item"]["preference"]["revision"], 2
+        )
+        with self.assertRaises(ValidationError):
+            preference.write({"revision": 99})
+        with self.assertRaises(AccessError):
+            preference.unlink()
+        other, _binding, _guest = self._conversation("revision-create")
+        with self.assertRaises(AccessError):
+            preferences.create(
+                {"channel_id": other.id, "user_id": self.agent_a.id, "revision": 5}
+            )
+        self.assertEqual(
+            preferences.create({"channel_id": other.id, "muted": True}).revision, 1
         )
 
     def test_pinned_conversations_precede_activity_and_cursor_is_stable(self):
@@ -438,6 +494,13 @@ class TestConversationLifecycleAndPreference(SavepointCase):
         self.assertIn(self.agent_b.partner_id.id, by_partner)
         self.assertFalse(by_partner[self.agent_a.partner_id.id]["personal_attention"])
         self.assertTrue(by_partner[self.agent_b.partner_id.id]["personal_attention"])
+        # The revision each decision was made with (0: no preference row).
+        self.assertEqual(
+            by_partner[self.agent_a.partner_id.id]["preference_revision"], 1
+        )
+        self.assertEqual(
+            by_partner[self.agent_b.partner_id.id]["preference_revision"], 0
+        )
         self.assertEqual(
             by_partner[self.agent_a.partner_id.id]["event_type"], "message_created"
         )

@@ -21,6 +21,11 @@ The inbox provides:
 * no conversation opens by itself: without a remembered selection none is selected, a
   selection that leaves the list is cleared instead of replaced, and a restored
   conversation is marked as seen only after the agent interacts with it;
+* a top-bar item for agents with the number of unread conversations assigned to them;
+  its menu opens "My unread" or "All unread" (unread conversations the agent did not
+  mute, counted exactly as the list opens them) or the inbox, and refreshes on
+  messages, reads, muting and deletion, on window focus and every five minutes;
+* a "Sem silenciadas" filter that hides the conversations the agent muted;
 * localized, color-coded conversation states and compact connection-health details;
 * paged conversation and message timelines with unread pointers;
 * provider, platform, origin, reply, delivery, and dispatch context;

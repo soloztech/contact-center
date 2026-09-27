@@ -9,8 +9,11 @@ import {
     inboxStateStorageKey,
     sanitizeInboxPreferences,
 } from "@contact_center_ui/js/contact_center_store.esm";
+import {
+    SUPPORTED_SCHEMA_VERSION,
+    conversationPreference,
+} from "@contact_center_ui/js/contact_center_model.esm";
 import {ContactCenterApp} from "@contact_center_ui/js/contact_center_app.esm";
-import {SUPPORTED_SCHEMA_VERSION} from "@contact_center_ui/js/contact_center_model.esm";
 
 const DATABASE = "inbox-state-test";
 const USER_ID = 7;
@@ -119,8 +122,11 @@ function inboxStore({
         }
         if (method === "list_conversations") {
             const accountId = kwargs.filters && kwargs.filters.account_id;
+            const excludeMuted = kwargs.filters && kwargs.filters.exclude_muted;
             const rows = server.items.filter(
-                (item) => !accountId || item.account.id === accountId
+                (item) =>
+                    (!accountId || item.account.id === accountId) &&
+                    !(excludeMuted && item.preference && item.preference.muted)
             );
             const offset = (kwargs.cursor && kwargs.cursor.offset) || 0;
             const limit = kwargs.limit || rows.length;
@@ -619,6 +625,7 @@ QUnit.module("contact_center_ui > inbox state", () => {
                     responsibility: "all",
                     responsibleId: false,
                     unreadOnly: false,
+                    excludeMuted: false,
                     conversationType: false,
                     tagIds: [],
                     activityTiming: "due",
@@ -1057,6 +1064,41 @@ QUnit.module("contact_center_ui > inbox state", () => {
         }
     );
 
+    QUnit.test(
+        "muting a row beyond 200 while hiding muted conversations drops it",
+        async (assert) => {
+            const pad = (value) => String(value).padStart(2, "0");
+            const rows = Array.from({length: 250}, (_value, index) =>
+                conversation(index + 1, {
+                    last_activity_at: `2026-09-27 ${pad(
+                        23 - Math.floor(index / 60)
+                    )}:${pad(59 - (index % 60))}:00`,
+                })
+            );
+            const {store} = inboxStore({items: rows});
+            await store.loadBootstrap();
+            store.state.filters.excludeMuted = true;
+            store.state.conversations = rows.map((row) => ({...row}));
+            store.state.conversationsHaveMore = false;
+            const original = store.call;
+            store.call = async (method, args, kwargs) => {
+                if (method === "set_conversation_preference") {
+                    return {
+                        schema_version: SUPPORTED_SCHEMA_VERSION,
+                        item: {...rows[209], preference: {pinned: false, muted: true}},
+                    };
+                }
+                return original(method, args, kwargs);
+            };
+            assert.ok(await store.setConversationPreference({muted: true}, 210));
+            assert.notOk(
+                store.state.conversations.some((item) => item.channel_id === 210),
+                "the retained tail does not keep the muted row"
+            );
+            store.destroy();
+        }
+    );
+
     function rememberedContext(extra = {}) {
         return Object.assign(createInboxDocumentContext(), {
             userId: USER_ID,
@@ -1084,6 +1126,1409 @@ QUnit.module("contact_center_ui > inbox state", () => {
         };
         return gate;
     }
+
+    QUnit.test(
+        "a mute from another tab drops the row beyond 200 despite an older refresh",
+        async (assert) => {
+            const pad = (value) => String(value).padStart(2, "0");
+            const rows = Array.from({length: 250}, (_value, index) =>
+                conversation(index + 1, {
+                    last_activity_at: `2026-09-27 ${pad(
+                        23 - Math.floor(index / 60)
+                    )}:${pad(59 - (index % 60))}:00`,
+                })
+            );
+            const realtime = fakeTimer();
+            const {store} = inboxStore({items: rows, realtimeTimer: realtime});
+            await store.loadBootstrap();
+            store.state.filters.excludeMuted = true;
+            store.state.conversations = rows.map((row) => ({...row}));
+            store.state.conversationsHaveMore = false;
+            // A refresh started before the mute is still at the server.
+            const gate = delayFirst(store, "list_conversations");
+            const refreshing = store.refreshLoadedConversations({silent: true});
+            assert.ok(await settleUntil(() => gate.release));
+            store.synchronizeNotification({
+                schema_version: SUPPORTED_SCHEMA_VERSION,
+                event_type: "conversation_preference_updated",
+                channel_id: 210,
+                preference: {pinned: false, muted: true},
+            });
+            gate.release();
+            await refreshing;
+            realtime.flush();
+            await settleUntil(() => false, 50);
+            assert.notOk(
+                store.state.conversations.some((item) => item.channel_id === 210),
+                "neither the older refresh nor the retained tail brings it back"
+            );
+            store.destroy();
+        }
+    );
+
+    function mutedTailFixture(count) {
+        const pad = (value) => String(value).padStart(2, "0");
+        const rows = Array.from({length: count}, (_value, index) =>
+            conversation(index + 1, {
+                last_activity_at: `2026-09-27 ${pad(23 - Math.floor(index / 60))}:${pad(
+                    59 - (index % 60)
+                )}:00`,
+            })
+        );
+        const realtime = fakeTimer();
+        return {rows, realtime, ...inboxStore({items: rows, realtimeTimer: realtime})};
+    }
+
+    QUnit.test(
+        "a muted open conversation beyond 200 leaves once another one is chosen",
+        async (assert) => {
+            const {rows, store, server} = mutedTailFixture(250);
+            await store.loadBootstrap();
+            store.state.filters.excludeMuted = true;
+            store.state.conversations = rows.map((row) => ({...row}));
+            store.state.conversationsHaveMore = false;
+            await store.selectConversation(210);
+            const original = store.call;
+            store.call = async (method, args, kwargs) => {
+                if (method === "set_conversation_preference") {
+                    // The server now reports the conversation as muted.
+                    const muted = {
+                        ...rows[209],
+                        preference: {pinned: false, muted: true},
+                    };
+                    server.items = server.items.map((item) =>
+                        item.channel_id === 210 ? muted : item
+                    );
+                    return {schema_version: SUPPORTED_SCHEMA_VERSION, item: muted};
+                }
+                return original(method, args, kwargs);
+            };
+            assert.ok(await store.setConversationPreference({muted: true}, 210));
+            assert.ok(
+                store.state.conversations.some((item) => item.channel_id === 210),
+                "kept while it is open"
+            );
+            await store.selectConversation(20);
+            assert.notOk(
+                store.state.conversations.some((item) => item.channel_id === 210)
+            );
+            await store.refreshLoadedConversations({silent: true});
+            assert.notOk(
+                store.state.conversations.some((item) => item.channel_id === 210),
+                "the retained tail never brings it back"
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a mute event invalidates a page in flight even before the row is loaded",
+        async (assert) => {
+            const {store} = mutedTailFixture(250);
+            await store.loadBootstrap();
+            store.state.filters.excludeMuted = true;
+            while (store.state.conversations.length < 200) {
+                await store.loadMoreConversations();
+            }
+            assert.notOk(
+                store.state.conversations.some((item) => item.channel_id === 210)
+            );
+            const gate = delayFirst(store, "list_conversations");
+            const paging = store.loadMoreConversations();
+            assert.ok(await settleUntil(() => gate.release));
+            store.synchronizeNotification({
+                schema_version: SUPPORTED_SCHEMA_VERSION,
+                event_type: "conversation_preference_updated",
+                channel_id: 210,
+                preference: {pinned: false, muted: true, revision: 1},
+            });
+            // The stale page arrives before the synchronization starts.
+            gate.release();
+            await paging;
+            assert.notOk(
+                store.state.conversations.some((item) => item.channel_id === 210),
+                "the page fetched before the mute cannot list it"
+            );
+            assert.strictEqual(store.state.listPhase, "ready");
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "an external mute of the open conversation applies once another is chosen",
+        async (assert) => {
+            const {rows, store, realtime} = mutedTailFixture(250);
+            await store.loadBootstrap();
+            store.state.filters.excludeMuted = true;
+            store.state.conversations = rows.map((row) => ({...row}));
+            store.state.conversationsHaveMore = false;
+            await store.selectConversation(210);
+            store.synchronizeNotification({
+                schema_version: SUPPORTED_SCHEMA_VERSION,
+                event_type: "conversation_preference_updated",
+                channel_id: 210,
+                preference: {pinned: false, muted: true},
+            });
+            assert.ok(
+                store.state.conversations.some((item) => item.channel_id === 210),
+                "the open conversation stays while open"
+            );
+            // Another conversation is chosen before the synchronization runs.
+            await store.selectConversation(20);
+            assert.notOk(
+                store.state.conversations.some((item) => item.channel_id === 210)
+            );
+            realtime.flush();
+            await settleUntil(() => false, 50);
+            assert.notOk(
+                store.state.conversations.some((item) => item.channel_id === 210)
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a refresh captured before a selection change follows the new selection",
+        async (assert) => {
+            const {rows, store, server} = mutedTailFixture(250);
+            const muted = {...rows[209], preference: {pinned: false, muted: true}};
+            server.items = rows.map((row) => (row.channel_id === 210 ? muted : row));
+            await store.loadBootstrap();
+            store.state.filters.excludeMuted = true;
+            store.state.conversations = server.items.map((row) => ({...row}));
+            store.state.conversationsHaveMore = false;
+            await store.selectConversation(210);
+            const gate = delayFirst(store, "list_conversations");
+            const refreshing = store.refreshLoadedConversations({silent: true});
+            assert.ok(await settleUntil(() => gate.release));
+            await store.selectConversation(20);
+            gate.release();
+            await refreshing;
+            assert.notOk(
+                store.state.conversations.some((item) => item.channel_id === 210),
+                "the captured tail is filtered with the current selection"
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a newer mute learned from the detail discards the tail of a pending refresh",
+        async (assert) => {
+            const {rows, store, server, realtime} = mutedTailFixture(250);
+            const unmuted = {pinned: false, muted: false, revision: 1};
+            server.items = rows.map((row) =>
+                row.channel_id === 210 ? {...row, preference: unmuted} : row
+            );
+            await store.loadBootstrap();
+            store.state.filters.excludeMuted = true;
+            store.state.conversations = server.items.map((row) => ({...row}));
+            store.state.conversationsHaveMore = false;
+            await store.selectConversation(210);
+            // A refresh captures the tail beyond 200 while 210 is still unmuted.
+            const gate = delayFirst(store, "list_conversations");
+            const refreshing = store.refreshLoadedConversations({silent: true});
+            assert.ok(await settleUntil(() => gate.release));
+            // Muted elsewhere; this tab missed the event and learns it from the
+            // detail of the open conversation.
+            server.items = server.items.map((item) =>
+                item.channel_id === 210
+                    ? {...item, preference: {pinned: false, muted: true, revision: 2}}
+                    : item
+            );
+            await store.refreshSelectedConversation({silent: true});
+            assert.strictEqual(
+                conversationPreference(store.loadedConversation(210)).revision,
+                2
+            );
+            await store.selectConversation(20);
+            gate.release();
+            await refreshing;
+            realtime.flush();
+            await settleUntil(() => false, 50);
+            assert.notOk(
+                store.state.conversations.some((item) => item.channel_id === 210),
+                "the tail captured before the mute does not bring it back"
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a late unmute answer for a closed conversation restarts the paged list",
+        async (assert) => {
+            const {rows, store, server, realtime} = mutedTailFixture(300);
+            server.items = rows.map((row) =>
+                row.channel_id === 210
+                    ? {...row, preference: {pinned: false, muted: true, revision: 1}}
+                    : row
+            );
+            await store.loadBootstrap();
+            await store.loadConversations({reset: true});
+            while (store.state.conversations.length < 250) {
+                await store.loadMoreConversations();
+            }
+            await store.selectConversation(210);
+            // "Sem silenciadas" with the muted conversation still open.
+            store.state.filters.excludeMuted = true;
+            assert.ok(store.state.conversationsHaveMore, "a seek cursor is saved");
+            const original = store.call;
+            let answer = null;
+            store.call = (method, args, kwargs) => {
+                if (method === "set_conversation_preference") {
+                    return new Promise((resolve) => {
+                        answer = () => {
+                            const unmuted = {
+                                ...rows[209],
+                                preference: {pinned: false, muted: false, revision: 2},
+                            };
+                            server.items = server.items.map((item) =>
+                                item.channel_id === 210 ? unmuted : item
+                            );
+                            resolve({
+                                schema_version: SUPPORTED_SCHEMA_VERSION,
+                                item: unmuted,
+                            });
+                        };
+                    });
+                }
+                return original(method, args, kwargs);
+            };
+            const unmuting = store.setConversationPreference({muted: false}, 210);
+            assert.ok(await settleUntil(() => answer));
+            await store.selectConversation(20);
+            assert.notOk(
+                store.state.conversations.some((item) => item.channel_id === 210)
+            );
+            // The bus event is missed: only the late answer tells the unmute.
+            answer();
+            await unmuting;
+            realtime.flush();
+            await settleUntil(() => false, 50);
+            while (
+                !store.state.conversations.some((item) => item.channel_id === 210) &&
+                store.state.conversationsHaveMore
+            ) {
+                await store.loadMoreConversations();
+            }
+            assert.ok(
+                store.state.conversations.some((item) => item.channel_id === 210),
+                "no retained tail or cursor skips the unmuted conversation"
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a newer muted detail stops the restoration of an older unmuted row",
+        async (assert) => {
+            const realtime = fakeTimer();
+            const {store, server} = inboxStore({
+                context: rememberedContext(),
+                realtimeTimer: realtime,
+                items: [
+                    conversation(10, {preference: {muted: false, revision: 1}}),
+                    conversation(20),
+                ],
+                // Muted in another tab; this tab missed the event.
+                getConversation: (channelId) => ({
+                    schema_version: SUPPORTED_SCHEMA_VERSION,
+                    item: {
+                        ...server.items.find((item) => item.channel_id === channelId),
+                        preference: {muted: true, revision: 2},
+                    },
+                }),
+            });
+            store.state.filters.excludeMuted = true;
+            await store.loadBootstrap();
+            assert.notOk(store.state.selectedChannelId, "not reopened");
+            assert.notOk(
+                store.state.conversations.some((item) => item.channel_id === 10),
+                "the muted row leaves the list"
+            );
+            store.destroy();
+        }
+    );
+
+    function unmutedBeyondBoundary(server, rows) {
+        server.items = server.items.map((item) =>
+            item.channel_id === 210
+                ? {
+                      ...rows[209],
+                      last_message: {message_id: 9210},
+                      preference: {pinned: false, muted: false, revision: 2},
+                  }
+                : item
+        );
+    }
+
+    async function openMutedBeyondBoundary(store, server, rows) {
+        server.items = rows.map((row) =>
+            row.channel_id === 210
+                ? {
+                      ...row,
+                      unread_count: 1,
+                      last_message: {message_id: 9210},
+                      preference: {pinned: false, muted: true, revision: 1},
+                  }
+                : row
+        );
+        await store.loadBootstrap();
+        await store.loadConversations({reset: true});
+        while (store.state.conversations.length < 250) {
+            await store.loadMoreConversations();
+        }
+        await store.selectConversation(210);
+        store.state.filters.excludeMuted = true;
+    }
+
+    async function pageUntil(store, channelId) {
+        while (
+            !store.state.conversations.some((item) => item.channel_id === channelId) &&
+            store.state.conversationsHaveMore
+        ) {
+            await store.loadMoreConversations();
+        }
+        return store.state.conversations.some((item) => item.channel_id === channelId);
+    }
+
+    QUnit.test(
+        "a newer unmute in a late read answer restarts the paged list",
+        async (assert) => {
+            const {rows, store, server, realtime} = mutedTailFixture(300);
+            await openMutedBeyondBoundary(store, server, rows);
+            const gate = delayFirst(store, "get_conversation");
+            const reading = store.markConversationRead(210);
+            assert.ok(await settleUntil(() => gate.release));
+            unmutedBeyondBoundary(server, rows);
+            await store.selectConversation(20);
+            gate.release();
+            await reading;
+            realtime.flush();
+            await settleUntil(() => false, 50);
+            assert.ok(await pageUntil(store, 210), "no retained cursor skips it");
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a newer unmute in a late detail answer restarts the paged list",
+        async (assert) => {
+            const {rows, store, server, realtime} = mutedTailFixture(300);
+            await openMutedBeyondBoundary(store, server, rows);
+            const gate = delayFirst(store, "get_conversation");
+            const refreshing = store.refreshSelectedConversation({silent: true});
+            assert.ok(await settleUntil(() => gate.release));
+            unmutedBeyondBoundary(server, rows);
+            await store.selectConversation(20);
+            gate.release();
+            await refreshing;
+            realtime.flush();
+            await settleUntil(() => false, 50);
+            assert.ok(await pageUntil(store, 210), "no retained cursor skips it");
+            store.destroy();
+        }
+    );
+
+    function preferenceEvent(channelId, preference) {
+        return {
+            schema_version: SUPPORTED_SCHEMA_VERSION,
+            event_type: "conversation_preference_updated",
+            channel_id: channelId,
+            preference,
+        };
+    }
+
+    QUnit.test(
+        "paging after an unmute keeps the open conversation and finds the unmuted",
+        async (assert) => {
+            const {rows, store, server, realtime} = mutedTailFixture(250);
+            server.items = rows.map((row) =>
+                row.channel_id === 230
+                    ? {...row, preference: {pinned: false, muted: true, revision: 1}}
+                    : row
+            );
+            await store.loadBootstrap();
+            store.state.filters.excludeMuted = true;
+            await store.loadConversations({reset: true});
+            while (store.state.conversations.length < 120) {
+                await store.loadMoreConversations();
+            }
+            await store.selectConversation(90);
+            // Unmuted in another tab: the list synchronizes.
+            server.items = rows.map((row) => ({...row}));
+            store.synchronizeNotification(
+                preferenceEvent(230, {pinned: false, muted: false, revision: 2})
+            );
+            // The agent scrolls before the synchronization runs.
+            await store.loadMoreConversations();
+            assert.strictEqual(store.state.selectedChannelId, 90, "still open");
+            assert.ok(store.state.conversations.some((item) => item.channel_id === 90));
+            realtime.flush();
+            await settleUntil(() => false, 50);
+            assert.ok(await pageUntil(store, 230), "the unmuted conversation is found");
+            assert.strictEqual(store.state.selectedChannelId, 90);
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a refresh under Sem silenciadas keeps up to 200 rows and a fresh cursor",
+        async (assert) => {
+            const {store, realtime} = mutedTailFixture(300);
+            await store.loadBootstrap();
+            store.state.filters.excludeMuted = true;
+            await store.loadConversations({reset: true});
+            while (store.state.conversations.length < 250) {
+                await store.loadMoreConversations();
+            }
+            store.synchronizeNotification(
+                preferenceEvent(140, {pinned: true, muted: false, revision: 1})
+            );
+            realtime.flush();
+            await settleUntil(() => false, 50);
+            assert.strictEqual(
+                store.state.conversations.length,
+                200,
+                "no tail beyond 200"
+            );
+            assert.ok(store.state.conversationsHaveMore);
+            await store.loadMoreConversations();
+            assert.strictEqual(
+                store.state.conversations.length,
+                250,
+                "paging continues right after the refreshed window"
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a pin event under Sem silenciadas keeps the loaded window",
+        async (assert) => {
+            const {store, realtime} = mutedTailFixture(250);
+            await store.loadBootstrap();
+            store.state.filters.excludeMuted = true;
+            await store.loadConversations({reset: true});
+            while (store.state.conversations.length < 150) {
+                await store.loadMoreConversations();
+            }
+            store.synchronizeNotification(
+                preferenceEvent(140, {pinned: true, muted: false, revision: 1})
+            );
+            realtime.flush();
+            await settleUntil(() => false, 50);
+            assert.ok(store.state.conversations.length >= 150, "no rows are lost");
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a mute during the first page hides the row from the page in flight",
+        async (assert) => {
+            const {store, calls} = inboxStore({
+                items: [conversation(10), conversation(20), conversation(30)],
+                realtimeTimer: fakeTimer(),
+            });
+            await store.loadBootstrap();
+            store.state.filters.excludeMuted = true;
+            const before = methods(calls, "list_conversations").length;
+            const gate = delayFirst(store, "list_conversations");
+            const loading = store.loadConversations({reset: true});
+            assert.ok(await settleUntil(() => gate.release));
+            store.synchronizeNotification(
+                preferenceEvent(30, {pinned: false, muted: true, revision: 1})
+            );
+            assert.strictEqual(store.state.listPhase, "loading", "never an empty list");
+            gate.release();
+            await loading;
+            assert.strictEqual(store.state.listPhase, "ready");
+            assert.deepEqual(
+                store.state.conversations.map((item) => item.channel_id),
+                [10, 20],
+                "the newer revision wins over the page answered before it"
+            );
+            assert.strictEqual(methods(calls, "list_conversations").length - before, 1);
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a late muted answer for a closed conversation keeps the window",
+        async (assert) => {
+            const {rows, store, server, realtime} = mutedTailFixture(300);
+            await openMutedBeyondBoundary(store, server, rows);
+            const gate = delayFirst(store, "get_conversation");
+            const refreshing = store.refreshSelectedConversation({silent: true});
+            assert.ok(await settleUntil(() => gate.release));
+            await store.selectConversation(20);
+            // It only confirms the mute the list already applied.
+            gate.release();
+            await refreshing;
+            realtime.flush();
+            await settleUntil(() => false, 50);
+            assert.ok(store.state.conversations.length > 200, "the tail is kept");
+            assert.notOk(
+                store.state.conversations.some((item) => item.channel_id === 210)
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test("a cancelled restoration still applies a newer mute", async (assert) => {
+        const {store, server} = inboxStore({
+            context: rememberedContext(),
+            realtimeTimer: fakeTimer(),
+            items: [
+                conversation(10, {preference: {muted: false, revision: 1}}),
+                conversation(20),
+            ],
+            getConversation: (channelId) => ({
+                schema_version: SUPPORTED_SCHEMA_VERSION,
+                item: {
+                    ...server.items.find((item) => item.channel_id === channelId),
+                    preference: {muted: true, revision: 2},
+                },
+            }),
+        });
+        store.state.filters.excludeMuted = true;
+        const gate = delayFirst(store, "get_conversation");
+        const booting = store.loadBootstrap();
+        assert.ok(await settleUntil(() => gate.release));
+        // The agent chooses another conversation before the answer.
+        await store.selectConversation(20);
+        gate.release();
+        await booting;
+        assert.strictEqual(store.state.selectedChannelId, 20);
+        assert.notOk(
+            store.state.conversations.some((item) => item.channel_id === 10),
+            "the newer mute still applies"
+        );
+        store.destroy();
+    });
+
+    QUnit.test(
+        "a silent reload replacing a visible first page shows its failure",
+        async (assert) => {
+            const {store} = inboxStore({realtimeTimer: fakeTimer()});
+            await store.loadBootstrap();
+            // A search starts a visible first page.
+            const gate = delayFirst(store, "list_conversations");
+            const visible = store.loadConversations({reset: true});
+            assert.ok(await settleUntil(() => gate.release));
+            const original = store.call;
+            store.call = (method, args, kwargs) =>
+                method === "list_conversations"
+                    ? Promise.reject(new Error("temporary network failure"))
+                    : original(method, args, kwargs);
+            // The reload after starting a conversation replaces it and fails.
+            assert.notOk(await store.loadConversations({reset: true, silent: true}));
+            gate.release();
+            await visible;
+            assert.strictEqual(
+                store.state.listPhase,
+                "error",
+                "never an endless skeleton"
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a synchronization during the first page never leaves the list loading",
+        async (assert) => {
+            const realtime = fakeTimer();
+            const {store} = inboxStore({realtimeTimer: realtime});
+            await store.loadBootstrap();
+            const gate = delayFirst(store, "list_conversations");
+            const loading = store.loadConversations({reset: true});
+            assert.ok(await settleUntil(() => gate.release));
+            // From now on every list request fails.
+            const original = store.call;
+            store.call = (method, args, kwargs) =>
+                method === "list_conversations"
+                    ? Promise.reject(new Error("temporary network failure"))
+                    : original(method, args, kwargs);
+            store.synchronizeNotification({
+                schema_version: SUPPORTED_SCHEMA_VERSION,
+                event_type: "message_created",
+                channel_id: 10,
+            });
+            // The synchronization replaces the visible page and owns its failure.
+            realtime.flush();
+            assert.ok(await settleUntil(() => store.state.listPhase === "error", 50));
+            gate.release();
+            await loading;
+            assert.strictEqual(
+                store.state.listPhase,
+                "error",
+                "the failure is shown with its retry, never an endless skeleton"
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "an action answer during the first page keeps it visible and synchronizes",
+        async (assert) => {
+            const realtime = fakeTimer();
+            const {store, calls} = inboxStore({realtimeTimer: realtime});
+            await store.loadBootstrap();
+            const gate = delayFirst(store, "list_conversations");
+            const loading = store.loadConversations({reset: true});
+            assert.ok(await settleUntil(() => gate.release));
+            store.cancelListAnswers();
+            assert.strictEqual(store.state.listPhase, "loading", "not shown as ready");
+            gate.release();
+            assert.ok(await loading, "the visible page is applied");
+            assert.strictEqual(store.state.listPhase, "ready");
+            const before = methods(calls, "list_conversations").length;
+            realtime.flush();
+            assert.ok(
+                await settleUntil(
+                    () => methods(calls, "list_conversations").length > before,
+                    50
+                ),
+                "the list synchronizes after the action"
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a failed refresh page still proves the revisions it carried",
+        async (assert) => {
+            const {rows, store, server} = mutedTailFixture(150);
+            server.items = rows.map((row) =>
+                row.channel_id === 10
+                    ? {...row, preference: {pinned: false, muted: false, revision: 1}}
+                    : row
+            );
+            await store.loadBootstrap();
+            store.state.filters.excludeMuted = true;
+            await store.loadConversations({reset: true});
+            while (store.state.conversations.length < 150) {
+                await store.loadMoreConversations();
+            }
+            await store.selectConversation(10);
+            // Unmuted again elsewhere at revision 3; the first refresh page
+            // carries it, the second page fails.
+            server.items = server.items.map((item) =>
+                item.channel_id === 10
+                    ? {...item, preference: {pinned: false, muted: false, revision: 3}}
+                    : item
+            );
+            const original = store.call;
+            let listCalls = 0;
+            store.call = (method, args, kwargs) => {
+                if (method === "list_conversations" && ++listCalls === 2) {
+                    return Promise.reject(new Error("temporary network failure"));
+                }
+                return original(method, args, kwargs);
+            };
+            assert.notOk(await store.refreshLoadedConversations({silent: true}));
+            // An older detail (revision 2, muted) arrives afterwards.
+            store.call = async (method, args, kwargs) =>
+                method === "get_conversation"
+                    ? {
+                          schema_version: SUPPORTED_SCHEMA_VERSION,
+                          item: {
+                              ...server.items.find((item) => item.channel_id === 10),
+                              preference: {pinned: false, muted: true, revision: 2},
+                          },
+                      }
+                    : original(method, args, kwargs);
+            await store.refreshSelectedConversation({silent: true});
+            assert.deepEqual(
+                [
+                    conversationPreference(store.loadedConversation(10)).muted,
+                    conversationPreference(store.loadedConversation(10)).revision,
+                ],
+                [false, 3],
+                "revision 3 from the failed refresh still wins"
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a newer unmute in a failed refresh keeps the open row once closed",
+        async (assert) => {
+            const {rows, store, server} = mutedTailFixture(150);
+            server.items = rows.map((row) =>
+                row.channel_id === 10
+                    ? {...row, preference: {pinned: false, muted: true, revision: 1}}
+                    : row
+            );
+            await store.loadBootstrap();
+            await store.loadConversations({reset: true});
+            while (store.state.conversations.length < 150) {
+                await store.loadMoreConversations();
+            }
+            await store.selectConversation(10);
+            store.state.filters.excludeMuted = true;
+            // Unmuted elsewhere (event missed); refresh page 1 carries it, page 2 fails.
+            server.items = server.items.map((item) =>
+                item.channel_id === 10
+                    ? {...item, preference: {pinned: false, muted: false, revision: 2}}
+                    : item
+            );
+            const original = store.call;
+            let listCalls = 0;
+            store.call = (method, args, kwargs) => {
+                if (method === "list_conversations" && ++listCalls === 2) {
+                    return Promise.reject(new Error("temporary network failure"));
+                }
+                return original(method, args, kwargs);
+            };
+            assert.notOk(await store.refreshLoadedConversations({silent: true}));
+            store.call = original;
+            assert.notOk(conversationPreference(store.loadedConversation(10)).muted);
+            await store.selectConversation(20);
+            assert.ok(
+                store.state.conversations.some((item) => item.channel_id === 10),
+                "closed but unmuted, it stays listed"
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a superseded page still proves the revisions it carried",
+        async (assert) => {
+            const {rows, store, server} = mutedTailFixture(120);
+            await store.loadBootstrap();
+            await store.loadConversations({reset: true});
+            server.items = rows.map((row) =>
+                row.channel_id === 60
+                    ? {...row, preference: {pinned: false, muted: true, revision: 4}}
+                    : row
+            );
+            const gate = delayFirst(store, "list_conversations");
+            const paging = store.loadMoreConversations();
+            assert.ok(await settleUntil(() => gate.release));
+            store.cancelListAnswers();
+            gate.release();
+            assert.notOk(await paging, "the page is superseded");
+            assert.strictEqual(
+                conversationPreference({preference: store.knownPreference(60)})
+                    .revision,
+                4
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a late generic action answer with a newer unmute synchronizes the list",
+        async (assert) => {
+            const {rows, store, server, realtime} = mutedTailFixture(300);
+            await openMutedBeyondBoundary(store, server, rows);
+            const original = store.call;
+            let answer = null;
+            store.call = (method, args, kwargs) => {
+                if (method === "update_conversation") {
+                    return new Promise((resolve) => {
+                        answer = () =>
+                            resolve({
+                                schema_version: SUPPORTED_SCHEMA_VERSION,
+                                item: server.items.find(
+                                    (item) => item.channel_id === 210
+                                ),
+                            });
+                    });
+                }
+                return original(method, args, kwargs);
+            };
+            const updating = store.updateConversation({tag_ids: []}, 210);
+            assert.ok(await settleUntil(() => answer));
+            // Unmuted elsewhere at revision 2; the bus event is missed.
+            unmutedBeyondBoundary(server, rows);
+            await store.selectConversation(20);
+            answer();
+            await updating;
+            realtime.flush();
+            await settleUntil(() => false, 50);
+            assert.ok(await pageUntil(store, 210), "no stale cursor skips it");
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a sync during a filter change never keeps the previous filter tail",
+        async (assert) => {
+            const {rows, store, server, realtime} = mutedTailFixture(400);
+            // One in five conversations is muted.
+            server.items = rows.map((row, index) =>
+                index % 5 === 4
+                    ? {...row, preference: {pinned: false, muted: true, revision: 1}}
+                    : row
+            );
+            await store.loadBootstrap();
+            await store.setFilter("excludeMuted", true);
+            while (store.state.conversations.length < 250) {
+                await store.loadMoreConversations();
+            }
+            const gate = delayFirst(store, "list_conversations");
+            const changing = store.setFilter("excludeMuted", false);
+            assert.ok(await settleUntil(() => gate.release));
+            store.synchronizeNotification({
+                schema_version: SUPPORTED_SCHEMA_VERSION,
+                event_type: "message_created",
+                channel_id: 1,
+            });
+            realtime.flush();
+            await settleUntil(() => false, 50);
+            gate.release();
+            await changing;
+            while (store.state.conversationsHaveMore) {
+                await store.loadMoreConversations();
+            }
+            assert.strictEqual(
+                new Set(store.state.conversations.map((item) => item.channel_id)).size,
+                400,
+                "every conversation, muted ones included, is reached"
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "the open row kept at the end takes its place when a page brings it",
+        async (assert) => {
+            const {store, realtime} = mutedTailFixture(300);
+            await store.loadBootstrap();
+            store.state.filters.excludeMuted = true;
+            await store.loadConversations({reset: true});
+            while (store.state.conversations.length < 250) {
+                await store.loadMoreConversations();
+            }
+            await store.selectConversation(230);
+            store.synchronizeNotification({
+                schema_version: SUPPORTED_SCHEMA_VERSION,
+                event_type: "message_created",
+                channel_id: 1,
+            });
+            realtime.flush();
+            await settleUntil(() => false, 50);
+            assert.strictEqual(store.preservedConversationChannelId, 230);
+            await store.loadMoreConversations();
+            const ids = store.state.conversations.map((item) => item.channel_id);
+            assert.strictEqual(ids.indexOf(230), ids.indexOf(229) + 1, "in order");
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a purge during a visible first page keeps the open conversation",
+        async (assert) => {
+            const {store} = mutedTailFixture(250);
+            await store.loadBootstrap();
+            await store.loadConversations({reset: true});
+            while (store.state.conversations.length < 150) {
+                await store.loadMoreConversations();
+            }
+            await store.selectConversation(120);
+            const gate = delayFirst(store, "list_conversations");
+            const loading = store.loadConversations({reset: true});
+            assert.ok(await settleUntil(() => gate.release));
+            store.synchronizeNotification({
+                schema_version: SUPPORTED_SCHEMA_VERSION,
+                event_type: "conversation_updated",
+                channel_id: 5,
+                retention_purged: true,
+            });
+            assert.ok(await settleUntil(() => store.state.listPhase === "ready", 50));
+            gate.release();
+            await loading;
+            assert.strictEqual(store.state.selectedChannelId, 120, "still open");
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a purge during the first page never restores an erased preview",
+        async (assert) => {
+            const realtime = fakeTimer();
+            const {store, server} = inboxStore({
+                realtimeTimer: realtime,
+                items: [
+                    conversation(10),
+                    conversation(20, {last_message: {message_id: 5, body: "apagado"}}),
+                ],
+            });
+            await store.loadBootstrap();
+            // The page is computed now, before the purge, and delivered later
+            // as a fresh copy, like any RPC answer.
+            const original = store.call;
+            let computed = null;
+            let deliver = null;
+            store.call = (method, args, kwargs) => {
+                if (method === "list_conversations" && !deliver) {
+                    const answer = original(method, args, kwargs).then(
+                        (payload) => (computed = JSON.parse(JSON.stringify(payload)))
+                    );
+                    return new Promise((resolve) => {
+                        deliver = () => answer.then(resolve);
+                    });
+                }
+                return original(method, args, kwargs);
+            };
+            const loading = store.loadConversations({reset: true});
+            assert.ok(await settleUntil(() => deliver && computed));
+            server.items = [conversation(10), conversation(20)];
+            store.synchronizeNotification({
+                schema_version: SUPPORTED_SCHEMA_VERSION,
+                event_type: "conversation_updated",
+                channel_id: 20,
+                retention_purged: true,
+            });
+            deliver();
+            await loading;
+            assert.ok(await settleUntil(() => store.state.listPhase === "ready", 50));
+            assert.notOk(
+                store.loadedConversation(20).last_message,
+                "the page answered before the purge is not applied"
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a retention notice during the first page never leaves the list loading",
+        async (assert) => {
+            const realtime = fakeTimer();
+            const {store} = inboxStore({realtimeTimer: realtime});
+            await store.loadBootstrap();
+            const gate = delayFirst(store, "list_conversations");
+            const loading = store.loadConversations({reset: true});
+            assert.ok(await settleUntil(() => gate.release));
+            store.synchronizeNotification({
+                schema_version: SUPPORTED_SCHEMA_VERSION,
+                event_type: "conversation_updated",
+                channel_id: 20,
+                retention_purged: true,
+            });
+            realtime.flush();
+            gate.release();
+            await loading;
+            assert.ok(await settleUntil(() => store.state.listPhase === "ready", 50));
+            assert.ok(store.state.conversations.length > 0);
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a stale answer for the open conversation cannot keep it after an external mute",
+        async (assert) => {
+            const {rows, store, server, realtime} = mutedTailFixture(250);
+            await store.loadBootstrap();
+            store.state.filters.excludeMuted = true;
+            store.state.conversations = rows.map((row) => ({...row}));
+            store.state.conversationsHaveMore = false;
+            await store.selectConversation(210);
+            // A revalidation of the open conversation started before the mute.
+            const gate = delayFirst(store, "get_conversation");
+            const revalidating = store.refreshSelectedConversation({silent: true});
+            assert.ok(await settleUntil(() => gate.release));
+            server.items = server.items.map((item) =>
+                item.channel_id === 210
+                    ? {...item, preference: {pinned: false, muted: true}}
+                    : item
+            );
+            store.synchronizeNotification({
+                schema_version: SUPPORTED_SCHEMA_VERSION,
+                event_type: "conversation_preference_updated",
+                channel_id: 210,
+                preference: {pinned: false, muted: true},
+            });
+            // The stale answer (fetched before the mute) arrives afterwards.
+            server.items = rows.map((row) => ({...row}));
+            gate.release();
+            await revalidating;
+            server.items = server.items.map((item) =>
+                item.channel_id === 210
+                    ? {...item, preference: {pinned: false, muted: true}}
+                    : item
+            );
+            await store.selectConversation(20);
+            realtime.flush();
+            await settleUntil(() => false, 50);
+            assert.notOk(
+                store.state.conversations.some((item) => item.channel_id === 210),
+                "closed and muted, it follows the server list"
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a conversation unmuted beyond the refresh boundary appears when paging",
+        async (assert) => {
+            const {rows, store, server, realtime} = mutedTailFixture(300);
+            server.items = rows.map((row) =>
+                row.channel_id === 210
+                    ? {...row, preference: {pinned: false, muted: true}}
+                    : row
+            );
+            await store.loadBootstrap();
+            store.state.filters.excludeMuted = true;
+            await store.loadConversations({reset: true});
+            while (store.state.conversations.length < 250) {
+                await store.loadMoreConversations();
+            }
+            assert.notOk(
+                store.state.conversations.some((item) => item.channel_id === 210)
+            );
+            // Unmuted in another tab: it becomes eligible between rows 200 and 250.
+            server.items = rows.map((row) => ({...row}));
+            store.synchronizeNotification({
+                schema_version: SUPPORTED_SCHEMA_VERSION,
+                event_type: "conversation_preference_updated",
+                channel_id: 210,
+                preference: {pinned: false, muted: false},
+            });
+            realtime.flush();
+            await settleUntil(() => false, 50);
+            while (
+                !store.state.conversations.some((item) => item.channel_id === 210) &&
+                store.state.conversationsHaveMore
+            ) {
+                await store.loadMoreConversations();
+            }
+            assert.ok(
+                store.state.conversations.some((item) => item.channel_id === 210),
+                "no saved cursor skips it"
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a row kept only because it was open leaves when another one is chosen",
+        async (assert) => {
+            const {store, server} = inboxStore({
+                items: [
+                    conversation(10, {unread_count: 2}),
+                    conversation(20, {unread_count: 1}),
+                ],
+            });
+            const original = store.call;
+            store.call = (method, args, kwargs) => {
+                if (method === "list_conversations" && kwargs.filters.unread_only) {
+                    const all = server.items;
+                    server.items = all.filter((item) => item.unread_count > 0);
+                    return original(method, args, kwargs).finally(() => {
+                        server.items = all;
+                    });
+                }
+                return original(method, args, kwargs);
+            };
+            await store.loadBootstrap();
+            await store.setFilter("unreadOnly", true);
+            await store.selectConversation(10);
+            // Read meanwhile: the Unread list no longer has it, the open one stays.
+            server.items = server.items.map((item) =>
+                item.channel_id === 10 ? {...item, unread_count: 0} : item
+            );
+            await store.refreshLoadedConversations({silent: true});
+            assert.strictEqual(store.preservedConversationChannelId, 10);
+            assert.ok(store.state.conversations.some((item) => item.channel_id === 10));
+            await store.selectConversation(20);
+            assert.notOk(
+                store.state.conversations.some((item) => item.channel_id === 10),
+                "no longer open, it follows the Unread list at once"
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "an unmuted conversation is found after a failed and a later refresh",
+        async (assert) => {
+            const {rows, store, server} = mutedTailFixture(300);
+            server.items = rows.map((row) =>
+                row.channel_id === 210
+                    ? {...row, preference: {pinned: false, muted: true}}
+                    : row
+            );
+            await store.loadBootstrap();
+            store.state.filters.excludeMuted = true;
+            await store.loadConversations({reset: true});
+            while (store.state.conversations.length < 250) {
+                await store.loadMoreConversations();
+            }
+            server.items = rows.map((row) => ({...row}));
+            store.synchronizeNotification({
+                schema_version: SUPPORTED_SCHEMA_VERSION,
+                event_type: "conversation_preference_updated",
+                channel_id: 210,
+                preference: {pinned: false, muted: false},
+            });
+            // The restart fails; then another notification refreshes the list.
+            const original = store.call;
+            let failures = 1;
+            store.call = (method, args, kwargs) => {
+                if (method === "list_conversations" && failures > 0) {
+                    failures -= 1;
+                    return Promise.reject(new Error("temporary network failure"));
+                }
+                return original(method, args, kwargs);
+            };
+            assert.notOk(await store.refreshLoadedConversations({silent: true}));
+            assert.ok(await store.refreshLoadedConversations({silent: true}));
+            while (
+                !store.state.conversations.some((item) => item.channel_id === 210) &&
+                store.state.conversationsHaveMore
+            ) {
+                await store.loadMoreConversations();
+            }
+            assert.ok(
+                store.state.conversations.some((item) => item.channel_id === 210)
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a late action answer never brings back a muted conversation no longer open",
+        async (assert) => {
+            const muted = {pinned: false, muted: true};
+            const {store, server} = inboxStore({
+                items: [conversation(10, {preference: muted}), conversation(20)],
+            });
+            await store.loadBootstrap();
+            store.state.filters.states = [];
+            store.state.filters.excludeMuted = true;
+            await store.selectConversation(10);
+            const original = store.call;
+            let answer = null;
+            store.call = (method, args, kwargs) => {
+                if (method === "update_conversation") {
+                    return new Promise((resolve) => {
+                        answer = () =>
+                            resolve({
+                                schema_version: SUPPORTED_SCHEMA_VERSION,
+                                item: {...server.items[0], state: "archived"},
+                            });
+                    });
+                }
+                return original(method, args, kwargs);
+            };
+            const archiving = store.updateConversation({state: "archived"}, 10);
+            assert.ok(await settleUntil(() => answer));
+            await store.selectConversation(20);
+            assert.notOk(
+                store.state.conversations.some((item) => item.channel_id === 10)
+            );
+            answer();
+            await archiving;
+            assert.notOk(
+                store.state.conversations.some((item) => item.channel_id === 10),
+                "the acknowledgement does not reinsert it"
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "an older action answer cannot undo a newer mute of a closed conversation",
+        async (assert) => {
+            const realtime = fakeTimer();
+            const {store, server} = inboxStore({
+                items: [conversation(10), conversation(20)],
+                realtimeTimer: realtime,
+            });
+            await store.loadBootstrap();
+            store.state.filters.states = [];
+            store.state.filters.excludeMuted = true;
+            await store.selectConversation(10);
+            const original = store.call;
+            let answer = null;
+            store.call = (method, args, kwargs) => {
+                if (method === "update_conversation") {
+                    // Serialized before the mute: it still says unmuted.
+                    const stale = {...server.items[0], preference: {muted: false}};
+                    return new Promise((resolve) => {
+                        answer = () =>
+                            resolve({
+                                schema_version: SUPPORTED_SCHEMA_VERSION,
+                                item: stale,
+                            });
+                    });
+                }
+                return original(method, args, kwargs);
+            };
+            const archiving = store.updateConversation({state: "archived"}, 10);
+            assert.ok(await settleUntil(() => answer));
+            server.items = server.items.map((item) =>
+                item.channel_id === 10
+                    ? {...item, preference: {pinned: false, muted: true}}
+                    : item
+            );
+            store.synchronizeNotification({
+                schema_version: SUPPORTED_SCHEMA_VERSION,
+                event_type: "conversation_preference_updated",
+                channel_id: 10,
+                preference: {pinned: false, muted: true},
+            });
+            await store.selectConversation(20);
+            realtime.flush();
+            await settleUntil(() => false, 50);
+            answer();
+            await archiving;
+            assert.notOk(
+                store.state.conversations.some((item) => item.channel_id === 10),
+                "the newer mute wins over the older answer"
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a list page requested after a known preference supersedes it",
+        async (assert) => {
+            const {store, server} = inboxStore();
+            await store.loadBootstrap();
+            const original = store.call;
+            store.call = async (method, args, kwargs) => {
+                if (method === "set_conversation_preference") {
+                    const muted = {...server.items[0], preference: {muted: true}};
+                    server.items = server.items.map((item) =>
+                        item.channel_id === 10 ? muted : item
+                    );
+                    return {schema_version: SUPPORTED_SCHEMA_VERSION, item: muted};
+                }
+                return original(method, args, kwargs);
+            };
+            assert.ok(await store.setConversationPreference({muted: true}, 10));
+            assert.ok(conversationPreference(store.loadedConversation(10)).muted);
+            // Unmuted elsewhere while this tab missed the event.
+            server.items = server.items.map((item) =>
+                item.channel_id === 10
+                    ? {...item, preference: {pinned: false, muted: false}}
+                    : item
+            );
+            await store.refreshLoadedConversations({silent: true});
+            assert.notOk(
+                conversationPreference(store.loadedConversation(10)).muted,
+                "the fresher server page wins"
+            );
+            store.destroy();
+        }
+    );
+
+    function preferenceOf(store, channelId) {
+        return conversationPreference(store.loadedConversation(channelId));
+    }
+
+    QUnit.test(
+        "the server revision orders preference snapshots of any kind",
+        async (assert) => {
+            const {store, server} = inboxStore({
+                items: [
+                    conversation(10, {preference: {muted: true, revision: 3}}),
+                    conversation(20),
+                ],
+            });
+            await store.loadBootstrap();
+            await store.selectConversation(10);
+            // An older detail answer (revision 2) arrives late.
+            server.items = server.items.map((item) =>
+                item.channel_id === 10
+                    ? {...item, preference: {muted: false, revision: 2}}
+                    : item
+            );
+            await store.refreshSelectedConversation({silent: true});
+            assert.deepEqual(
+                [preferenceOf(store, 10).muted, preferenceOf(store, 10).revision],
+                [true, 3],
+                "an older snapshot never undoes a newer preference"
+            );
+            // An older bus event changes nothing either.
+            store.synchronizeNotification({
+                schema_version: SUPPORTED_SCHEMA_VERSION,
+                event_type: "conversation_preference_updated",
+                channel_id: 10,
+                preference: {muted: false, revision: 1},
+            });
+            assert.ok(preferenceOf(store, 10).muted);
+            // A missed unmute (revision 4) is fixed by any newer snapshot.
+            server.items = server.items.map((item) =>
+                item.channel_id === 10
+                    ? {...item, preference: {muted: false, revision: 4}}
+                    : item
+            );
+            await store.refreshSelectedConversation({silent: true});
+            assert.deepEqual(
+                [preferenceOf(store, 10).muted, preferenceOf(store, 10).revision],
+                [false, 4]
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a late mute answer after a newer unmute keeps the row listed",
+        async (assert) => {
+            const {store, server} = inboxStore({
+                items: [
+                    conversation(10, {preference: {muted: false, revision: 4}}),
+                    conversation(20),
+                ],
+            });
+            await store.loadBootstrap();
+            store.state.filters.excludeMuted = true;
+            await store.selectConversation(20);
+            const original = store.call;
+            store.call = async (method, args, kwargs) => {
+                if (method === "set_conversation_preference") {
+                    // Serialized before the unmute that already reached the list.
+                    return {
+                        schema_version: SUPPORTED_SCHEMA_VERSION,
+                        item: {
+                            ...server.items[0],
+                            preference: {muted: true, revision: 3},
+                        },
+                    };
+                }
+                return original(method, args, kwargs);
+            };
+            assert.ok(await store.setConversationPreference({muted: true}, 10));
+            assert.ok(
+                store.state.conversations.some((item) => item.channel_id === 10),
+                "the newer unmuted preference decides, not the patch sent"
+            );
+            assert.notOk(preferenceOf(store, 10).muted);
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "an older muted answer cannot cancel the restoration of an unmuted row",
+        async (assert) => {
+            const context = rememberedContext();
+            const {store, server} = inboxStore({
+                context,
+                items: [
+                    conversation(10, {preference: {muted: false, revision: 4}}),
+                    conversation(20),
+                ],
+                getConversation: (channelId) => ({
+                    schema_version: SUPPORTED_SCHEMA_VERSION,
+                    item: {
+                        ...server.items.find((item) => item.channel_id === channelId),
+                        preference: {muted: true, revision: 3},
+                    },
+                }),
+            });
+            store.state.filters.excludeMuted = true;
+            await store.loadBootstrap();
+            assert.strictEqual(store.state.selectedChannelId, 10);
+            assert.strictEqual(context.channelId, 10);
+            store.destroy();
+        }
+    );
 
     QUnit.test(
         "a realtime refresh during the first page does not cancel the restoration",

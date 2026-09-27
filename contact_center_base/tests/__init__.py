@@ -39,6 +39,7 @@ from . import (
     test_start_conversation,
     test_start_phone,
     test_structured_content,
+    test_systray_summary,
     test_technical_menus,
     test_transcription,
 )

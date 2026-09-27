@@ -2887,23 +2887,31 @@ class ContactCenterApplication(models.AbstractModel):
             else channel.sudo().channel_member_ids.filtered("partner_id").partner_id
         )
         muted_partner_ids = set()
+        # The preference revision each recipient's attention was decided with:
+        # the client lets only a newer mute of its own override it.
+        revision_by_partner = {}
         if (
             event_type == "message_created"
             and payload.get("direction") == "inbound"
             and partners
         ):
-            muted_preferences = (
+            preferences = (
                 self.env["contact.center.conversation.preference"]
                 .sudo()
                 .search(
                     [
                         ("channel_id", "=", channel.id),
-                        ("muted", "=", True),
                         ("user_id.partner_id", "in", partners.ids),
                     ]
                 )
             )
-            muted_partner_ids = set(muted_preferences.user_id.partner_id.ids)
+            for preference in preferences:
+                partner_id = preference.user_id.partner_id.id
+                if preference.muted:
+                    muted_partner_ids.add(partner_id)
+                revision_by_partner[partner_id] = max(
+                    revision_by_partner.get(partner_id, 0), preference.revision
+                )
         notifications = []
         for partner in partners:
             data = common_data
@@ -2914,6 +2922,7 @@ class ContactCenterApplication(models.AbstractModel):
                 data = {
                     **common_data,
                     "personal_attention": partner.id not in muted_partner_ids,
+                    "preference_revision": revision_by_partner.get(partner.id, 0),
                 }
             notifications.append((partner, "contact_center/event", data))
         if notifications:

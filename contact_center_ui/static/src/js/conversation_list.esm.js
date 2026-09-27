@@ -418,6 +418,7 @@ export class ConversationList extends Component {
             filters.responsibility !== "all",
             Boolean(filters.responsibleId),
             filters.unreadOnly,
+            filters.excludeMuted,
             Boolean(filters.conversationType),
             this.selectedFilterTagIds.length > 0,
             Boolean(filters.activityTiming),
@@ -862,6 +863,10 @@ export class ConversationList extends Component {
 
     toggleUnreadOnly() {
         this.store.setFilter("unreadOnly", !this.state.filters.unreadOnly);
+    }
+
+    toggleExcludeMuted() {
+        this.store.setFilter("excludeMuted", !this.state.filters.excludeMuted);
     }
 
     setConversationType(type) {

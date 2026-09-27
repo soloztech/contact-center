@@ -548,6 +548,7 @@ const FILTER_PREFERENCE_RULES = Object.freeze({
     responsibility: (value) => isResponsibilityScope(value),
     responsibleId: (value, catalog) => catalog.agents.has(value),
     unreadOnly: (value) => typeof value === "boolean",
+    excludeMuted: (value) => typeof value === "boolean",
     conversationType: (value) => ["direct", "group"].includes(value),
     activityTiming: (value) => ACTIVITY_TIMINGS.has(value),
 });
@@ -1127,6 +1128,9 @@ function identityMutationIdentity(
     return identity;
 }
 
+const INBOX_PRESETS = new Set(["mine_unread", "all_unread"]);
+const BOOLEAN_FILTERS = new Set(["unreadOnly", "excludeMuted"]);
+
 export function normalizeInboxActionParams(value) {
     const params = isPlainRecord(value) ? value : {};
     return {
@@ -1139,6 +1143,9 @@ export function normalizeInboxActionParams(value) {
         )
             ? params.activity_timing
             : false,
+        // Unread presets of the top bar: the list opens with the counted
+        // conversations, nothing selected.
+        preset: INBOX_PRESETS.has(params.preset) ? params.preset : false,
     };
 }
 
@@ -1268,6 +1275,7 @@ export class ContactCenterStore {
                 responsibility: "all",
                 responsibleId: false,
                 unreadOnly: false,
+                excludeMuted: false,
                 conversationType: false,
                 tagId: false,
                 tagIds: [],
@@ -1337,6 +1345,9 @@ export class ContactCenterStore {
         this.connectionHealthBusRevision = 0;
         this.syncReconnect = false;
         this.syncTimeline = false;
+        // The newest preference received per conversation, ordered only by the
+        // server revision (emenda 2): any source, loaded row or not.
+        this.preferenceMemory = new Map();
         this.productivityRequest = 0;
         this.quickReplyRequest = 0;
         this.activeUploads = 0;
@@ -1593,6 +1604,7 @@ export class ContactCenterStore {
         const filters = this.state.filters;
         return Boolean(
             filters.unreadOnly ||
+                filters.excludeMuted ||
                 ACTIVITY_TIMINGS.has(filters.activityTiming) ||
                 (filters.query || "").trim()
         );
@@ -1821,6 +1833,7 @@ export class ContactCenterStore {
             responsibility: filters.responsibility,
             responsibleId: filters.responsibleId,
             unreadOnly: filters.unreadOnly,
+            excludeMuted: filters.excludeMuted,
             conversationType: filters.conversationType,
             tagIds: this.selectedFilterTagIds,
             activityTiming: filters.activityTiming,
@@ -1978,13 +1991,15 @@ export class ContactCenterStore {
         // conversation; their neutral filters are temporary.
         this.persistFilters = !directed;
         if (directed) {
+            const preset = navigation.preset;
             Object.assign(this.state.filters, {
                 states: [],
                 accountId: false,
                 query: "",
-                responsibility: "all",
+                responsibility: preset === "mine_unread" ? "mine" : "all",
                 responsibleId: false,
-                unreadOnly: false,
+                unreadOnly: Boolean(preset),
+                excludeMuted: Boolean(preset),
                 conversationType: false,
                 tagId: false,
                 tagIds: [],
@@ -2159,7 +2174,10 @@ export class ContactCenterStore {
             const navigation = this.initialNavigation;
             this.initialNavigation = false;
             const directed = Boolean(
-                navigation && (navigation.channelId || navigation.activityTiming)
+                navigation &&
+                    (navigation.channelId ||
+                        navigation.activityTiming ||
+                        navigation.preset)
             );
             const remembered = this.restoreInboxPreferences(
                 payload,
@@ -2216,13 +2234,14 @@ export class ContactCenterStore {
         try {
             const payload = await this.call("get_conversation", [channelId]);
             if (!current()) {
+                this.acceptLateConversationAnswer(payload, channelId);
                 return false;
             }
             validateEnvelope(payload);
             if (
                 !payload.item ||
                 payload.item.channel_id !== channelId ||
-                !this.replaceConversation(payload.item)
+                !this.replaceConversation(payload.item, {insert: true})
             ) {
                 throw new TypeError("A conversa retornada pelo servidor é inválida.");
             }
@@ -2336,24 +2355,28 @@ export class ContactCenterStore {
             visible() &&
                 item &&
                 item.channel_id === channelId &&
-                !this.readSinceListed(item) &&
+                !this.readSinceListed(this.resolvedPreference(item)) &&
                 this.replaceConversation(item) &&
                 visible()
         );
     }
 
     /**
-     * Whether the fresh conversation left the Unread filter since the list.
+     * Whether the fresh conversation left a personal filter since the list.
      *
-     * Read in another tab meanwhile, it no longer satisfies the effective
-     * filters; the volatile-filter tolerance is only for a conversation
-     * already in use, not for one being restored.
+     * Read or muted in another tab meanwhile, it no longer satisfies the
+     * effective filters; the volatile-filter tolerance is only for a
+     * conversation already in use, not for one being restored.
      *
      * @param {Object} item the conversation just authorized by the server
      * @returns {Boolean}
      */
     readSinceListed(item) {
-        return Boolean(this.state.filters.unreadOnly && !(item.unread_count > 0));
+        const filters = this.state.filters;
+        return Boolean(
+            (filters.unreadOnly && !(item.unread_count > 0)) ||
+                (filters.excludeMuted && item.preference && item.preference.muted)
+        );
     }
 
     forgetRememberedConversation(channelId) {
@@ -2408,12 +2431,16 @@ export class ContactCenterStore {
             return "unavailable";
         }
         if (!current()) {
+            this.acceptLateConversationAnswer(payload, channelId);
             return "cancelled";
         }
         try {
             validateEnvelope(payload);
         } catch (_error) {
             return "failed";
+        }
+        if (payload.item && payload.item.channel_id === channelId) {
+            this.acceptPreferenceSnapshot(payload.item);
         }
         if (!this.acceptsRestoredConversation(channelId, payload.item, visible)) {
             this.forgetRememberedConversation(channelId);
@@ -2612,6 +2639,9 @@ export class ContactCenterStore {
         if (this.state.filters.unreadOnly) {
             filters.unread_only = true;
         }
+        if (this.state.filters.excludeMuted) {
+            filters.exclude_muted = true;
+        }
         if (["direct", "group"].includes(this.state.filters.conversationType)) {
             filters.conversation_type = this.state.filters.conversationType;
         }
@@ -2629,6 +2659,7 @@ export class ContactCenterStore {
     }
 
     clearConversationSelection({closePanes = false} = {}) {
+        const previousChannelId = this.state.selectedChannelId;
         this.restoringChannelId = false;
         this.cancelSeenRetry();
         this.timelineRequest += 1;
@@ -2653,6 +2684,7 @@ export class ContactCenterStore {
             this.state.detailsOpen = false;
             this.state.mobilePane = "list";
         }
+        this.dropHiddenRow(previousChannelId);
     }
 
     isCurrentConversationRequest(request) {
@@ -2660,11 +2692,17 @@ export class ContactCenterStore {
     }
 
     applyConversationPage(payload, {reset, silent, previousConversation}) {
-        const items = normalizedConversationItems(payload.items).filter(
-            (item) =>
-                !this.deletedConversationIds.has(item.channel_id) &&
-                this.conversationMatchesPeopleAndTags(item)
-        );
+        // The personal filters are checked again when the page is committed:
+        // a cached tail captured before a selection change must follow the
+        // current selection.
+        const items = normalizedConversationItems(payload.items)
+            .map((item) => this.resolvedPreference(item))
+            .filter(
+                (item) =>
+                    !this.deletedConversationIds.has(item.channel_id) &&
+                    this.conversationMatchesPeopleAndTags(item) &&
+                    !this.hiddenByPersonalFilters(item)
+            );
         if (reset) {
             this.state.conversations = items;
             this.preservedConversationChannelId = false;
@@ -2687,27 +2725,7 @@ export class ContactCenterStore {
                 this.preservedConversationChannelId = previousConversation.channel_id;
             }
         } else {
-            const byId = new Map(
-                this.state.conversations
-                    .filter(
-                        (item) =>
-                            isRenderableConversation(item) &&
-                            this.conversationMatchesPeopleAndTags(item)
-                    )
-                    .map((item) => [item.channel_id, item])
-            );
-            for (const item of items) {
-                byId.set(item.channel_id, item);
-            }
-            this.state.conversations = [...byId.values()];
-            if (
-                this.preservedConversationChannelId &&
-                items.some(
-                    (item) => item.channel_id === this.preservedConversationChannelId
-                )
-            ) {
-                this.preservedConversationChannelId = false;
-            }
+            this.mergeConversationPage(items);
         }
         if (payload.total !== false && payload.total !== undefined) {
             this.state.conversationTotal = payload.total;
@@ -2715,6 +2733,40 @@ export class ContactCenterStore {
         this.state.conversationsHaveMore = Boolean(payload.has_more);
         this.state.nextConversationCursor = payload.next_cursor || false;
         this.state.listPhase = "ready";
+    }
+
+    /**
+     * Append a next page to the loaded rows.
+     *
+     * @param {Array} items the page rows, already resolved and filtered
+     */
+    mergeConversationPage(items) {
+        const byId = new Map(
+            this.state.conversations
+                .filter(
+                    (item) =>
+                        isRenderableConversation(item) &&
+                        this.conversationMatchesPeopleAndTags(item) &&
+                        !this.hiddenByPersonalFilters(item)
+                )
+                .map((item) => [item.channel_id, item])
+        );
+        for (const item of items) {
+            if (item.channel_id === this.preservedConversationChannelId) {
+                // Kept at the end only while no page had it: take its place.
+                byId.delete(item.channel_id);
+            }
+            byId.set(item.channel_id, item);
+        }
+        this.state.conversations = [...byId.values()];
+        if (
+            this.preservedConversationChannelId &&
+            items.some(
+                (item) => item.channel_id === this.preservedConversationChannelId
+            )
+        ) {
+            this.preservedConversationChannelId = false;
+        }
     }
 
     reconcileConversationSelection({reset, previousSelected}) {
@@ -2760,6 +2812,9 @@ export class ContactCenterStore {
         if (this.destroyed) {
             return false;
         }
+        // A silent load replacing a visible first page owns its visibility, as
+        // a refresh does (L07-R16-01).
+        const takesOver = silent && this.takeOverListLoad();
         const request = ++this.listRequest;
         const filterRevision = this.filterRevision;
         if (!silent) {
@@ -2773,6 +2828,7 @@ export class ContactCenterStore {
                 cursor,
             });
             validateEnvelope(payload);
+            this.rememberPagePreferences(payload.items);
             if (!this.isCurrentConversationRequest(request)) {
                 return false;
             }
@@ -2790,8 +2846,64 @@ export class ContactCenterStore {
             }
             return true;
         } catch (error) {
-            return this.conversationLoadFailed(error, request, silent);
+            return this.conversationLoadFailed(error, request, silent && !takesOver);
         }
+    }
+
+    /**
+     * A refresh replaces any list request in flight.
+     *
+     * Replacing a visible first page, it owns the visibility: its failure is
+     * shown with the retry, never an endless skeleton (L07-R13-02). A page
+     * being appended leaves the loading state.
+     *
+     * @returns {Boolean} whether a visible first page is replaced
+     */
+    takeOverListLoad() {
+        if (this.state.listPhase === "loading_more") {
+            this.state.listPhase = "ready";
+        }
+        return this.state.listPhase === "loading";
+    }
+
+    /**
+     * The loaded rows a bounded refresh starts from.
+     *
+     * Rows loaded under other filters (a filter change still loading, or one
+     * that failed) are no window of this list: neither their count nor their
+     * tail is kept. -1: no page applied yet.
+     *
+     * @param {Boolean} takesOver whether the refresh replaces a visible load
+     * @param {Number} filterRevision the filters the refresh loads
+     * @returns {Array}
+     */
+    refreshCachedWindow(takesOver, filterRevision) {
+        if (
+            takesOver ||
+            ![-1, filterRevision].includes(this.listWindowFilterRevision)
+        ) {
+            return [];
+        }
+        return this.state.conversations.filter(
+            (item) =>
+                isRenderableConversation(item) &&
+                item.channel_id !== this.preservedConversationChannelId &&
+                !this.hiddenByPersonalFilters(item)
+        );
+    }
+
+    /**
+     * The loaded rows a refresh may keep beyond its window.
+     *
+     * Under "Sem silenciadas" none: every refresh is a contiguous window from
+     * the first page with a fresh cursor, so a conversation unmuted anywhere
+     * is never skipped (emenda 2). Otherwise the cached tail stays.
+     *
+     * @param {Array} cachedWindow the loaded rows
+     * @returns {Array}
+     */
+    refreshableTail(cachedWindow) {
+        return this.state.filters.excludeMuted ? [] : cachedWindow;
     }
 
     async refreshLoadedConversations(options = {}) {
@@ -2810,13 +2922,10 @@ export class ContactCenterStore {
         if (this.destroyed) {
             return false;
         }
+        const takesOver = this.takeOverListLoad();
         const request = ++this.listRequest;
         const filterRevision = this.filterRevision;
-        const cachedWindow = this.state.conversations.filter(
-            (item) =>
-                isRenderableConversation(item) &&
-                item.channel_id !== this.preservedConversationChannelId
-        );
+        const cachedWindow = this.refreshCachedWindow(takesOver, filterRevision);
         const loadedCount = cachedWindow.length;
         const cachedHasMore = this.state.conversationsHaveMore;
         const cachedNextCursor = this.state.nextConversationCursor;
@@ -2838,6 +2947,7 @@ export class ContactCenterStore {
                     cursor,
                 });
                 validateEnvelope(payload);
+                this.rememberPagePreferences(payload.items);
                 if (!this.isCurrentConversationRequest(request)) {
                     return false;
                 }
@@ -2862,7 +2972,7 @@ export class ContactCenterStore {
                 hasMore,
                 nextCursor,
                 total,
-                cachedWindow,
+                cachedWindow: this.refreshableTail(cachedWindow),
                 cachedHasMore,
                 cachedNextCursor,
                 targetCount,
@@ -2884,15 +2994,15 @@ export class ContactCenterStore {
             await this.revalidatePreservedSelection(items);
             return true;
         } catch (error) {
-            return this.conversationLoadFailed(error, request, silent);
+            return this.conversationLoadFailed(error, request, silent && !takesOver);
         }
     }
 
     loadMoreConversations() {
-        if (
-            ["loading", "loading_more"].includes(this.state.listPhase) ||
-            !this.state.conversationsHaveMore
-        ) {
+        if (["loading", "loading_more"].includes(this.state.listPhase)) {
+            return Promise.resolve(false);
+        }
+        if (!this.state.conversationsHaveMore) {
             return Promise.resolve(false);
         }
         return this.loadConversations({reset: false});
@@ -2916,7 +3026,7 @@ export class ContactCenterStore {
             return this.loadConversations({reset: true});
         }
         let normalizedValue = value;
-        if (name === "unreadOnly") {
+        if (BOOLEAN_FILTERS.has(name)) {
             normalizedValue = value === true;
         } else if (name === "conversationType") {
             normalizedValue = ["direct", "group"].includes(value) ? value : false;
@@ -2966,6 +3076,7 @@ export class ContactCenterStore {
             responsibility: "all",
             responsibleId: false,
             unreadOnly: false,
+            excludeMuted: false,
             conversationType: false,
             tagId: false,
             tagIds: [],
@@ -3029,6 +3140,7 @@ export class ContactCenterStore {
         try {
             const payload = await this.call("start_conversation", [accountId, phone]);
             if (this.destroyed || !isCurrent()) {
+                this.acceptLateConversationAnswer(payload);
                 return false;
             }
             validateEnvelope(payload);
@@ -3044,6 +3156,7 @@ export class ContactCenterStore {
                 this.conversationSelectionGuard &&
                 this.conversationSelectionGuard(false, {checkOnly: true}) === false
             ) {
+                this.acceptPreferenceSnapshot(payload.item);
                 throw new Error(
                     "A conversa está disponível. Conclua a ação em andamento e abra novamente; ela será reutilizada."
                 );
@@ -3052,6 +3165,11 @@ export class ContactCenterStore {
                 browser.clearTimeout(this.searchTimer);
                 this.searchTimer = null;
             }
+            // Resolved against the loaded row before the list is cleared: an
+            // older answer never undoes a newer preference (L07-R13-01).
+            const startedItem = this.resolvedPreference(
+                normalizeConversationGroup(payload.item)
+            );
             // Change only the list view, never the existing channel's state,
             // assignment or tags. In-flight pages must not hide this result.
             this.listRequest += 1;
@@ -3063,6 +3181,7 @@ export class ContactCenterStore {
                 responsibility: "all",
                 responsibleId: false,
                 unreadOnly: false,
+                excludeMuted: false,
                 conversationType: false,
                 tagId: false,
                 tagIds: [],
@@ -3075,7 +3194,7 @@ export class ContactCenterStore {
             this.state.conversationsHaveMore = false;
             this.state.nextConversationCursor = false;
             this.state.listPhase = "ready";
-            this.replaceConversation(payload.item);
+            this.replaceConversation(startedItem, {insert: true});
             await this.selectConversation(payload.channel_id);
             if (!this.destroyed && isCurrent()) {
                 await this.loadConversations({reset: true, silent: true});
@@ -3126,8 +3245,12 @@ export class ContactCenterStore {
             this.state.seenPausedChannelId = false;
             this.selectionRevision += 1;
         }
+        const previousChannelId = this.state.selectedChannelId;
         this.state.selectedChannelId = channelId;
         if (changedConversation) {
+            // The open conversation was kept only while it was open.
+            this.dropHiddenRow(previousChannelId);
+            this.dropPreservedRow(previousChannelId);
             this.cancelSeenRetry();
             // A latest-page bus refresh can overtake the initial reset request.
             // Clear the previous channel projection immediately and stamp the
@@ -4704,14 +4827,20 @@ export class ContactCenterStore {
         this.reconcileReplySelection();
     }
 
-    replaceConversation(item) {
-        const normalizedItem = normalizeConversationGroup(item);
+    replaceConversation(item, {insert = false} = {}) {
+        const known = isPlainRecord(item)
+            ? this.knownPreference(item.channel_id)
+            : null;
+        const normalizedItem = this.resolvedPreference(
+            normalizeConversationGroup(item)
+        );
         if (
             !isRenderableConversation(normalizedItem) ||
             this.deletedConversationIds.has(normalizedItem.channel_id)
         ) {
             return false;
         }
+        this.synchronizeOnMuteChange(known, normalizedItem);
         if (!this.conversationMatchesStructuralFilters(normalizedItem)) {
             this.state.conversations = this.state.conversations.filter(
                 (conversation) => conversation.channel_id !== normalizedItem.channel_id
@@ -4721,6 +4850,14 @@ export class ContactCenterStore {
             }
             return true;
         }
+        if (this.hiddenByPersonalFilters(normalizedItem)) {
+            // Acknowledged, but a muted conversation that is not open never
+            // comes back under "Sem silenciadas".
+            this.state.conversations = this.state.conversations.filter(
+                (conversation) => conversation.channel_id !== normalizedItem.channel_id
+            );
+            return true;
+        }
         const index = this.state.conversations.findIndex(
             (conversation) =>
                 isRenderableConversation(conversation) &&
@@ -4728,9 +4865,14 @@ export class ContactCenterStore {
         );
         if (index >= 0) {
             this.state.conversations.splice(index, 1, normalizedItem);
-        } else {
+        } else if (
+            insert ||
+            normalizedItem.channel_id === this.state.selectedChannelId
+        ) {
             this.state.conversations.unshift(normalizedItem);
         }
+        // Otherwise a late answer for a conversation that left the list only
+        // acknowledges: it never brings the row back by itself.
         if (
             normalizedItem.channel_id === this.state.selectedChannelId &&
             this.hasPeopleOrTagFilters &&
@@ -4819,6 +4961,8 @@ export class ContactCenterStore {
         }
         const wasLoaded = Boolean(this.loadedConversation(channelId));
         this.deletedConversationIds.add(channelId);
+        // Deletion discards every list answer, a visible first page included;
+        // it then shows the remaining rows as ready (tombstones filter them).
         this.listRequest += 1;
         this.state.conversations = this.state.conversations.filter(
             (item) => item.channel_id !== channelId
@@ -4888,8 +5032,7 @@ export class ContactCenterStore {
             ) {
                 throw new TypeError("O servidor não confirmou a opção de ignorar.");
             }
-            this.listRequest += 1;
-            this.state.listPhase = "ready";
+            this.cancelListAnswers();
             return true;
         } catch (error) {
             this.notify(errorMessage(error), {
@@ -4910,6 +5053,7 @@ export class ContactCenterStore {
         ) {
             throw new TypeError("O servidor não confirmou o estado de leitura.");
         }
+        this.acceptPreferenceSnapshot(payload.item);
         if (
             filters === JSON.stringify(this.conversationFilters()) &&
             this.loadedConversation(channelId)
@@ -4927,8 +5071,7 @@ export class ContactCenterStore {
                     (item) => item.channel_id !== channelId
                 );
             }
-            this.listRequest += 1;
-            this.state.listPhase = "ready";
+            this.cancelListAnswers();
             if (
                 channelId === this.state.timelineChannelId &&
                 channelId === this.state.selectedChannelId
@@ -5075,8 +5218,7 @@ export class ContactCenterStore {
             ) {
                 throw new TypeError("O servidor não confirmou a conversa não lida.");
             }
-            this.listRequest += 1;
-            this.state.listPhase = "ready";
+            this.cancelListAnswers();
             if (channelId === this.state.selectedChannelId) {
                 this.clearConversationSelection({closePanes: true});
             }
@@ -5581,6 +5723,9 @@ export class ContactCenterStore {
                 if (!this.state.selectedChannelId) {
                     await this.loadConversations({reset: true});
                 }
+            } else if (payload.item && payload.item.channel_id === channelId) {
+                // No longer open: only its preference still counts.
+                this.acceptPreferenceSnapshot(payload.item);
             }
             return true;
         } catch (error) {
@@ -6150,16 +6295,39 @@ export class ContactCenterStore {
     }
 
     handleAttentionNotification(payload) {
-        const conversation = this.state.conversations.find(
-            (item) => item.channel_id === payload.channel_id
-        );
         if (
             this.attention &&
             payload.personal_attention !== false &&
-            !conversationPreference(conversation).muted
+            !this.newerMuteThanEvent(payload)
         ) {
             this.attention.receive(payload);
         }
+    }
+
+    /**
+     * Whether this tab knows a mute newer than the one an event was sent with.
+     *
+     * The server decides personal_attention with the recipient's preference
+     * at publication and sends its revision: only a mute of a higher revision,
+     * loaded or remembered (a row that left the list), overrides it
+     * (L07-R14-01); an older remembered mute never silences a conversation
+     * unmuted since (R15-01). An event without the revision keeps the loaded
+     * row's mute.
+     *
+     * @param {Object} payload the inbound message event
+     * @returns {Boolean}
+     */
+    newerMuteThanEvent(payload) {
+        const known = conversationPreference({
+            preference: this.knownPreference(payload.channel_id),
+        });
+        if (!known.muted) {
+            return false;
+        }
+        return (
+            !Number.isSafeInteger(payload.preference_revision) ||
+            known.revision > payload.preference_revision
+        );
     }
 
     handleDeliveryNotification(payload) {
@@ -6206,7 +6374,7 @@ export class ContactCenterStore {
         if (payload.retention_purged !== true) {
             return false;
         }
-        this.listRequest += 1;
+        this.discardListAnswersAfterPurge();
         const channelId = payload.channel_id;
         const conversation = this.loadedConversation(channelId);
         if (conversation) {
@@ -6259,6 +6427,307 @@ export class ContactCenterStore {
         }
     }
 
+    /**
+     * Apply a preference changed in another tab or by this tab's own action.
+     *
+     * The event is remembered with its revision whatever the filters; under
+     * "Sem silenciadas" it also drops the row a newer mute hides. Pages and
+     * tails answered before the event are resolved against the remembered
+     * revision when they are applied, so none of them brings the row back.
+     *
+     * @param {Object} payload the conversation_preference_updated event
+     * @returns {Boolean} whether the personal filter was applied
+     */
+    hideMutedElsewhere(payload) {
+        const channelId = payload.channel_id;
+        if (
+            payload.event_type !== "conversation_preference_updated" ||
+            !isPlainRecord(payload.preference) ||
+            typeof payload.preference.muted !== "boolean"
+        ) {
+            return false;
+        }
+        if (!this.state.filters.excludeMuted) {
+            this.rememberPreference(channelId, payload.preference);
+            return false;
+        }
+        this.acceptPreferenceSnapshot({
+            channel_id: channelId,
+            preference: payload.preference,
+        });
+        this.state.conversations = this.state.conversations.filter(
+            (row) => !this.hiddenByPersonalFilters(row)
+        );
+        return true;
+    }
+
+    /**
+     * Discard list answers in flight after a local change.
+     *
+     * A visible first page is kept: it was requested after the change began
+     * and its rows pass the same filters; the synchronization that follows the
+     * change corrects the rest (L07-RSM-01).
+     *
+     * @returns {Boolean} whether answers were discarded
+     */
+    discardListAnswers() {
+        if (this.state.listPhase === "loading") {
+            return false;
+        }
+        this.listRequest += 1;
+        return true;
+    }
+
+    /**
+     * Discard every list answer computed before a retention purge.
+     *
+     * They may carry erased previews. A visible first page is replaced by a
+     * refresh that takes over its visibility and errors and keeps the open
+     * conversation (L07-AMEND2-02, LOAD-02).
+     */
+    discardListAnswersAfterPurge() {
+        if (this.state.listPhase === "loading") {
+            this.refreshLoadedConversations({silent: true});
+            return;
+        }
+        this.listRequest += 1;
+    }
+
+    /**
+     * Discard list answers after an action and synchronize the list again.
+     *
+     * A page being appended leaves its loading state; a visible first page
+     * and an error stay as they are (L07-R14-B, RSM-03).
+     */
+    cancelListAnswers() {
+        if (this.discardListAnswers() && this.state.listPhase === "loading_more") {
+            this.state.listPhase = "ready";
+        }
+        this.scheduleSynchronization(false);
+    }
+
+    /**
+     * Remember the newest preference of a conversation.
+     *
+     * Ordered only by the server revision; a tie keeps the one received last.
+     * Only revisions above 0 are kept: revision 0 (no preference row) never
+     * outranks a snapshot, so the memory holds at most the conversations this
+     * user pinned or muted and never needs to forget one (L07-AMEND2-01).
+     *
+     * @param {Number} channelId the conversation
+     * @param {Object} preference its preference as received
+     */
+    rememberPreference(channelId, preference) {
+        const revision = conversationPreference({preference}).revision;
+        if (
+            !Number.isSafeInteger(channelId) ||
+            !isPlainRecord(preference) ||
+            !revision
+        ) {
+            return;
+        }
+        const known = this.preferenceMemory.get(channelId);
+        if (known && conversationPreference({preference: known}).revision > revision) {
+            return;
+        }
+        this.preferenceMemory.set(channelId, {...preference});
+    }
+
+    /**
+     * Take the preferences of a received list page, used or not.
+     *
+     * A page superseded or followed by a failed page still proves those
+     * revisions (L07-AMEND2-03): each one goes through the same transition as
+     * any snapshot, so a loaded row takes the newer preference and a change of
+     * a known mute synchronizes the list (AMEND2-05). Only the rows and their
+     * content are discarded with the page.
+     *
+     * @param {Array} items the page items as received
+     */
+    rememberPagePreferences(items) {
+        for (const item of Array.isArray(items) ? items : []) {
+            if (isPlainRecord(item) && isPlainRecord(item.preference)) {
+                this.acceptPreferenceSnapshot(
+                    {channel_id: item.channel_id, preference: item.preference},
+                    {fromPage: true}
+                );
+            }
+        }
+    }
+
+    /**
+     * Synchronize the list when a snapshot changes the known mute.
+     *
+     * Under "Sem silenciadas" a conversation that became eligible may belong
+     * anywhere; the ordinary synchronization places it. Pins and unchanged
+     * echoes synchronize nothing (L07-AMEND2-04).
+     *
+     * @param {Object|null} known the preference known before the snapshot
+     * @param {Object} resolved the resolved snapshot
+     * @param {Boolean} [requireKnown] a row never seen before is no change
+     *   (the rows of a list page)
+     * @returns {Boolean} whether the known mute changed
+     */
+    synchronizeOnMuteChange(known, resolved, requireKnown = false) {
+        const changed = known
+            ? conversationPreference({preference: known}).muted !==
+              conversationPreference(resolved).muted
+            : !requireKnown;
+        if (changed && this.state.filters.excludeMuted) {
+            this.scheduleSynchronization(false);
+        }
+        return changed;
+    }
+
+    /**
+     * The newest known preference of a conversation, loaded or remembered.
+     *
+     * @param {Number} channelId the conversation
+     * @returns {Object|null}
+     */
+    knownPreference(channelId) {
+        const loaded = this.loadedConversation(channelId);
+        const candidates = [
+            loaded && loaded.preference,
+            this.preferenceMemory.get(channelId),
+        ].filter(isPlainRecord);
+        let best = null;
+        for (const candidate of candidates) {
+            if (
+                !best ||
+                conversationPreference({preference: candidate}).revision >
+                    conversationPreference({preference: best}).revision
+            ) {
+                best = candidate;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * Take the personal preference of a validated server snapshot into account.
+     *
+     * Detail, action, read and bus answers pass here before their callers
+     * decide anything else: the newest revision updates the loaded row and is
+     * remembered, the row leaves when a personal filter now hides it, and a
+     * change of its known mute synchronizes the list (emenda 2). Only the
+     * preference is applied: a late answer never reinserts or selects a row.
+     *
+     * @param {Object} item a conversation snapshot from the server
+     * @param {Object} [options] fromPage: the snapshot is a list page row
+     * @returns {Boolean} whether its known mute changed
+     */
+    acceptPreferenceSnapshot(item, {fromPage = false} = {}) {
+        if (!isPlainRecord(item) || !Number.isSafeInteger(item.channel_id)) {
+            return false;
+        }
+        const known = this.knownPreference(item.channel_id);
+        const resolved = this.resolvedPreference(item);
+        const loaded = this.loadedConversation(item.channel_id);
+        if (loaded && resolved === item && isPlainRecord(item.preference)) {
+            loaded.preference = {...item.preference};
+        }
+        this.dropHiddenRow(item.channel_id);
+        return this.synchronizeOnMuteChange(known, resolved, fromPage);
+    }
+
+    /**
+     * Apply only the preference of an answer its flow no longer uses.
+     *
+     * @param {Object} payload the server answer
+     * @param {Number} [channelId] the conversation the request was about;
+     *   the answer's own channel when the request did not name one
+     * @returns {Boolean} whether the list restarts
+     */
+    acceptLateConversationAnswer(payload, channelId = undefined) {
+        try {
+            validateEnvelope(payload);
+        } catch (_error) {
+            return false;
+        }
+        const expected = channelId === undefined ? payload.channel_id : channelId;
+        if (!payload.item || payload.item.channel_id !== expected) {
+            return false;
+        }
+        return this.acceptPreferenceSnapshot(payload.item);
+    }
+
+    /**
+     * Keep the newest personal preference of a snapshot.
+     *
+     * Snapshots reach the client out of order (list pages, get_conversation,
+     * action and read answers, bus events); the server revision orders them
+     * against the loaded row and the remembered preference, so an older one
+     * never undoes a newer mute or unmute, loaded or not, and any newer one
+     * fixes a missed event. The winner is remembered.
+     *
+     * @param {Object} item a conversation snapshot
+     * @returns {Object} the snapshot with the newest preference
+     */
+    resolvedPreference(item) {
+        if (!isPlainRecord(item) || !Number.isSafeInteger(item.channel_id)) {
+            return item;
+        }
+        const known = this.knownPreference(item.channel_id);
+        if (
+            !known ||
+            conversationPreference({preference: known}).revision <=
+                conversationPreference(item).revision
+        ) {
+            this.rememberPreference(item.channel_id, item.preference);
+            return item;
+        }
+        return {...item, preference: {...known}};
+    }
+
+    /**
+     * Whether a row is kept by the client only against the personal filters.
+     *
+     * A muted conversation stays listed under "Sem silenciadas" only while it
+     * is open; the cached tail and page merges never keep it otherwise.
+     *
+     * @param {Object} item a loaded conversation row
+     * @returns {Boolean}
+     */
+    hiddenByPersonalFilters(item) {
+        return Boolean(
+            this.state.filters.excludeMuted &&
+                item.channel_id !== this.state.selectedChannelId &&
+                item.preference &&
+                item.preference.muted
+        );
+    }
+
+    /**
+     * Drop the row a silent refresh kept only because it was open.
+     *
+     * The server no longer listed it; once closed it follows the list.
+     *
+     * @param {Number} channelId the conversation that stopped being open
+     * @returns {Boolean}
+     */
+    dropPreservedRow(channelId) {
+        if (!channelId || this.preservedConversationChannelId !== channelId) {
+            return false;
+        }
+        this.preservedConversationChannelId = false;
+        this.state.conversations = this.state.conversations.filter(
+            (row) => row.channel_id !== channelId
+        );
+        return true;
+    }
+
+    dropHiddenRow(channelId) {
+        const item = channelId && this.loadedConversation(channelId);
+        if (!item || !this.hiddenByPersonalFilters(item)) {
+            return false;
+        }
+        this.state.conversations = this.state.conversations.filter(
+            (row) => row.channel_id !== channelId
+        );
+        return true;
+    }
+
     synchronizeNotification(payload) {
         this.handleDeliveryNotification(payload);
         if (this.handleRetentionNotification(payload)) {
@@ -6267,6 +6736,7 @@ export class ContactCenterStore {
         if (!SYNCHRONIZING_EVENTS.has(payload.event_type)) {
             return;
         }
+        this.hideMutedElsewhere(payload);
         const refreshTimeline =
             payload.channel_id === this.state.selectedChannelId &&
             payload.event_type !== "conversation_preference_updated" &&

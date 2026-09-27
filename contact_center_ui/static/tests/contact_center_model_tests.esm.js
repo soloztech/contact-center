@@ -1009,7 +1009,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
         (assert) => {
             assert.deepEqual(
                 normalizeInboxActionParams({channel_id: 42, activity_timing: "due"}),
-                {channelId: 42, activityTiming: "due"}
+                {channelId: 42, activityTiming: "due", preset: false}
             );
             for (const channelId of [-1, 0, "42", true, {}, 1.5]) {
                 assert.notOk(
@@ -1019,11 +1019,17 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             assert.deepEqual(normalizeInboxActionParams({activity_timing: "all"}), {
                 channelId: false,
                 activityTiming: "all",
+                preset: false,
             });
             assert.notOk(
                 normalizeInboxActionParams({activity_timing: "unexpected"})
                     .activityTiming
             );
+            assert.strictEqual(
+                normalizeInboxActionParams({preset: "all_unread"}).preset,
+                "all_unread"
+            );
+            assert.notOk(normalizeInboxActionParams({preset: "unexpected"}).preset);
         }
     );
 
@@ -5386,23 +5392,30 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                     pinned: true,
                     pinned_at: "2026-09-04 12:00:00",
                     muted: true,
+                    revision: 4,
                 },
             }),
             {
                 pinned: true,
                 pinned_at: "2026-09-04 12:00:00",
                 muted: true,
+                revision: 4,
             }
         );
-        assert.deepEqual(conversationPreference({preference: {pinned: 1}}), {
-            pinned: false,
-            pinned_at: false,
-            muted: false,
-        });
+        assert.deepEqual(
+            conversationPreference({preference: {pinned: 1, revision: "4"}}),
+            {
+                pinned: false,
+                pinned_at: false,
+                muted: false,
+                revision: 0,
+            }
+        );
         assert.deepEqual(conversationPreference(false), {
             pinned: false,
             pinned_at: false,
             muted: false,
+            revision: 0,
         });
     });
 
@@ -6645,6 +6658,47 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             store.handleAttentionNotification({channel_id: 20, message_id: 3});
 
             assert.deepEqual(received, [{channel_id: 20, message_id: 3}]);
+        }
+    );
+
+    QUnit.test(
+        "a remembered newer mute suppresses attention after the row left the list",
+        (assert) => {
+            const received = [];
+            const attention = {
+                snapshot: () => ({
+                    available: true,
+                    permission: "granted",
+                    sound_enabled: true,
+                    unseen: 0,
+                }),
+                setStateListener() {
+                    return undefined;
+                },
+                receive: (payload) => received.push(payload),
+            };
+            const store = new ContactCenterStore({
+                orm: {},
+                busService: {},
+                notification: false,
+                attention,
+            });
+            // Muted at revision 2 and closed under "Sem silenciadas": the row
+            // left the list, the newer mute is remembered.
+            store.rememberPreference(10, {pinned: false, muted: true, revision: 2});
+            store.state.conversations = [{channel_id: 20, preference: {muted: false}}];
+            // An inbound event published before the mute arrives afterwards.
+            store.handleAttentionNotification({
+                channel_id: 10,
+                message_id: 4,
+                preference_revision: 1,
+            });
+            store.handleAttentionNotification({channel_id: 20, message_id: 5});
+            // Unmuted since at revision 3 (the event was missed): the server
+            // decided with revision 3, the older remembered mute yields.
+            const unmuted = {channel_id: 10, message_id: 6, preference_revision: 3};
+            store.handleAttentionNotification(unmuted);
+            assert.deepEqual(received, [{channel_id: 20, message_id: 5}, unmuted]);
         }
     );
 
