@@ -1,4 +1,5 @@
-from psycopg2.errors import SerializationFailure
+from psycopg2.errors import InFailedSqlTransaction
+from psycopg2.extensions import TransactionRollbackError
 
 # Keep independent feature extensions in their own source files.
 # pylint: disable=consider-merging-classes-inherited
@@ -261,6 +262,18 @@ class ContactCenterMediaBinding(models.Model):
         return state == "done"
 
     def _job_transcribe(self):
+        """Queue entry point: a database conflict anywhere retries for free."""
+
+        try:
+            return self._job_transcribe_body()
+        except RetryableJobError:
+            raise
+        except TransactionRollbackError as error:
+            raise RetryableJobError(
+                "Transcription state changed.", ignore_retry=True
+            ) from error
+
+    def _job_transcribe_body(self):
         self.ensure_one()
         media = self._transcription_internal().exists()
         if not media or not queue_job_owns_record(
@@ -325,10 +338,10 @@ class ContactCenterMediaBinding(models.Model):
             return media._finish_transcription(
                 "done", text=result.text, language=result.language or False
             )
-        except SerializationFailure as error:
-            raise RetryableJobError(
-                "Transcription state changed.", ignore_retry=True
-            ) from error
+        except (RetryableJobError, TransactionRollbackError, InFailedSqlTransaction):
+            # Converted once at _job_transcribe; never record internal_error on
+            # an aborted transaction.
+            raise
         except TranscriptionError as error:
             job = (
                 self.env["queue.job"]

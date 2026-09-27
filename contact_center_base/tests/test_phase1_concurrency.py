@@ -2203,3 +2203,48 @@ class TestPhase1Concurrency(TransactionCase):
         finally:
             if fixture:
                 self._cleanup_committed_fixture(token)
+
+    def test_ui_notification_propagates_conflict_raised_by_savepoint_flush(self):
+        """The bus savepoint flushes pending writes; their conflict must escape."""
+
+        token = uuid.uuid4().hex
+        fixture = {}
+        try:
+            fixture = self._setup_committed_fixture(token)
+            result = self._process_inbox_transaction(fixture["inbox_ids"][0])
+            self.assertEqual(result["outcome"], "done")
+            stale = self.registry.cursor()
+            try:
+                env = api.Environment(stale, SUPERUSER_ID, {})
+                connection = (
+                    env["contact.center.provider.connection"]
+                    .sudo()
+                    .browse(fixture["connection_id"])
+                )
+                channel = (
+                    env["contact.center.channel.binding"]
+                    .sudo()
+                    .search([("account_id", "=", fixture["account_id"])], limit=1)
+                    .channel_id
+                )
+                self.assertTrue(channel.channel_member_ids.partner_id)
+                # REPEATABLE READ snapshot, then a concurrent committed update.
+                connection.read(["last_success_at"])
+                with self.registry.cursor() as cr:
+                    cr.execute(
+                        "UPDATE contact_center_provider_connection "
+                        "SET write_date = now() WHERE id = %s",
+                        [fixture["connection_id"]],
+                    )
+                # Pending ORM write on the same row, flushed by the savepoint.
+                connection.write({"last_success_at": fields.Datetime.now()})
+                with self.assertRaises(SerializationFailure):
+                    env["contact.center.application"]._notify_ui(
+                        channel, "message_updated", {"message_id": 0}
+                    )
+                stale.rollback()
+            finally:
+                stale.close()
+        finally:
+            if fixture:
+                self._cleanup_committed_fixture(token)

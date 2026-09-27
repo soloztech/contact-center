@@ -2,6 +2,9 @@ import datetime
 import json
 import logging
 
+from psycopg2.errors import InFailedSqlTransaction
+from psycopg2.extensions import TransactionRollbackError
+
 from odoo import _, api, fields, models
 from odoo.exceptions import AccessError, UserError, ValidationError
 from odoo.tools import html_escape
@@ -2917,6 +2920,11 @@ class ContactCenterApplication(models.AbstractModel):
             try:
                 with self.env.cr.savepoint():
                     self.env["bus.bus"].sudo()._sendmany(notifications)
+            except (TransactionRollbackError, InFailedSqlTransaction):
+                # The savepoint flushes pending writes of any model first. A
+                # concurrency conflict there aborts the whole transaction, which
+                # the caller must retry; swallowing it would fail the job later.
+                raise
             except Exception:
                 # Realtime is an invalidation hint.  A transient bus failure must
                 # never roll back a persisted inbound message or provider dispatch.
