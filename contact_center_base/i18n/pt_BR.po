@@ -62,6 +62,10 @@ msgstr "Resposta do provedor"
 #: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_account_setup_wizard__step__inbox
 #: code:addons/contact_center_base/models/productivity.py:307
 #: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_quick_reply_binding__scope__account
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_episode__account_id
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_message__account_id
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_conversation_event__account_id
+#: model_terms:ir.ui.view,arch_db:contact_center_base.view_contact_center_attendance_episode_search
 msgid "Inbox"
 msgstr "Caixa"
 
@@ -97,6 +101,9 @@ msgstr "Nome da caixa"
 #: code:addons/contact_center_base/models/productivity.py:305
 #: model:ir.model.fields,field_description:contact_center_base.field_contact_center_resolution_reason__company_id
 #: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_quick_reply_binding__scope__company
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_episode__company_id
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_message__company_id
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_conversation_event__company_id
 msgid "Company"
 msgstr "Empresa"
 
@@ -367,6 +374,7 @@ msgstr "Ativo"
 #. module: contact_center_base
 #: code:addons/contact_center_base/models/resolution.py:27
 #: model:ir.model.fields,field_description:contact_center_base.field_contact_center_resolution_reason__sequence
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_conversation_event__sequence
 msgid "Sequence"
 msgstr "Ordem"
 
@@ -599,6 +607,9 @@ msgstr "Equipe"
 #. module: contact_center_base
 #: code:addons/contact_center_base/models/productivity.py:308
 #: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_quick_reply_binding__scope__channel
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_episode__channel_id
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_message__channel_id
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_conversation_event__channel_id
 msgid "Conversation"
 msgstr "Conversa"
 
@@ -740,3 +751,736 @@ msgstr "Uma conversa resolvida precisa de um responsável."
 #: code:addons/contact_center_base/models/ui_api.py:2943
 msgid "You do not belong to this inbox access scope."
 msgstr "Você não faz parte do escopo de acesso desta caixa."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/attendance_episode.py:0
+msgid "%s (archived)"
+msgstr "%s (arquivada)"
+
+#. module: contact_center_base
+#: model:ir.model.constraint,message:contact_center_base.constraint_contact_center_conversation_event_channel_sequence_unique
+msgid "A conversation event position can be used only once."
+msgstr "Uma posição de evento da conversa só pode ser usada uma vez."
+
+#. module: contact_center_base
+#: model:ir.model.constraint,message:contact_center_base.constraint_contact_center_conversation_event_sequence_positive
+msgid "A conversation event position must be positive."
+msgstr "A posição de um evento da conversa deve ser positiva."
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_conversation_event__actor_id
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_conversation_event__actor_label
+msgid "Actor"
+msgstr "Ator"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_conversation_event__actor_ref
+msgid "Actor User ID"
+msgstr "ID do usuário ator"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_episode__response_origin__agent
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_message__kind__agent
+msgid "Agent"
+msgstr "Agente"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/attendance_episode.py:0
+msgid "All conversations"
+msgstr "Todas as conversas"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_episode__outcome__answered
+#: model_terms:ir.ui.view,arch_db:contact_center_base.view_contact_center_attendance_episode_search
+msgid "Answered"
+msgstr "Respondido"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_conversation_event__event_type__archived
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_conversation_event__previous_state__archived
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_conversation_event__state__archived
+msgid "Archived"
+msgstr "Arquivada"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_message__placement__archived
+msgid "Archived conversation"
+msgstr "Conversa arquivada"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_conversation_event__event_type__assigned
+msgid "Assigned"
+msgstr "Atribuída"
+
+#. module: contact_center_base
+#: model:ir.actions.act_window,name:contact_center_base.action_contact_center_attendance_episodes
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_attendance_episodes
+msgid "Attendance Episodes"
+msgstr "Episódios de atendimento"
+
+#. module: contact_center_base
+#: model:ir.model,name:contact_center_base.model_contact_center_attendance_message
+msgid "Attendance Message Placement"
+msgstr "Posicionamento das mensagens no atendimento"
+
+#. module: contact_center_base
+#: model:ir.model,name:contact_center_base.model_contact_center_attendance_episode
+msgid "Attendance Waiting Episode"
+msgstr "Episódio de espera do atendimento"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_conversation_event__source__automatic_inbound
+msgid "Automatic (inbound message)"
+msgstr "Automática (mensagem recebida)"
+
+#. module: contact_center_base
+#: model:ir.model.fields,help:contact_center_base.field_contact_center_message_binding__caused_assignment_event_id
+msgid ""
+"Automatic assignment, or automatic creation of the conversation, performed "
+"while processing this very message."
+msgstr ""
+"Atribuição automática, ou criação automática da conversa, feita ao "
+"processar esta mesma mensagem."
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_message__kind__automation
+msgid "Automation"
+msgstr "Automação"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_conversation_event__event_type__baseline
+msgid "Baseline at publication"
+msgstr "Linha de base na publicação"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_episode__cycle_opened_by__baseline
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_message__placement__uncovered
+msgid "Before the history"
+msgstr "Anterior ao histórico"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_message_binding__caused_assignment_event_id
+msgid "Caused Assignment"
+msgstr "Atribuição causada"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_episode__platform
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_message__platform
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_conversation_event__platform
+#: model_terms:ir.ui.view,arch_db:contact_center_base.view_contact_center_attendance_episode_search
+msgid "Channel"
+msgstr "Canal"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/attendance_episode.py:0
+msgid "Choose a period of up to one year."
+msgstr "Escolha um período de até um ano."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/attendance_episode.py:0
+msgid "Choose the report period."
+msgstr "Escolha o período do relatório."
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_episode__outcome__closed_unanswered
+#: model_terms:ir.ui.view,arch_db:contact_center_base.view_contact_center_attendance_episode_search
+msgid "Closed without response"
+msgstr "Encerrado sem resposta"
+
+#. module: contact_center_base
+#: model:ir.model,name:contact_center_base.model_contact_center_attendance_report
+msgid "Contact Center Attendance Report"
+msgstr "Relatório de atendimento da Central"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_message__kind__control
+msgid "Control card"
+msgstr "Cartão de controle"
+
+#. module: contact_center_base
+#: model:ir.actions.act_window,name:contact_center_base.action_contact_center_conversation_events
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_conversation_events
+msgid "Conversation History"
+msgstr "Histórico das conversas"
+
+#. module: contact_center_base
+#: model:ir.model,name:contact_center_base.model_contact_center_conversation_event
+msgid "Conversation Lifecycle Event"
+msgstr "Evento do ciclo de vida da conversa"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_conversation_event__conversation_type
+msgid "Conversation Type"
+msgstr "Tipo de conversa"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_conversation_event__source__creation
+msgid "Conversation creation"
+msgstr "Criação da conversa"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/conversation_event.py:0
+#: code:addons/contact_center_base/models/conversation_event.py:0
+msgid "Conversation history is immutable."
+msgstr "O histórico da conversa é imutável."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/conversation_event.py:0
+msgid "Conversation history is recorded by the conversation service."
+msgstr "O histórico da conversa é registrado pelo serviço de conversas."
+
+#. module: contact_center_base
+#: model:ir.model.fields,help:contact_center_base.field_contact_center_message_binding__lifecycle_seq
+msgid ""
+"Conversation lifecycle position when the message was recorded. Empty for "
+"messages recorded before the lifecycle history existed."
+msgstr ""
+"Posição do ciclo de vida da conversa quando a mensagem foi registrada. "
+"Vazia nas mensagens registradas antes de o histórico existir."
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_episode__cycle_opened_by__created
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_conversation_event__event_type__created
+msgid "Created"
+msgstr "Criada"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_message__kind__customer
+msgid "Customer"
+msgstr "Cliente"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_episode__cycle_sequence
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_message__cycle_sequence
+msgid "Cycle"
+msgstr "Ciclo"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_episode__cycle_closed_at
+msgid "Cycle Closed At"
+msgstr "Ciclo encerrado em"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_episode__cycle_opened_by
+msgid "Cycle Opened By"
+msgstr "Ciclo aberto por"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_episode__response_order__before_history
+msgid "Cycle before the history"
+msgstr "Ciclo anterior ao histórico"
+
+#. module: contact_center_base
+#: model_terms:ir.ui.view,arch_db:contact_center_base.view_contact_center_conversation_event_search
+msgid "Date"
+msgstr "Data"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_conversation_event__conversation_type__direct
+msgid "Direct"
+msgstr "Direta"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_message__direction
+msgid "Direction"
+msgstr "Direção"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_episode__display_name
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_message__display_name
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_conversation_event__display_name
+msgid "Display Name"
+msgstr "Nome exibido"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_message__effective_at
+msgid "Effective Time"
+msgstr "Horário efetivo"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_episode__end_at
+msgid "End"
+msgstr "Fim"
+
+#. module: contact_center_base
+#: model_terms:ir.actions.act_window,help:contact_center_base.action_contact_center_attendance_episodes
+msgid ""
+"Episodes start with a customer message recorded after the\n"
+"                attendance history was published and end with the first "
+"human\n"
+"                response. Waiting times are elapsed time."
+msgstr ""
+"Os episódios começam com uma mensagem do cliente registrada depois da "
+"publicação do histórico de atendimento e terminam na primeira resposta "
+"humana. Os tempos de espera são tempo corrido."
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_conversation_event__event_type
+#: model_terms:ir.ui.view,arch_db:contact_center_base.view_contact_center_conversation_event_search
+msgid "Event"
+msgstr "Evento"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_episode__is_first
+msgid "First Response"
+msgstr "1ª resposta"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_episode__response_order__first
+#: model_terms:ir.ui.view,arch_db:contact_center_base.view_contact_center_attendance_episode_search
+msgid "First response"
+msgstr "1ª resposta"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_conversation_event__conversation_type__group
+msgid "Group"
+msgstr "Grupo"
+
+#. module: contact_center_base
+#: model_terms:ir.ui.view,arch_db:contact_center_base.view_contact_center_attendance_episode_search
+#: model_terms:ir.ui.view,arch_db:contact_center_base.view_contact_center_conversation_event_search
+msgid "Group By"
+msgstr "Agrupar por"
+
+#. module: contact_center_base
+#: model:ir.model.fields,help:contact_center_base.field_contact_center_attendance_episode__responsible_group
+#: model:ir.model.fields,help:contact_center_base.field_contact_center_attendance_message__responsible_group
+msgid ""
+"Historic responsibility key for grouping: each user (existing or deleted), "
+"no responsible or unknown."
+msgstr ""
+"Chave histórica de responsabilidade para agrupar: cada usuário (existente "
+"ou excluído), sem responsável ou desconhecido."
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_episode__id
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_message__id
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_conversation_event__id
+msgid "ID"
+msgstr "ID"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_message__placement__cycle
+msgid "In a service cycle"
+msgstr "Em um ciclo de atendimento"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_message__direction__inbound
+msgid "Inbound"
+msgstr "Entrada"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_conversation_event__source__access_change
+msgid "Inbox access change"
+msgstr "Mudança de acesso à caixa"
+
+#. module: contact_center_base
+#: model:ir.model.fields,help:contact_center_base.field_contact_center_conversation_event__account_id
+msgid "Inbox of the conversation (its unique channel binding)."
+msgstr "Caixa da conversa (seu vínculo de canal único)."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/attendance_episode.py:0
+msgid "Invalid report date: %s"
+msgstr "Data inválida no relatório: %s"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/attendance_episode.py:0
+#: code:addons/contact_center_base/models/attendance_episode.py:0
+msgid "Invalid report filter: %s"
+msgstr "Filtro inválido no relatório: %s"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/attendance_episode.py:0
+msgid "Invalid report grouping."
+msgstr "Agrupamento inválido no relatório."
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_message__kind
+msgid "Kind"
+msgstr "Tipo"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_episode__responsible_status__assigned
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_message__responsible_status__assigned
+msgid "Known responsible"
+msgstr "Responsável conhecido"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_episode____last_update
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_message____last_update
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_conversation_event____last_update
+msgid "Last Modified on"
+msgstr "Última modificação em"
+
+#. module: contact_center_base
+#: model:ir.model.fields,help:contact_center_base.field_mail_channel__contact_center_lifecycle_seq
+msgid ""
+"Last lifecycle event position of the conversation. Every transition "
+"advances it in the same channel write; new messages copy it."
+msgstr ""
+"Posição do último evento do ciclo de vida da conversa. Cada transição a "
+"avança na mesma escrita do canal; novas mensagens a copiam."
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_message_binding__lifecycle_seq
+#: model:ir.model.fields,field_description:contact_center_base.field_mail_channel__contact_center_lifecycle_seq
+msgid "Lifecycle Sequence"
+msgstr "Sequência do ciclo de vida"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_conversation_event__source__manual
+msgid "Manual"
+msgstr "Manual"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_message__message_binding_id
+msgid "Message"
+msgstr "Mensagem"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_message__message_at
+msgid "Message Time"
+msgstr "Horário da mensagem"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_conversation_event__source__migration
+msgid "Migration"
+msgstr "Migração"
+
+#. module: contact_center_base
+#: model_terms:ir.actions.act_window,help:contact_center_base.action_contact_center_attendance_episodes
+msgid "No attendance episode yet"
+msgstr "Nenhum episódio de atendimento ainda"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/attendance_episode.py:0
+#: code:addons/contact_center_base/models/attendance_episode.py:0
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_episode__responsible_status__unassigned
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_message__responsible_status__unassigned
+msgid "No responsible"
+msgstr "Sem responsável"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/attendance_episode.py:0
+#: code:addons/contact_center_base/models/attendance_episode.py:0
+msgid "Not identified"
+msgstr "Não identificado"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_conversation_event__occurred_at
+msgid "Occurred At"
+msgstr "Ocorrido em"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/attendance_episode.py:0
+msgid "Only supervisors can open the attendance report."
+msgstr "Somente supervisores podem abrir o relatório de atendimento."
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_conversation_event__previous_state__open
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_conversation_event__state__open
+msgid "Open"
+msgstr "Aberta"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_episode__start_message_binding_id
+msgid "Opening Message"
+msgstr "Mensagem de abertura"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_message__kind__other
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_conversation_event__conversation_type__other
+msgid "Other"
+msgstr "Outra"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_message__direction__outbound
+msgid "Outbound"
+msgstr "Saída"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_episode__outcome
+#: model_terms:ir.ui.view,arch_db:contact_center_base.view_contact_center_attendance_episode_search
+msgid "Outcome"
+msgstr "Resultado"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_episode__outcome__pending
+#: model_terms:ir.ui.view,arch_db:contact_center_base.view_contact_center_attendance_episode_search
+msgid "Pending"
+msgstr "Pendente"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_episode__response_origin__external_device
+msgid "Phone"
+msgstr "Celular"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_message__kind__phone
+msgid "Phone reply"
+msgstr "Resposta pelo celular"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_message__placement__unplaced
+msgid "Phone reply not placed"
+msgstr "Resposta pelo celular não posicionada"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_message__placement
+msgid "Placement"
+msgstr "Posicionamento"
+
+#. module: contact_center_base
+#: model:ir.model.fields,help:contact_center_base.field_contact_center_conversation_event__sequence
+msgid "Position of the event in its conversation, serialized by the channel."
+msgstr "Posição do evento na conversa, serializada pelo canal."
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_conversation_event__previous_responsible_id
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_conversation_event__previous_responsible_label
+msgid "Previous Responsible"
+msgstr "Responsável anterior"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_conversation_event__previous_responsible_ref
+msgid "Previous Responsible User ID"
+msgstr "ID do responsável anterior"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_conversation_event__previous_state
+msgid "Previous State"
+msgstr "Estado anterior"
+
+#. module: contact_center_base
+#: model:ir.model.fields,help:contact_center_base.field_contact_center_conversation_event__occurred_at
+msgid "Processing time of the transition. Events are never backdated."
+msgstr "Horário de processamento da transição. Eventos nunca retroagem."
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_episode__responsible_status__removed
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_message__responsible_status__removed
+msgid "Removed user"
+msgstr "Usuário removido"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/attendance_episode.py:0
+#: code:addons/contact_center_base/models/conversation_event.py:0
+msgid "Removed user (#%s)"
+msgstr "Usuário removido (#%s)"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_episode__cycle_opened_by__reopened
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_conversation_event__event_type__reopened
+msgid "Reopened"
+msgstr "Reaberta"
+
+#. module: contact_center_base
+#: model_terms:ir.ui.view,arch_db:contact_center_base.view_contact_center_conversation_event_search
+msgid "Reopenings"
+msgstr "Reaberturas"
+
+#. module: contact_center_base
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_reports
+msgid "Reports"
+msgstr "Relatórios"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_conversation_event__event_type__resolved
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_conversation_event__previous_state__resolved
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_conversation_event__state__resolved
+msgid "Resolved"
+msgstr "Resolvida"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_message__placement__closed
+msgid "Resolved conversation"
+msgstr "Conversa resolvida"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_episode__respondent_id
+msgid "Respondent"
+msgstr "Respondente"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_episode__response_message_binding_id
+msgid "Response"
+msgstr "Resposta"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_episode__response_order
+msgid "Response Order"
+msgstr "Ordem da resposta"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_episode__response_origin
+msgid "Response Origin"
+msgstr "Origem da resposta"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_episode__responsible_label
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_message__responsible_label
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_conversation_event__responsible_id
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_conversation_event__responsible_label
+msgid "Responsible"
+msgstr "Responsável"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_episode__responsible_group
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_message__responsible_group
+msgid "Responsible Group"
+msgstr "Grupo de responsável"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_episode__responsible_known
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_message__responsible_known
+msgid "Responsible Known"
+msgstr "Responsável conhecido"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_episode__responsible_status
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_message__responsible_status
+#: model_terms:ir.ui.view,arch_db:contact_center_base.view_contact_center_attendance_episode_search
+msgid "Responsible Status"
+msgstr "Situação do responsável"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_episode__responsible_ref
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_message__responsible_ref
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_conversation_event__responsible_ref
+msgid "Responsible User ID"
+msgstr "ID do responsável"
+
+#. module: contact_center_base
+#: model:ir.model.fields,help:contact_center_base.field_contact_center_conversation_event__responsible_id
+#: model:ir.model.fields,help:contact_center_base.field_contact_center_conversation_event__responsible_ref
+msgid "Responsible agent after the event."
+msgstr "Responsável depois do evento."
+
+#. module: contact_center_base
+#: model:ir.model.fields,help:contact_center_base.field_contact_center_conversation_event__previous_responsible_id
+#: model:ir.model.fields,help:contact_center_base.field_contact_center_conversation_event__previous_responsible_ref
+msgid ""
+"Responsible agent before the event. A filled value on an assignment is a "
+"transfer."
+msgstr ""
+"Responsável antes do evento. Preenchido numa atribuição, indica uma "
+"transferência."
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_episode__responsible_id
+#: model_terms:ir.ui.view,arch_db:contact_center_base.view_contact_center_attendance_episode_search
+msgid "Responsible at Start"
+msgstr "Responsável no início"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_message__responsible_id
+msgid "Responsible at the Time"
+msgstr "Responsável no momento"
+
+#. module: contact_center_base
+#: model:ir.model.fields,help:contact_center_base.field_contact_center_conversation_event__state
+msgid "Service state after the event."
+msgstr "Estado de atendimento depois do evento."
+
+#. module: contact_center_base
+#: model:ir.model.fields,help:contact_center_base.field_contact_center_conversation_event__previous_state
+msgid "Service state before the event."
+msgstr "Estado de atendimento antes do evento."
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_conversation_event__source
+#: model_terms:ir.ui.view,arch_db:contact_center_base.view_contact_center_conversation_event_search
+msgid "Source"
+msgstr "Origem"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_episode__start_at
+#: model_terms:ir.ui.view,arch_db:contact_center_base.view_contact_center_attendance_episode_search
+msgid "Start"
+msgstr "Início"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_conversation_event__state
+msgid "State"
+msgstr "Estado"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_episode__response_order__subsequent
+#: model_terms:ir.ui.view,arch_db:contact_center_base.view_contact_center_attendance_episode_search
+msgid "Subsequent response"
+msgstr "Resposta seguinte"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/conversation_event.py:0
+msgid "The assignment evidence does not belong to this message."
+msgstr "A evidência de atribuição não pertence a esta mensagem."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/conversation_event.py:0
+#: code:addons/contact_center_base/models/conversation_event.py:0
+#: code:addons/contact_center_base/models/conversation_event.py:0
+msgid "The conversation lifecycle is managed by the application service."
+msgstr "O ciclo de vida da conversa é gerenciado pelo serviço da aplicação."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/conversation_event.py:0
+msgid "The message lifecycle position is immutable."
+msgstr "A posição da mensagem no ciclo de vida é imutável."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/attendance_episode.py:0
+msgid "Total"
+msgstr "Total"
+
+#. module: contact_center_base
+#: model_terms:ir.ui.view,arch_db:contact_center_base.view_contact_center_conversation_event_search
+msgid "Transfers"
+msgstr "Transferências"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_episode__cycle_opened_by__unarchived
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_conversation_event__event_type__unarchived
+msgid "Unarchived"
+msgstr "Desarquivada"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_conversation_event__event_type__unassigned
+msgid "Unassigned"
+msgstr "Responsável removido"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/attendance_episode.py:0
+#: code:addons/contact_center_base/models/attendance_episode.py:0
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_episode__responsible_status__unknown
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_attendance_message__responsible_status__unknown
+msgid "Unknown responsible"
+msgstr "Responsável desconhecido"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/conversation_event.py:0
+#: code:addons/contact_center_base/models/conversation_event.py:0
+msgid "Unsupported search operator: %s"
+msgstr "Operador de pesquisa não suportado: %s"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/conversation_event.py:0
+#: code:addons/contact_center_base/models/conversation_event.py:0
+msgid "Unsupported search value: %s"
+msgstr "Valor de pesquisa não suportado: %s"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/attendance_episode.py:0
+msgid "User #%s"
+msgstr "Usuário #%s"
+
+#. module: contact_center_base
+#: model:ir.model.fields,help:contact_center_base.field_contact_center_conversation_event__actor_id
+#: model:ir.model.fields,help:contact_center_base.field_contact_center_conversation_event__actor_ref
+msgid "User of the transaction; empty for automatic processing."
+msgstr "Usuário da transação; vazio em processos automáticos."
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_episode__wait_seconds
+msgid "Wait (seconds)"
+msgstr "Espera (segundos)"

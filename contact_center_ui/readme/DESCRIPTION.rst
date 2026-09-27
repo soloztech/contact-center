@@ -31,6 +31,20 @@ The inbox provides:
   message present when the action was prepared, never over a message that arrived
   afterwards, and the customer receives no read receipt; the list then reloads from its
   first page (rows loaded beyond 200 are paged in again);
+* for supervisors, *Relatórios › Atendimento*: per inbox, responsible at the start or
+  channel, the episodes, answers, server-side median and 90th percentile of the first
+  and of the following responses, pending and closed-without-response episodes,
+  transfers, reopenings and inbound/outbound volume of direct conversations
+  (outbound: agent and automation messages with confirmed delivery, and phone
+  replies), filtered by period, inbox, responsible and channel (archived inboxes and
+  former, archived or deleted responsibles with history the supervisor may read
+  remain selectable); every number states
+  its coverage (known responsible, time basis, history start, phone replies not
+  placed); the history starts at its publication and a period is partial only when
+  a conversation in scope predates it, and a missing measurement reads "sem dados",
+  never zero; a rejected reload
+  clears the numbers, and "Ver episódios" opens, as a list or pivot, the episodes of
+  the report on screen;
 * localized, color-coded conversation states and compact connection-health details;
 * paged conversation and message timelines with unread pointers;
 * provider, platform, origin, reply, delivery, and dispatch context;

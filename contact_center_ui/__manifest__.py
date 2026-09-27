@@ -1,13 +1,16 @@
 {
     "name": "Contact Center UI",
     "summary": "Standalone operational interface for Contact Center agents",
-    "version": "16.0.1.9.0",
+    "version": "16.0.1.10.0",
     "category": "Productivity/Discuss",
     "author": "Soloz Technologies",
     "website": "https://github.com/soloztech/contact-center",
     "license": "AGPL-3",
     "depends": ["contact_center_base", "web"],
-    "data": ["views/contact_center_ui_views.xml"],
+    "data": [
+        "views/contact_center_ui_views.xml",
+        "views/attendance_report_views.xml",
+    ],
     "assets": {
         "web.assets_backend": [
             "contact_center_ui/static/src/js/contact_center_model.esm.js",
@@ -32,6 +35,7 @@
             "contact_center_ui/static/src/js/contact_center_app.esm.js",
             "contact_center_ui/static/src/js/activity_group_view.esm.js",
             "contact_center_ui/static/src/js/contact_center_systray.esm.js",
+            "contact_center_ui/static/src/js/attendance_report.esm.js",
             "contact_center_ui/static/src/xml/message_content.xml",
             "contact_center_ui/static/src/xml/attribution_touchpoints.xml",
             "contact_center_ui/static/src/xml/*.xml",
@@ -43,6 +47,7 @@
             "contact_center_ui/static/src/scss/history_retention.scss",
             "contact_center_ui/static/src/scss/transcription.scss",
             "contact_center_ui/static/src/scss/ad_origin_preview.scss",
+            "contact_center_ui/static/src/scss/attendance_report.scss",
         ],
         "web.qunit_suite_tests": [
             "contact_center_ui/static/tests/contact_center_model_tests.esm.js",
@@ -57,6 +62,7 @@
             "contact_center_ui/static/tests/ad_origin_preview_tests.esm.js",
             "contact_center_ui/static/tests/inbox_state_tests.esm.js",
             "contact_center_ui/static/tests/systray_tests.esm.js",
+            "contact_center_ui/static/tests/attendance_report_tests.esm.js",
         ],
     },
     "application": False,

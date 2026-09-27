@@ -38,6 +38,53 @@ lifecycle, and the existing responsible agent is preserved. A resolved conversat
 always has a responsible agent: resolving an unassigned conversation claims it for the
 actor in the same transaction, and an assignment cannot leave it without one.
 
+Every change of responsible or service state is also appended to the immutable
+``contact.center.conversation.event`` ledger (created, assigned, unassigned, resolved,
+reopened, archived, unarchived; transfers are assignments with a previous
+responsible), with the actor, the source and a processing time that never goes
+backwards. ``mail.channel`` create/write is the single recording point: one event per
+changed dimension, none for a write that changes nothing. Each event advances the
+conversation's ``contact_center_lifecycle_seq`` in the same channel write, and every
+message binding copies that counter when it is created, so messages and transitions
+of a conversation are ordered exactly as their transactions committed. Supervisors
+read the ledger of their conversations; administrators read it for their companies.
+Upgrading records one ``baseline`` event per existing conversation (its present state
+and responsible, not a reconstruction of the past); history starts there. The first
+baseline is the publication of the history; an installation that never had
+conversations before the ledger has none, and its history is complete. A report period
+is partial only when a conversation in its scope received its baseline after the
+period start, so an inbox created after the publication is complete.
+
+The ledger's only foreign key is the conversation: the inbox and company are derived
+from the channel and its unique binding, and users are kept as plain ids. A
+transition therefore never locks an inbox, company or user row after the channel,
+the reverse of the order used by inbound processing and access changes. A deleted
+user keeps its id in the ledger, the episodes and the report groups; every name is
+resolved only for existing users and a deleted one reads as "Removed user (#id)". The
+episode list and pivot group "Responsible at Start" by that historic key, so each
+deleted user, "No responsible" and "Unknown responsible" stay separate groups; its
+choices, like the report's responsible filter, come only from the ledger the viewer
+may read, so no one learns who handled a conversation outside their scope. The
+ledger's derived inbox, channel, type and user fields search like stored fields:
+negative operators are exact complements, like operators keep their case and
+wildcards, and unsupported operators are refused.
+
+The read-only ``contact.center.attendance.episode`` projection turns that ledger into
+waiting episodes of direct conversations: an episode starts with a customer message
+and ends with the first human response (an agent message with positive delivery
+evidence, or a reply written on the phone); automation never answers, and the end of
+a cycle closes a pending episode as *closed without response*. The responsible at the
+start is the one in force at the customer's provider time: the event the message's
+own processing recorded (its automatic assignment, or the creation of the
+conversation), else the last assignment not later than that time, else unknown. A
+conversation created by a message written on the phone keeps that creation as the
+evidence of its first message. A phone reply whose webhook arrives late is placed by
+provider time; a cycle created by a customer or phone message, or reopened by inbound
+processing, starts, for that purpose, at the provider time of the message that opened
+it, so a customer webhook processed after the phone reply that created the
+conversation is still answered by it. Waiting times are elapsed time: no business
+calendar is configured.
+
 Pinning and muting are sparse preferences scoped to one user and conversation. Pinning
 changes only that user's list order. Muting suppresses only that user's browser
 attention signal; the message, unread state and realtime invalidation are still

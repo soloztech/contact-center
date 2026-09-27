@@ -38,3 +38,5 @@ from . import transcription_retention
 from . import transcription_ui_api
 from . import ad_origin_preview
 from . import ad_origin_preview_hooks
+from . import conversation_event
+from . import attendance_episode

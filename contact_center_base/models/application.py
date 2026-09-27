@@ -19,6 +19,12 @@ from ..services.dto import (
     EventDTO,
     MediaDTO,
 )
+from ..services.lifecycle import (
+    LIFECYCLE_CREATIONS_CONTEXT_KEY,
+    LIFECYCLE_SOURCE_AUTOMATIC_INBOUND,
+    LIFECYCLE_SOURCE_CONTEXT_KEY,
+    LifecycleCreations,
+)
 from ..services.timeline import message_chronology_key
 from ..services.tokens import CONTACT_CENTER_MEMBERSHIP_TOKEN
 
@@ -243,7 +249,8 @@ class ContactCenterApplication(models.AbstractModel):
         if channel.contact_center_state != "resolved":
             return False
         channel.sudo().with_context(
-            contact_center_membership_token=CONTACT_CENTER_MEMBERSHIP_TOKEN
+            contact_center_membership_token=CONTACT_CENTER_MEMBERSHIP_TOKEN,
+            **{LIFECYCLE_SOURCE_CONTEXT_KEY: LIFECYCLE_SOURCE_AUTOMATIC_INBOUND},
         ).write({"contact_center_state": "open"})
         self._notify_ui(
             channel,
@@ -259,6 +266,10 @@ class ContactCenterApplication(models.AbstractModel):
         ruled out a duplicate provider message. A concurrent manual claim therefore
         wins if it committed first, while this conditional write can never overwrite
         an existing responsible agent.
+
+        Return the ``assigned`` lifecycle event just recorded (the current channel
+        position, under the same lock) so that only the message being processed
+        carries the causal evidence; return ``False`` when nothing was assigned.
         """
 
         binding.ensure_one()
@@ -271,14 +282,17 @@ class ContactCenterApplication(models.AbstractModel):
         if not assignee or assignee not in account._contact_center_effective_users():
             return False
         channel.sudo().with_context(
-            contact_center_membership_token=CONTACT_CENTER_MEMBERSHIP_TOKEN
+            contact_center_membership_token=CONTACT_CENTER_MEMBERSHIP_TOKEN,
+            **{LIFECYCLE_SOURCE_CONTEXT_KEY: LIFECYCLE_SOURCE_AUTOMATIC_INBOUND},
         ).write({"contact_center_responsible_id": assignee.id})
         self._notify_ui(
             channel,
             "conversation_updated",
             {"changed_fields": ["responsible_id"]},
         )
-        return True
+        return channel._contact_center_lifecycle_event_at(
+            channel.sudo().contact_center_lifecycle_seq
+        )
 
     def _validate_event_scope(self, connection, event):
         connection.ensure_one()
@@ -1269,6 +1283,9 @@ class ContactCenterApplication(models.AbstractModel):
             raise UnsupportedEventError(
                 "external-device messages require an account technical author"
             )
+        # A conversation created by this phone message is its causal evidence
+        # (the cycle then starts at the message's provider time).
+        creations = LifecycleCreations()
         if not channel_binding:
             # For a direct ``from_me`` message, the actor is our own WhatsApp
             # account.  The remote person is identified by the conversation
@@ -1279,8 +1296,10 @@ class ContactCenterApplication(models.AbstractModel):
                 remote_actor,
                 inbox_event=inbox_event,
             )
-            channel_binding = self._resolve_channel(
-                connection.account_id, identity, event
+            channel_binding = (
+                self.with_context(**{LIFECYCLE_CREATIONS_CONTEXT_KEY: creations})
+                ._resolve_channel(connection.account_id, identity, event)
+                .with_context(**{LIFECYCLE_CREATIONS_CONTEXT_KEY: None})
             )
             channel_binding._request_identity_avatar_sync(connection)
         self._lock_inbound_projection_binding(
@@ -1359,6 +1378,11 @@ class ContactCenterApplication(models.AbstractModel):
                     "protocol_participant_json": {},
                     "reply_to_binding_id": reply_binding.id if reply_binding else False,
                     "delivery_state": "queued",
+                    "caused_assignment_event_id": (
+                        creations.event_of(channel_binding.channel_id).id
+                        if creations.event_of(channel_binding.channel_id)
+                        else False
+                    ),
                 }
             )
         )
@@ -2601,11 +2625,15 @@ class ContactCenterApplication(models.AbstractModel):
             inbox_event=inbox_event,
             observed_name_at=self._event_datetime(event),
         )
+        # A conversation created by this very resolution is causal evidence for
+        # the message binding below; nothing else receives the collector.
+        creations = LifecycleCreations()
+        resolver = self.with_context(**{LIFECYCLE_CREATIONS_CONTEXT_KEY: creations})
         binding = (
-            self._resolve_group_channel(account, event)
+            resolver._resolve_group_channel(account, event)
             if event.conversation.conversation_type == "group"
-            else self._resolve_channel(account, identity, event)
-        )
+            else resolver._resolve_channel(account, identity, event)
+        ).with_context(**{LIFECYCLE_CREATIONS_CONTEXT_KEY: None})
         self._lock_inbound_projection_binding(binding, account)
         self._enrich_channel_aliases(binding, event.conversation.addresses)
         if event.conversation.conversation_type == "group":
@@ -2642,7 +2670,10 @@ class ContactCenterApplication(models.AbstractModel):
             return existing.message_id
 
         self._apply_inbound_conversation_lifecycle(binding)
-        self._auto_assign_inbound_conversation(binding)
+        # The later event wins when this processing created and also assigned.
+        caused_event = self._auto_assign_inbound_conversation(
+            binding
+        ) or creations.event_of(binding.channel_id)
 
         current_guest_members = binding.channel_id.sudo().channel_member_ids.guest_id
         if identity.mail_guest_id not in current_guest_members:
@@ -2702,6 +2733,9 @@ class ContactCenterApplication(models.AbstractModel):
                     ),
                     "reply_to_binding_id": reply_binding.id if reply_binding else False,
                     "delivery_state": "delivered",
+                    "caused_assignment_event_id": (
+                        caused_event.id if caused_event else False
+                    ),
                 }
             )
         )
