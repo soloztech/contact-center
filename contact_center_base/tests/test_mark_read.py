@@ -1,3 +1,4 @@
+import datetime
 import uuid
 from unittest import mock
 
@@ -9,6 +10,8 @@ from odoo.addons.queue_job.tests.common import trap_jobs
 
 from ..services.adapter import AdapterResult, ProviderAdapter, adapter_registry
 from ..services.dto import EventDTO
+
+_BULK_READ_FENCE = "UPDATE mail_channel SET write_date = write_date WHERE id = %s"
 
 
 @adapter_registry.register("test.mark.read")
@@ -842,3 +845,317 @@ class TestMarkRead(SavepointCase):
             )
 
         self.assertEqual(order, ["topology", "conversation", "connection"])
+
+    # -- L08: mark the conversations of the list as read, agent side only -------
+
+    def _at(self, hour, minute=0):
+        return datetime.datetime(2026, 9, 27, hour, minute)
+
+    def _bulk_api(self, user=None):
+        return (
+            self.env["contact.center.ui.api"]
+            .with_user(user or self.agent)
+            .with_context(contact_center_skip_enqueue=True)
+        )
+
+    def _bulk_unread(self, date=None):
+        channel, binding, guest = self._conversation()
+        message, _target = self._inbound_message(
+            channel, binding, guest, date=date or fields.Datetime.now()
+        )
+        return channel, binding, guest, message
+
+    def _bulk_member(self, channel):
+        member = channel.channel_member_ids.filtered(
+            lambda row: row.partner_id == self.agent.partner_id
+        )
+        member.invalidate_recordset(["seen_message_id", "message_unread_counter"])
+        return member
+
+    def _bulk_read(self, filters=None, exclude=None):
+        api = self._bulk_api()
+        prepared = api.prepare_mark_conversations_read(
+            filters=filters or {}, exclude_channel_ids=exclude or []
+        )
+        executed = (
+            api.mark_conversations_read(prepared["targets"])
+            if prepared["targets"]
+            else {"marked": 0, "items": []}
+        )
+        return prepared, executed
+
+    def test_bulk_read_marks_only_the_filtered_conversations_of_the_member(self):
+        direct, _binding, _guest, _message = self._bulk_unread()
+        group, group_binding, group_guest = self._conversation("group")
+        self._inbound_message(group, group_binding, group_guest)
+        prepared, executed = self._bulk_read({"conversation_type": "direct"})
+        self.assertIn(
+            direct.id, [target["channel_id"] for target in prepared["targets"]]
+        )
+        self.assertNotIn(
+            group.id, [target["channel_id"] for target in prepared["targets"]]
+        )
+        self.assertEqual(self._bulk_member(direct).message_unread_counter, 0)
+        self.assertEqual(self._bulk_member(group).message_unread_counter, 1)
+        self.assertIn(direct.id, [item["channel_id"] for item in executed["items"]])
+        self.assertEqual(
+            [item["unread_count"] for item in executed["items"]],
+            [0] * len(executed["items"]),
+        )
+
+    def test_bulk_read_never_creates_a_read_receipt(self):
+        self.account.mark_read_enabled = True
+        channel, binding, guest, message = self._bulk_unread()
+        self._bulk_read()
+        self.assertEqual(self._bulk_member(channel).message_unread_counter, 0)
+        outboxes = self.env["contact.center.outbox.command"].sudo()
+        self.assertFalse(
+            outboxes.search(
+                [
+                    ("channel_binding_id", "=", binding.id),
+                    ("command_type", "=", "mark_read"),
+                ]
+            )
+        )
+        # Opening a conversation keeps the inbox rule (no regression).
+        newer, _target = self._inbound_message(channel, binding, guest)
+        self._mark_seen(channel, newer)
+        self.assertTrue(
+            outboxes.search(
+                [
+                    ("channel_binding_id", "=", binding.id),
+                    ("command_type", "=", "mark_read"),
+                ]
+            )
+        )
+        self.assertTrue(message)
+
+    def test_a_forged_context_key_cannot_suppress_the_receipt(self):
+        self.account.mark_read_enabled = True
+        channel, binding, _guest, message = self._bulk_unread()
+        self._bulk_api().with_context(
+            contact_center_bulk_read_token="forged"
+        ).mark_seen(channel.id, message.id)
+        self.assertTrue(
+            self.env["contact.center.outbox.command"]
+            .sudo()
+            .search(
+                [
+                    ("channel_binding_id", "=", binding.id),
+                    ("command_type", "=", "mark_read"),
+                ]
+            )
+        )
+
+    def test_bulk_read_takes_200_in_list_order_and_reports_the_rest(self):
+        channels = self.env["mail.channel"]
+        start = self._at(8)
+        for index in range(205):
+            channel, _binding, _guest, _message = self._bulk_unread(
+                start + datetime.timedelta(minutes=index)
+            )
+            channels |= channel
+        prepared, executed = self._bulk_read()
+        self.assertEqual(prepared["count"], 200)
+        self.assertTrue(prepared["remaining"])
+        self.assertEqual(executed["marked"], 200)
+        # List order: newest activity first, so the five oldest remain.
+        oldest = channels[:5]
+        self.assertEqual(
+            [self._bulk_member(channel).message_unread_counter for channel in oldest],
+            [1] * 5,
+        )
+        prepared, executed = self._bulk_read()
+        self.assertEqual((prepared["count"], prepared["remaining"]), (5, False))
+        self.assertEqual(executed["marked"], 5)
+
+    def test_bulk_read_keeps_the_open_conversation(self):
+        open_channel, _binding, _guest, _message = self._bulk_unread()
+        other, _other_binding, _other_guest, _other_message = self._bulk_unread()
+        prepared, _executed = self._bulk_read(exclude=[open_channel.id])
+        self.assertNotIn(
+            open_channel.id, [target["channel_id"] for target in prepared["targets"]]
+        )
+        self.assertEqual(self._bulk_member(open_channel).message_unread_counter, 1)
+        self.assertEqual(self._bulk_member(other).message_unread_counter, 0)
+
+    def test_an_arrival_after_the_preparation_stays_unread(self):
+        channel, binding, guest, _message = self._bulk_unread(self._at(13))
+        api = self._bulk_api()
+        prepared = api.prepare_mark_conversations_read(filters={})
+        # Arrives meanwhile, dated after the target.
+        later, _target = self._inbound_message(
+            channel, binding, guest, date=self._at(14)
+        )
+        api.mark_conversations_read(prepared["targets"])
+        self.assertEqual(self._bulk_member(channel).message_unread_counter, 1)
+        # Delivered late with a provider date before the target (L08-R04).
+        channel, binding, guest, target = self._bulk_unread(self._at(13))
+        prepared = api.prepare_mark_conversations_read(
+            filters={}, exclude_channel_ids=[later.res_id]
+        )
+        late, _late_target = self._inbound_message(
+            channel, binding, guest, date=self._at(12, 30)
+        )
+        api.mark_conversations_read(prepared["targets"])
+        member = self._bulk_member(channel)
+        self.assertGreaterEqual(member.message_unread_counter, 1)
+        self.assertNotEqual(member.seen_message_id, target)
+        self.assertTrue(late)
+
+    def test_a_retry_with_the_same_targets_never_marks_a_new_arrival(self):
+        channel, binding, guest, _message = self._bulk_unread(self._at(13))
+        api = self._bulk_api()
+        prepared = api.prepare_mark_conversations_read(filters={})
+        first = api.mark_conversations_read(prepared["targets"])
+        self.assertEqual(first["marked"], 1)
+        self._inbound_message(channel, binding, guest, date=self._at(12, 45))
+        again = api.mark_conversations_read(prepared["targets"])
+        self.assertEqual(again["marked"], 0)
+        self.assertEqual(self._bulk_member(channel).message_unread_counter, 0)
+        # 12:45 is before the pointer set at 13:00: the pre-existing
+        # chronological rule (L13) classifies it, exactly as opening would.
+
+    def test_an_older_arrival_before_the_existing_pointer_skips_the_conversation(
+        self,
+    ):
+        channel, binding, guest, noon = self._bulk_unread(self._at(12))
+        self._mark_seen(channel, noon)
+        _message, _target = self._inbound_message(
+            channel, binding, guest, date=self._at(13)
+        )
+        api = self._bulk_api()
+        prepared = api.prepare_mark_conversations_read(filters={})
+        self._inbound_message(channel, binding, guest, date=self._at(11, 59))
+        self.account.mark_read_enabled = True
+        executed = api.mark_conversations_read(prepared["targets"])
+        self.assertEqual(executed["marked"], 0)
+        self.assertEqual(self._bulk_member(channel).seen_message_id, noon)
+        self.assertFalse(
+            self.env["contact.center.outbox.command"]
+            .sudo()
+            .search(
+                [
+                    ("channel_binding_id", "=", binding.id),
+                    ("command_type", "=", "mark_read"),
+                ]
+            )
+        )
+
+    def test_a_skipped_target_still_returns_its_projection(self):
+        channel, _binding, _guest, message = self._bulk_unread(self._at(13))
+        api = self._bulk_api()
+        prepared = api.prepare_mark_conversations_read(filters={})
+        # Read elsewhere before the execution: nothing left to advance.
+        self._mark_seen(channel, message)
+        executed = api.mark_conversations_read(prepared["targets"])
+        self.assertEqual(executed["marked"], 0)
+        self.assertEqual(
+            [(item["channel_id"], item["unread_count"]) for item in executed["items"]],
+            [(channel.id, 0)],
+            "the list gets the authoritative projection anyway",
+        )
+
+    def test_the_whole_topology_is_locked_before_the_first_conversation(self):
+        first, _binding, _guest, _message = self._bulk_unread(self._at(9))
+        other_account = self.env["contact.center.account"].create(
+            {
+                "name": "Read Receipt Other Account",
+                "company_id": self.env.company.id,
+                "platform": "whatsapp",
+                "external_ref": "read-other-%s" % uuid.uuid4(),
+                "access_team_ids": [(6, 0, self.team.ids)],
+            }
+        )
+        other_connection = self.connection.copy(
+            {
+                "account_id": other_account.id,
+                "external_ref": "read-other-connection-%s" % uuid.uuid4(),
+            }
+        )
+        self.account, self.connection = other_account, other_connection
+        try:
+            second, _binding, _guest, _message = self._bulk_unread(self._at(10))
+        finally:
+            del self.account, self.connection
+        api = self._bulk_api()
+        prepared = api.prepare_mark_conversations_read(filters={})
+        self.assertEqual(
+            {target["channel_id"] for target in prepared["targets"]},
+            {first.id, second.id},
+        )
+        events = []
+        connection_class = type(self.env["contact.center.provider.connection"])
+        api_class = type(self.env["contact.center.ui.api"])
+        lock = connection_class._contact_center_lock_operational_admission
+        limit = api_class._bulk_read_limit
+
+        def record_lock(model, account_ids):
+            events.append(("lock", tuple(sorted(account_ids))))
+            return lock(model, account_ids)
+
+        def record_limit(model, channel, target, max_message_id):
+            events.append(("limit", channel.id))
+            return limit(model, channel, target, max_message_id)
+
+        with mock.patch.object(
+            connection_class, "_contact_center_lock_operational_admission", record_lock
+        ), mock.patch.object(api_class, "_bulk_read_limit", record_limit):
+            api.mark_conversations_read(prepared["targets"])
+        first_limit = next(i for i, event in enumerate(events) if event[0] == "limit")
+        self.assertIn(
+            ("lock", tuple(sorted((self.account | other_account).ids))),
+            events[:first_limit],
+            "both inboxes are locked before any conversation is processed",
+        )
+
+    def test_targets_are_validated(self):
+        channel, _binding, _guest, message = self._bulk_unread()
+        other, _other_binding, _other_guest, other_message = self._bulk_unread()
+        api = self._bulk_api()
+        target = {
+            "channel_id": channel.id,
+            "message_id": message.id,
+            "max_message_id": message.id,
+        }
+        for targets in (
+            [],
+            [dict(target, extra=True)],
+            [target, dict(target)],
+            [
+                dict(
+                    target, message_id=other_message.id, max_message_id=other_message.id
+                )
+            ],
+            [dict(target, max_message_id=message.id - 1)],
+        ):
+            with self.subTest(targets=targets), self.assertRaises(ValidationError):
+                api.mark_conversations_read(targets)
+        self.assertTrue(other)
+
+    def test_every_counted_message_path_fences_the_channel_row(self):
+        channel, binding, guest = self._conversation()
+        executed = []
+        cursor_class = type(self.env.cr)
+        original = cursor_class.execute
+
+        def spy(cursor, query, params=None, log_exceptions=True):
+            if isinstance(query, str) and query.strip() == _BULK_READ_FENCE:
+                executed.append(tuple(params or ()))
+            return original(cursor, query, params, log_exceptions)
+
+        with mock.patch.object(cursor_class, "execute", spy):
+            self._inbound_message(channel, binding, guest)
+            channel._contact_center_post(
+                origin="external_device",
+                body="Do celular",
+                message_type="comment",
+                subtype_xmlid="mail.mt_comment",
+                author_id=self.agent.partner_id.id,
+                partner_ids=[],
+            )
+            self._bulk_api().post_internal_note(channel.id, "Nota", str(uuid.uuid4()))
+            self._bulk_api().send_message(
+                channel.id, "Resposta", client_request_id=str(uuid.uuid4())
+            )
+        self.assertEqual(executed, [(channel.id,)] * 4)

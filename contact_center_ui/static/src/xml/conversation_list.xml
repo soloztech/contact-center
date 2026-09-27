@@ -38,6 +38,19 @@
                     />
                     <button
                         type="button"
+                        class="cc-icon-button o_contact_center_mark_all_read"
+                        title="Marcar todas como lidas"
+                        aria-label="Marcar todas como lidas"
+                        t-att-disabled="!canMarkAllRead"
+                        t-on-click="markAllRead"
+                    >
+                        <i
+                            t-attf-class="fa #{state.bulkReadPending or ui.markAllOpen ? 'fa-spinner fa-spin' : 'fa-check-square-o'}"
+                            aria-hidden="true"
+                        />
+                    </button>
+                    <button
+                        type="button"
                         class="cc-icon-button cc-inbox-density-toggle"
                         t-att-title="densityButtonLabel"
                         t-att-aria-label="densityButtonLabel"

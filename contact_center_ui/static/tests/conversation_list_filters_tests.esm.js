@@ -958,6 +958,123 @@ QUnit.module("contact_center_ui > sidebar filter flyout", (hooks) => {
     );
 
     QUnit.test(
+        "mark all read is offered only with unread, confirms the count and runs",
+        async (assert) => {
+            const store = filterStore();
+            try {
+                store.state.conversations = [
+                    {
+                        channel_id: 1,
+                        state: "open",
+                        account: {id: 1},
+                        unread_count: 0,
+                        tags: [],
+                    },
+                ];
+                const prepared = {
+                    targets: [
+                        {channel_id: 2, message_id: 20, max_message_id: 20},
+                        {channel_id: 3, message_id: 30, max_message_id: 30},
+                    ],
+                    count: 2,
+                    remaining: true,
+                };
+                const runs = [];
+                const notes = [];
+                let answer = {marked: 2, remaining: true};
+                store.prepareMarkAllRead = async () => prepared;
+                store.markAllRead = async (value) => {
+                    runs.push(value);
+                    return answer;
+                };
+                store.notify = (message) => notes.push(message);
+                const dialogs = [];
+                registry.category("services").add("hotkey", hotkeyService);
+                registry.category("services").add("ui", uiService);
+                registry.category("services").add("dialog", {
+                    start: () => ({
+                        add: (_component, props, options) => {
+                            dialogs.push({props, options});
+                            return () => undefined;
+                        },
+                    }),
+                });
+                makeFakeLocalizationService();
+                const env = await makeTestEnv();
+                const target = getFixture();
+                const list = await mount(ConversationList, target, {
+                    env,
+                    props: {state: store.state, store},
+                });
+                const button = target.querySelector(".o_contact_center_mark_all_read");
+                assert.ok(button.disabled, "nothing unread");
+                store.state.conversations = [
+                    ...store.state.conversations,
+                    {
+                        channel_id: 2,
+                        state: "open",
+                        account: {id: 1},
+                        unread_count: 2,
+                        tags: [],
+                    },
+                ];
+                await nextTick();
+                assert.notOk(button.disabled);
+                assert.ok(await list.markAllRead());
+                assert.ok(
+                    dialogs[0].props.body.startsWith("Marcar 2 conversas como lidas?")
+                );
+                assert.ok(
+                    dialogs[0].props.body.includes("não recebe confirmação de leitura")
+                );
+                // A second click while it is open opens nothing (L08-CLI-01).
+                assert.notOk(await list.markAllRead());
+                assert.strictEqual(dialogs.length, 1);
+                assert.ok(await dialogs[0].props.confirm());
+                dialogs[0].options.onClose();
+                assert.deepEqual(runs, [prepared]);
+                assert.ok(notes.includes("2 conversas marcadas como lidas."));
+                // Closed by any path, the action is available again.
+                answer = {marked: 0, remaining: false};
+                assert.ok(await list.markAllRead());
+                dialogs[1].options.onClose();
+                assert.ok(await list.markAllRead(), "closing with X frees the action");
+                assert.ok(await dialogs[2].props.confirm());
+                assert.ok(notes.includes("Nenhuma conversa precisou ser marcada."));
+                // An unknown outcome is reported as such; the reload claim depends
+                // on the reload (L08-R09).
+                let reloaded = true;
+                store.markAllRead = async () => {
+                    throw Object.assign(new Error("connection lost"), {
+                        bulkReadUncertain: true,
+                        listReloaded: reloaded,
+                    });
+                };
+                assert.ok(await list.markAllRead());
+                assert.notOk(await dialogs[3].props.confirm());
+                assert.ok(
+                    notes.includes(
+                        "Não foi possível confirmar se as conversas foram marcadas " +
+                            "como lidas. A lista foi recarregada."
+                    )
+                );
+                reloaded = false;
+                dialogs[3].options.onClose();
+                assert.ok(await list.markAllRead());
+                assert.notOk(await dialogs[4].props.confirm());
+                assert.ok(
+                    notes.includes(
+                        "Não foi possível confirmar se as conversas foram marcadas " +
+                            "como lidas. A lista será atualizada quando a conexão voltar."
+                    )
+                );
+            } finally {
+                store.destroy();
+            }
+        }
+    );
+
+    QUnit.test(
         "store checks recording before writes and reuses an existing channel without changing it",
         async (assert) => {
             const store = filterStore();

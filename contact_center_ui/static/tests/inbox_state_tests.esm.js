@@ -2118,6 +2118,628 @@ QUnit.module("contact_center_ui > inbox state", () => {
         }
     );
 
+    // -- L08: "Marcar todas como lidas" -----------------------------------------
+
+    function bulkReadCalls(
+        store,
+        server,
+        {delayPrepare = false, delayMark = false} = {}
+    ) {
+        const original = store.call;
+        const bulk = {prepare: [], mark: [], releasePrepare: null, releaseMark: null};
+        store.call = (method, args, kwargs) => {
+            if (method === "prepare_mark_conversations_read") {
+                bulk.prepare.push(kwargs);
+                const exclude = new Set(kwargs.exclude_channel_ids);
+                const answer = () => ({
+                    schema_version: SUPPORTED_SCHEMA_VERSION,
+                    targets: server.items
+                        .filter(
+                            (item) =>
+                                item.unread_count > 0 && !exclude.has(item.channel_id)
+                        )
+                        .map((item) => ({
+                            channel_id: item.channel_id,
+                            message_id: item.channel_id * 10,
+                            max_message_id: item.channel_id * 10,
+                        })),
+                    remaining: false,
+                });
+                if (delayPrepare && bulk.prepare.length === 1) {
+                    return new Promise((resolve) => {
+                        bulk.releasePrepare = () => resolve(answer());
+                    });
+                }
+                return Promise.resolve(answer());
+            }
+            if (method === "mark_conversations_read") {
+                bulk.mark.push(args[0]);
+                const ids = new Set(args[0].map((target) => target.channel_id));
+                const answer = () => {
+                    server.items = server.items.map((item) =>
+                        ids.has(item.channel_id) ? {...item, unread_count: 0} : item
+                    );
+                    return {
+                        schema_version: SUPPORTED_SCHEMA_VERSION,
+                        marked: ids.size,
+                        items: server.items.filter((item) => ids.has(item.channel_id)),
+                    };
+                };
+                if (delayMark) {
+                    return new Promise((resolve) => {
+                        bulk.releaseMark = () => resolve(answer());
+                    });
+                }
+                return Promise.resolve(answer());
+            }
+            if (method === "list_conversations" && kwargs.filters.unread_only) {
+                const all = server.items;
+                server.items = all.filter((item) => item.unread_count > 0);
+                return original(method, args, kwargs).finally(() => {
+                    server.items = all;
+                });
+            }
+            return original(method, args, kwargs);
+        };
+        return bulk;
+    }
+
+    QUnit.test(
+        "mark all read prepares the current list without the open conversation",
+        async (assert) => {
+            const {store, server} = inboxStore({
+                items: [
+                    conversation(10, {unread_count: 1}),
+                    conversation(20, {unread_count: 2}),
+                    conversation(30, {unread_count: 1}),
+                ],
+            });
+            const bulk = bulkReadCalls(store, server);
+            await store.loadBootstrap();
+            await store.setFilter("unreadOnly", true);
+            await store.selectConversation(10);
+            const prepared = await store.prepareMarkAllRead();
+            assert.deepEqual(bulk.prepare[0], {
+                filters: store.conversationFilters(),
+                exclude_channel_ids: [10],
+            });
+            assert.strictEqual(prepared.count, 2);
+            const result = await store.markAllRead(prepared);
+            assert.deepEqual(result, {marked: 2, remaining: false});
+            assert.deepEqual(bulk.mark[0], prepared.targets);
+            assert.deepEqual(
+                store.state.conversations.map((item) => item.channel_id),
+                [10],
+                "read ones leave the Unread list; the open one stays"
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a preparation answered after the selection changed is made again",
+        async (assert) => {
+            const {store, server} = inboxStore({
+                items: [
+                    conversation(10, {unread_count: 1}),
+                    conversation(20, {unread_count: 1}),
+                    conversation(30, {unread_count: 1}),
+                ],
+            });
+            const bulk = bulkReadCalls(store, server, {delayPrepare: true});
+            await store.loadBootstrap();
+            await store.selectConversation(10);
+            const preparing = store.prepareMarkAllRead();
+            assert.ok(await settleUntil(() => bulk.releasePrepare));
+            await store.selectConversation(20);
+            bulk.releasePrepare();
+            const prepared = await preparing;
+            assert.deepEqual(
+                bulk.prepare.map((kwargs) => kwargs.exclude_channel_ids),
+                [[10], [20]]
+            );
+            assert.deepEqual(
+                prepared.targets.map((target) => target.channel_id),
+                [10, 30],
+                "the new open conversation stays out"
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "the list stays busy while marking and the open one stays out",
+        async (assert) => {
+            const {store, server} = inboxStore({
+                items: [
+                    conversation(10, {unread_count: 1}),
+                    conversation(20, {unread_count: 1}),
+                    conversation(30, {unread_count: 1}),
+                ],
+            });
+            const bulk = bulkReadCalls(store, server, {delayMark: true});
+            await store.loadBootstrap();
+            const prepared = await store.prepareMarkAllRead();
+            await store.selectConversation(20);
+            const marking = store.markAllRead(prepared);
+            assert.ok(await settleUntil(() => bulk.releaseMark));
+            assert.ok(store.state.bulkReadPending);
+            assert.notOk(await store.selectConversation(30), "no switch meanwhile");
+            assert.strictEqual(store.state.selectedChannelId, 20);
+            bulk.releaseMark();
+            await marking;
+            assert.notOk(store.state.bulkReadPending);
+            assert.deepEqual(
+                bulk.mark[0].map((target) => target.channel_id),
+                [10, 30],
+                "the conversation opened at the confirmation is left out"
+            );
+            store.destroy();
+        }
+    );
+
+    async function loadedTail(store, server, rows, changes) {
+        // 250 loaded rows: position 240 is beyond the 200-row refresh window.
+        server.items = rows.map((row) => ({
+            ...row,
+            ...(changes[row.channel_id] || {}),
+        }));
+        const bulk = bulkReadCalls(store, server);
+        await store.loadBootstrap();
+        await store.loadConversations({reset: true});
+        while (store.state.conversations.length < 250) {
+            await store.loadMoreConversations();
+        }
+        return bulk;
+    }
+
+    async function pagedConversation(store, channelId) {
+        while (
+            !store.loadedConversation(channelId) &&
+            store.state.conversationsHaveMore
+        ) {
+            await store.loadMoreConversations();
+        }
+        return store.loadedConversation(channelId);
+    }
+
+    function deferredCall(store, method) {
+        // The answer is computed at the call and delivered later, as a copy.
+        const via = store.call;
+        const deferred = {deliver: null, fail: null};
+        store.call = (name, args, kwargs) => {
+            if (name === method && !deferred.deliver) {
+                const answer = via(name, args, kwargs).then((payload) =>
+                    JSON.parse(JSON.stringify(payload))
+                );
+                return new Promise((resolve, reject) => {
+                    deferred.deliver = () => answer.then(resolve);
+                    deferred.fail = (error) => reject(error);
+                });
+            }
+            return via(name, args, kwargs);
+        };
+        return deferred;
+    }
+
+    function notify(store, event_type, channel_id, values = {}) {
+        store.synchronizeNotification({
+            schema_version: SUPPORTED_SCHEMA_VERSION,
+            event_type,
+            channel_id,
+            ...values,
+        });
+    }
+
+    QUnit.test(
+        "after the action the list reloads without the rows beyond 200",
+        async (assert) => {
+            const {rows, store, server} = mutedTailFixture(250);
+            const bulk = await loadedTail(store, server, rows, {
+                240: {unread_count: 3},
+            });
+            const prepared = await store.prepareMarkAllRead();
+            assert.deepEqual(
+                prepared.targets.map((target) => target.channel_id),
+                [240]
+            );
+            await store.markAllRead(prepared);
+            assert.strictEqual(bulk.mark.length, 1);
+            assert.strictEqual(
+                store.state.conversations.length,
+                200,
+                "the rows beyond the refresh window are dropped"
+            );
+            assert.notOk(store.loadedConversation(240));
+            assert.ok(store.state.conversationsHaveMore);
+            assert.strictEqual(store.state.conversationTotal, 250);
+            assert.strictEqual(
+                (await pagedConversation(store, 240)).unread_count,
+                0,
+                "paging brings the server state"
+            );
+            while (store.state.conversations.length < 250) {
+                await store.loadMoreConversations();
+            }
+            await store.refreshLoadedConversations({silent: true});
+            assert.strictEqual(
+                store.state.conversations.length,
+                250,
+                "once a reload was applied, refreshes keep the tail again"
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a purge during a delayed answer is not undone, in or beyond the window",
+        async (assert) => {
+            const {rows, store, server} = mutedTailFixture(250);
+            const erased = {
+                unread_count: 2,
+                last_message: {message_id: 7, body: "apagado"},
+            };
+            await loadedTail(store, server, rows, {20: erased, 240: erased});
+            const prepared = await store.prepareMarkAllRead();
+            const bulk = deferredCall(store, "mark_conversations_read");
+            const marking = store.markAllRead(prepared);
+            assert.ok(await settleUntil(() => bulk.deliver));
+            server.items = server.items.map((item) =>
+                [20, 240].includes(item.channel_id)
+                    ? {...item, last_message: false}
+                    : item
+            );
+            notify(store, "conversation_updated", 20, {retention_purged: true});
+            notify(store, "conversation_updated", 240, {retention_purged: true});
+            const reload = deferredCall(store, "list_conversations");
+            bulk.deliver();
+            assert.ok(await settleUntil(() => reload.deliver, 50));
+            assert.notOk(
+                store.loadedConversation(20).last_message ||
+                    store.loadedConversation(240).last_message,
+                "the answer computed before the purge is not applied"
+            );
+            reload.deliver();
+            await marking;
+            assert.notOk(store.loadedConversation(20).last_message);
+            assert.strictEqual(store.loadedConversation(20).unread_count, 0);
+            assert.notOk(
+                store.loadedConversation(240),
+                "beyond the window it is dropped"
+            );
+            const paged = await pagedConversation(store, 240);
+            assert.notOk(paged.last_message, "paging brings the erased preview");
+            assert.strictEqual(paged.unread_count, 0);
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a message arriving before a delayed answer keeps its row unread",
+        async (assert) => {
+            const {rows, store, server} = mutedTailFixture(250);
+            await loadedTail(store, server, rows, {
+                20: {unread_count: 1},
+                240: {unread_count: 1},
+            });
+            const prepared = await store.prepareMarkAllRead();
+            const bulk = deferredCall(store, "mark_conversations_read");
+            const marking = store.markAllRead(prepared);
+            assert.ok(await settleUntil(() => bulk.deliver));
+            // New messages: the database counts them unread.
+            server.items = server.items.map((item) =>
+                [20, 240].includes(item.channel_id) ? {...item, unread_count: 1} : item
+            );
+            notify(store, "message_created", 20);
+            notify(store, "message_created", 240);
+            const reload = deferredCall(store, "list_conversations");
+            bulk.deliver();
+            assert.ok(await settleUntil(() => reload.deliver, 50));
+            assert.deepEqual(
+                [20, 240].map((id) => store.loadedConversation(id).unread_count),
+                [1, 1],
+                "the stale zero is not applied"
+            );
+            reload.deliver();
+            await marking;
+            assert.strictEqual(store.loadedConversation(20).unread_count, 1);
+            assert.notOk(store.loadedConversation(240));
+            assert.strictEqual((await pagedConversation(store, 240)).unread_count, 1);
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a read in another tab during a delayed answer is not undone",
+        async (assert) => {
+            const {store, server} = inboxStore({
+                realtimeTimer: fakeTimer(),
+                items: [
+                    conversation(10, {unread_count: 1}),
+                    conversation(20, {unread_count: 2}),
+                    conversation(30, {unread_count: 1}),
+                ],
+            });
+            bulkReadCalls(store, server);
+            await store.loadBootstrap();
+            const prepared = await store.prepareMarkAllRead();
+            const via = store.call;
+            let deliver = null;
+            store.call = (method, args, kwargs) => {
+                if (method !== "mark_conversations_read") {
+                    return via(method, args, kwargs);
+                }
+                // A message of 20 arrived after the preparation (its event came
+                // before the confirmation): the execution conservatively keeps it.
+                server.items = server.items.map((item) => {
+                    if (item.channel_id === 20) {
+                        return {...item, unread_count: 1};
+                    }
+                    return [10, 30].includes(item.channel_id)
+                        ? {...item, unread_count: 0}
+                        : item;
+                });
+                const answer = JSON.parse(
+                    JSON.stringify({
+                        schema_version: SUPPORTED_SCHEMA_VERSION,
+                        marked: 3,
+                        items: server.items,
+                    })
+                );
+                return new Promise((resolve) => {
+                    deliver = () => resolve(answer);
+                });
+            };
+            const marking = store.markAllRead(prepared);
+            assert.ok(await settleUntil(() => deliver));
+            // Another tab of this user reads 20; the action's own echo for 30,
+            // and a read by someone else of 10.
+            server.items = server.items.map((item) =>
+                item.channel_id === 20 ? {...item, unread_count: 0} : item
+            );
+            notify(store, "member_seen", 20, {message_id: 201, user_id: USER_ID});
+            notify(store, "member_seen", 30, {message_id: 300, user_id: USER_ID});
+            notify(store, "member_seen", 10, {message_id: 100, user_id: USER_ID + 1});
+            const reload = deferredCall(store, "list_conversations");
+            deliver();
+            assert.ok(await settleUntil(() => reload.deliver, 50));
+            assert.deepEqual(
+                [10, 20, 30].map((id) => store.loadedConversation(id).unread_count),
+                [0, 2, 0],
+                "the count read elsewhere is not overwritten; nothing left unread is"
+            );
+            reload.deliver();
+            await marking;
+            assert.strictEqual(store.loadedConversation(20).unread_count, 0);
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a refresh in flight with a tail captured before the action cannot restore it",
+        async (assert) => {
+            const {rows, store, server} = mutedTailFixture(250);
+            await loadedTail(store, server, rows, {240: {unread_count: 2}});
+            const prepared = await store.prepareMarkAllRead();
+            const older = deferredCall(store, "list_conversations");
+            const refreshing = store.refreshLoadedConversations({silent: true});
+            assert.ok(await settleUntil(() => older.deliver));
+            await store.markAllRead(prepared);
+            older.deliver();
+            await refreshing;
+            assert.strictEqual(store.state.conversations.length, 200);
+            assert.notOk(store.loadedConversation(240));
+            assert.strictEqual((await pagedConversation(store, 240)).unread_count, 0);
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a lost answer to an applied action still reloads without the tail",
+        async (assert) => {
+            const {rows, store, server} = mutedTailFixture(250);
+            await loadedTail(store, server, rows, {240: {unread_count: 2}});
+            const prepared = await store.prepareMarkAllRead();
+            const via = store.call;
+            store.call = (method, args, kwargs) => {
+                if (method === "mark_conversations_read") {
+                    // Applied and committed on the server; the answer is lost.
+                    return via(method, args, kwargs).then(() => {
+                        throw new Error("connection lost");
+                    });
+                }
+                return via(method, args, kwargs);
+            };
+            await assert.rejects(store.markAllRead(prepared), /connection lost/);
+            assert.notOk(store.state.bulkReadPending);
+            assert.strictEqual(store.state.conversations.length, 200);
+            assert.notOk(store.loadedConversation(240));
+            assert.strictEqual((await pagedConversation(store, 240)).unread_count, 0);
+            store.destroy();
+        }
+    );
+
+    async function uncertainBulkRead(store, server, rows) {
+        // The transport fails while the server is still working on the action.
+        await loadedTail(store, server, rows, {240: {unread_count: 2}});
+        const prepared = await store.prepareMarkAllRead();
+        const via = store.call;
+        store.call = (method, args, kwargs) =>
+            method === "mark_conversations_read"
+                ? Promise.reject(new Error("connection lost"))
+                : via(method, args, kwargs);
+        return prepared;
+    }
+
+    async function loadTo250(store) {
+        while (store.state.conversations.length < 250) {
+            await store.loadMoreConversations();
+        }
+    }
+
+    QUnit.test(
+        "a late commit after a lost answer is found by the next periodic refresh",
+        async (assert) => {
+            const {rows, store, server} = mutedTailFixture(250);
+            const prepared = await uncertainBulkRead(store, server, rows);
+            await assert.rejects(store.markAllRead(prepared), /connection lost/);
+            assert.strictEqual(store.state.conversations.length, 200);
+            await loadTo250(store);
+            assert.strictEqual(
+                store.loadedConversation(240).unread_count,
+                2,
+                "nothing committed yet"
+            );
+            // The server commits now, and its notifications are lost.
+            server.items = server.items.map((item) =>
+                item.channel_id === 240 ? {...item, unread_count: 0} : item
+            );
+            await store.refreshLoadedConversations({silent: true});
+            assert.strictEqual(
+                store.state.conversations.length,
+                200,
+                "the periodic refresh drops the tail"
+            );
+            assert.strictEqual((await pagedConversation(store, 240)).unread_count, 0);
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a read notification only brings the synchronization forward",
+        async (assert) => {
+            const {rows, store, server, realtime} = mutedTailFixture(250);
+            const prepared = await uncertainBulkRead(store, server, rows);
+            await assert.rejects(store.markAllRead(prepared), /connection lost/);
+            await loadTo250(store);
+            server.items = server.items.map((item) =>
+                item.channel_id === 240 ? {...item, unread_count: 0} : item
+            );
+            notify(store, "member_seen", 240, {message_id: 2400, user_id: USER_ID});
+            realtime.flush();
+            assert.ok(
+                await settleUntil(() => store.state.conversations.length === 200, 50),
+                "synchronized at once"
+            );
+            assert.strictEqual((await pagedConversation(store, 240)).unread_count, 0);
+            // An ordinary read never settles the unknown outcome.
+            await loadTo250(store);
+            notify(store, "member_seen", 30, {message_id: 300, user_id: USER_ID});
+            realtime.flush();
+            assert.ok(
+                await settleUntil(() => store.state.conversations.length === 200, 50)
+            );
+            await loadTo250(store);
+            await store.refreshLoadedConversations({silent: true});
+            assert.strictEqual(
+                store.state.conversations.length,
+                200,
+                "every later refresh still drops the tail"
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "an unknown outcome reports whether the immediate reload applied",
+        async (assert) => {
+            const {rows, store, server} = mutedTailFixture(250);
+            const prepared = await uncertainBulkRead(store, server, rows);
+            const via = store.call;
+            store.call = (method, args, kwargs) =>
+                method === "list_conversations"
+                    ? Promise.reject(new Error("offline"))
+                    : via(method, args, kwargs);
+            const error = await store.markAllRead(prepared).catch((failure) => failure);
+            assert.strictEqual(error.message, "connection lost");
+            assert.ok(error.bulkReadUncertain);
+            assert.strictEqual(error.listReloaded, false, "nothing was reloaded");
+            assert.strictEqual(store.state.conversations.length, 250);
+            store.call = via;
+            await store.refreshLoadedConversations({silent: true});
+            assert.strictEqual(
+                store.state.conversations.length,
+                200,
+                "the next refresh drops the tail"
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a read by someone else does not synchronize an uncertain list",
+        async (assert) => {
+            const {rows, store, server, realtime} = mutedTailFixture(250);
+            const prepared = await uncertainBulkRead(store, server, rows);
+            await assert.rejects(store.markAllRead(prepared), /connection lost/);
+            await loadTo250(store);
+            notify(store, "member_seen", 240, {
+                message_id: 2400,
+                user_id: USER_ID + 1,
+            });
+            realtime.flush();
+            await settleUntil(() => false, 20);
+            assert.strictEqual(store.state.conversations.length, 250);
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a first page loaded after a failed reload clears the pending tail drop",
+        async (assert) => {
+            const {rows, store, server} = mutedTailFixture(250);
+            await loadedTail(store, server, rows, {240: {unread_count: 2}});
+            const prepared = await store.prepareMarkAllRead();
+            const reload = deferredCall(store, "list_conversations");
+            const marking = store.markAllRead(prepared);
+            assert.ok(await settleUntil(() => reload.fail));
+            reload.fail(new Error("offline"));
+            await marking;
+            await store.loadConversations({reset: true});
+            while (store.state.conversations.length < 250) {
+                await store.loadMoreConversations();
+            }
+            await store.refreshLoadedConversations({silent: true});
+            assert.strictEqual(
+                store.state.conversations.length,
+                250,
+                "rows loaded after the action are kept"
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "a failed reload leaves dropping the tail to the next synchronization",
+        async (assert) => {
+            const {rows, store, server} = mutedTailFixture(250);
+            await loadedTail(store, server, rows, {240: {unread_count: 2}});
+            const prepared = await store.prepareMarkAllRead();
+            const reload = deferredCall(store, "list_conversations");
+            const marking = store.markAllRead(prepared);
+            assert.ok(await settleUntil(() => reload.fail));
+            reload.fail(new Error("offline"));
+            await marking;
+            assert.strictEqual(
+                store.state.conversations.length,
+                250,
+                "nothing reloaded"
+            );
+            // Changed on the server meanwhile, with no event for this tab.
+            server.items = server.items.map((item) =>
+                item.channel_id === 240 ? {...item, unread_count: 1} : item
+            );
+            await store.refreshLoadedConversations({silent: true});
+            assert.strictEqual(
+                store.state.conversations.length,
+                200,
+                "the next refresh still drops the tail"
+            );
+            assert.strictEqual((await pagedConversation(store, 240)).unread_count, 1);
+            store.destroy();
+        }
+    );
+
     QUnit.test(
         "a stale answer for the open conversation cannot keep it after an external mute",
         async (assert) => {

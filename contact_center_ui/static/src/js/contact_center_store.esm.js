@@ -31,6 +31,8 @@ import {session} from "@web/session";
 const API_MODEL = "contact.center.ui.api";
 const LIST_LIMIT = 50;
 const REALTIME_REFRESH_LIMIT = 200;
+// Conversations one "Marcar todas como lidas" action reads at most (L08).
+const BULK_READ_LIMIT = 200;
 const TIMELINE_LIMIT = 100;
 const TIMELINE_REFRESH_LIMIT = 100;
 const TIMELINE_FORWARD_MAX_PAGES = 20;
@@ -66,6 +68,18 @@ const SYNCHRONIZING_EVENTS = new Set([
     "reaction_updated",
     "media_updated",
     "productivity_updated",
+]);
+// Events after which a conversation snapshot requested earlier may be stale in
+// its content or read state (L08-I02, I04). The member_seen of this user's own
+// reads is counted apart: it can only lower an unread count (L08-I06).
+const SNAPSHOT_INVALIDATING_EVENTS = new Set([
+    "conversation_updated",
+    "identity_updated",
+    "media_updated",
+    "message_created",
+    "message_deleted",
+    "message_updated",
+    "reaction_updated",
 ]);
 const MESSAGE_ACTION_METHODS = Object.freeze({
     react_message: "react",
@@ -1149,6 +1163,20 @@ export function normalizeInboxActionParams(value) {
     };
 }
 
+function validBulkReadPreparation(payload) {
+    return (
+        Array.isArray(payload.targets) &&
+        payload.targets.length <= BULK_READ_LIMIT &&
+        payload.targets.every(
+            (target) =>
+                isPlainRecord(target) &&
+                ["channel_id", "message_id", "max_message_id"].every(
+                    (key) => Number.isSafeInteger(target[key]) && target[key] > 0
+                )
+        )
+    );
+}
+
 export class ContactCenterStore {
     constructor({
         orm,
@@ -1223,6 +1251,8 @@ export class ContactCenterStore {
             phase: "loading",
             bootstrap: null,
             listPhase: "idle",
+            // "Marcar todas como lidas" is running: the list stays busy.
+            bulkReadPending: false,
             conversations: [],
             conversationTotal: 0,
             conversationsHaveMore: false,
@@ -1348,6 +1378,21 @@ export class ContactCenterStore {
         // The newest preference received per conversation, ordered only by the
         // server revision (emenda 2): any source, loaded row or not.
         this.preferenceMemory = new Map();
+        // Changes seen per conversation (new or edited messages, updates,
+        // retention purges): a snapshot requested before one may be stale in
+        // content or read state (L08-I02, I04).
+        this.conversationGenerations = new Map();
+        // Reads by this user seen per conversation (another tab, or the echo of
+        // the bulk action itself).
+        this.ownReadGenerations = new Map();
+        // After an action that changed many conversations the loaded rows beyond
+        // the refresh window cannot be kept coherent: the next refresh applied
+        // drops them (L08-I05–I07).
+        this.listTailStale = false;
+        // A bulk action whose outcome is unknown (its call failed once sent):
+        // the server may still commit it, and nothing announces that reliably,
+        // so until the page is reloaded no refresh keeps the tail (L08-I10, I11).
+        this.bulkReadUncertain = false;
         this.productivityRequest = 0;
         this.quickReplyRequest = 0;
         this.activeUploads = 0;
@@ -2840,6 +2885,8 @@ export class ContactCenterStore {
                 previousConversation,
             });
             this.listWindowFilterRevision = filterRevision;
+            // A first page replaces every loaded row: no stale tail is left.
+            this.listTailStale = this.listTailStale && !reset;
             this.reconcileConversationSelection({reset, previousSelected});
             if (reset && silent) {
                 await this.revalidatePreservedSelection(payload.items);
@@ -2897,13 +2944,19 @@ export class ContactCenterStore {
      *
      * Under "Sem silenciadas" none: every refresh is a contiguous window from
      * the first page with a fresh cursor, so a conversation unmuted anywhere
-     * is never skipped (emenda 2). Otherwise the cached tail stays.
+     * is never skipped (emenda 2). Nor after "Marcar todas como lidas", until
+     * a refresh is applied, or ever again after one with an unknown outcome
+     * (L08 emendas). Otherwise the cached tail stays.
      *
      * @param {Array} cachedWindow the loaded rows
      * @returns {Array}
      */
     refreshableTail(cachedWindow) {
-        return this.state.filters.excludeMuted ? [] : cachedWindow;
+        return this.state.filters.excludeMuted ||
+            this.listTailStale ||
+            this.bulkReadUncertain
+            ? []
+            : cachedWindow;
     }
 
     async refreshLoadedConversations(options = {}) {
@@ -2925,6 +2978,7 @@ export class ContactCenterStore {
         const takesOver = this.takeOverListLoad();
         const request = ++this.listRequest;
         const filterRevision = this.filterRevision;
+        const dropsStaleTail = this.listTailStale;
         const cachedWindow = this.refreshCachedWindow(takesOver, filterRevision);
         const loadedCount = cachedWindow.length;
         const cachedHasMore = this.state.conversationsHaveMore;
@@ -2990,6 +3044,7 @@ export class ContactCenterStore {
                 {reset: true, silent, previousConversation}
             );
             this.listWindowFilterRevision = filterRevision;
+            this.listTailStale = this.listTailStale && !dropsStaleTail;
             this.reconcileConversationSelection({reset: true, previousSelected});
             await this.revalidatePreservedSelection(items);
             return true;
@@ -3212,8 +3267,24 @@ export class ContactCenterStore {
         }
     }
 
+    /**
+     * Whether a conversation may not be opened now.
+     *
+     * A deleted conversation never reopens; the list stays busy while "Marcar
+     * todas como lidas" runs (L08).
+     *
+     * @param {Number} channelId the conversation to open
+     * @returns {Boolean}
+     */
+    selectionRefused(channelId) {
+        return (
+            this.deletedConversationIds.has(channelId) ||
+            (this.state.bulkReadPending && channelId !== this.state.selectedChannelId)
+        );
+    }
+
     async selectConversation(channelId, {preservePane = false, restored = false} = {}) {
-        if (this.deletedConversationIds.has(channelId)) {
+        if (this.selectionRefused(channelId)) {
             return false;
         }
         if (
@@ -5082,6 +5153,177 @@ export class ContactCenterStore {
         }
     }
 
+    /**
+     * What a bulk read preparation depends on: the open conversation and the
+     * filters of the list (L08-R05).
+     *
+     * @returns {String}
+     */
+    bulkReadGeneration() {
+        return JSON.stringify([
+            this.state.selectedChannelId || false,
+            this.conversationFilters(),
+        ]);
+    }
+
+    /**
+     * Choose the unread conversations of the current list, except the open one.
+     *
+     * A preparation answered after the selection or the filters changed is
+     * discarded and made again.
+     *
+     * @returns {Promise<Object|null>} {targets, count, remaining}, or null when
+     *   the list kept changing
+     */
+    async prepareMarkAllRead() {
+        for (let attempt = 0; attempt < 3 && !this.destroyed; attempt += 1) {
+            const generation = this.bulkReadGeneration();
+            const selected = this.state.selectedChannelId;
+            const payload = await this.call("prepare_mark_conversations_read", [], {
+                filters: this.conversationFilters(),
+                exclude_channel_ids: selected ? [selected] : [],
+            });
+            validateEnvelope(payload);
+            if (!validBulkReadPreparation(payload)) {
+                throw new TypeError("O servidor não confirmou as conversas a ler.");
+            }
+            if (!this.destroyed && generation === this.bulkReadGeneration()) {
+                return {
+                    targets: payload.targets,
+                    count: payload.targets.length,
+                    remaining: payload.remaining === true,
+                };
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Mark the prepared conversations as read, agent side only.
+     *
+     * The conversation open at the confirmation stays out; the list stays
+     * busy until the answer. Its projections are only immediate feedback, and
+     * never for a conversation that changed during the request; the list is
+     * then reloaded from the first page without the rows beyond the refresh
+     * window, which no answer can keep coherent (L08-I05–I07).
+     *
+     * @param {Object} prepared the result of prepareMarkAllRead
+     * @returns {Promise<Object|false>} {marked, remaining} or false
+     */
+    async markAllRead(prepared) {
+        if (!prepared || this.state.bulkReadPending || this.destroyed) {
+            return false;
+        }
+        const selected = this.state.selectedChannelId;
+        const targets = prepared.targets.filter(
+            (target) => target.channel_id !== selected
+        );
+        if (!targets.length) {
+            return {marked: 0, remaining: prepared.remaining};
+        }
+        this.state.bulkReadPending = true;
+        const before = new Map(
+            targets.map((target) => [
+                target.channel_id,
+                this.snapshotGenerations(target.channel_id),
+            ])
+        );
+        try {
+            let payload = null;
+            try {
+                payload = await this.call("mark_conversations_read", [targets]);
+            } finally {
+                // Answered or not: the server may have applied the action even
+                // when its answer was lost (L08-I08). Required until a refresh
+                // is applied; a failed one leaves it to the next synchronization.
+                this.listTailStale = true;
+            }
+            validateEnvelope(payload);
+            if (
+                !Number.isSafeInteger(payload.marked) ||
+                !Array.isArray(payload.items)
+            ) {
+                throw new TypeError(
+                    "O servidor não confirmou a leitura das conversas."
+                );
+            }
+            for (const item of payload.items) {
+                if (!this.changedSinceSnapshot(item, before)) {
+                    this.applyBulkReadItem(item);
+                }
+            }
+            // Started right away, with no wait in between: it discards every
+            // list answer in flight, requested before the action.
+            await this.refreshLoadedConversations({silent: true});
+            return {marked: payload.marked, remaining: prepared.remaining};
+        } catch (error) {
+            // The outcome is unknown, and the server may even commit after this
+            // reload (L08-I09): reload anyway, then report the failure.
+            this.bulkReadUncertain = true;
+            const reloaded = await this.refreshLoadedConversations({silent: true});
+            throw Object.assign(
+                new Error(error && error.message ? error.message : String(error)),
+                {cause: error, bulkReadUncertain: true, listReloaded: reloaded === true}
+            );
+        } finally {
+            this.state.bulkReadPending = false;
+        }
+    }
+
+    snapshotGenerations(channelId) {
+        return {
+            changes: this.conversationGeneration(channelId),
+            ownReads: this.ownReadGenerations.get(channelId) || 0,
+        };
+    }
+
+    /**
+     * Whether a conversation changed after its snapshot was requested.
+     *
+     * A read by this user elsewhere only lowers the unread count: a snapshot
+     * with nothing unread stays true after it (L08-I06).
+     *
+     * @param {Object} item the snapshot
+     * @param {Map} before the generations when it was requested, by id
+     * @returns {Boolean}
+     */
+    changedSinceSnapshot(item, before) {
+        if (!isPlainRecord(item) || !before.has(item.channel_id)) {
+            return true;
+        }
+        const requested = before.get(item.channel_id);
+        const current = this.snapshotGenerations(item.channel_id);
+        return (
+            current.changes !== requested.changes ||
+            (current.ownReads !== requested.ownReads && item.unread_count !== 0)
+        );
+    }
+
+    applyBulkReadItem(item) {
+        if (
+            !isRenderableConversation(item) ||
+            !Number.isSafeInteger(item.unread_count) ||
+            item.unread_count < 0
+        ) {
+            return false;
+        }
+        this.acceptPreferenceSnapshot(item);
+        if (!this.loadedConversation(item.channel_id)) {
+            return false;
+        }
+        this.replaceConversation(item);
+        if (
+            this.state.filters.unreadOnly &&
+            item.unread_count === 0 &&
+            item.channel_id !== this.state.selectedChannelId
+        ) {
+            this.state.conversations = this.state.conversations.filter(
+                (row) => row.channel_id !== item.channel_id
+            );
+        }
+        return true;
+    }
+
     async markConversationRead(channelId) {
         const conversation = this.loadedConversation(channelId);
         if (
@@ -6729,6 +6971,8 @@ export class ContactCenterStore {
     }
 
     synchronizeNotification(payload) {
+        this.noteSnapshotInvalidation(payload);
+        this.noteUncertainBulkRead(payload);
         this.handleDeliveryNotification(payload);
         if (this.handleRetentionNotification(payload)) {
             return;
@@ -6742,6 +6986,46 @@ export class ContactCenterStore {
             payload.event_type !== "conversation_preference_updated" &&
             (payload.event_type !== "delivery_updated" || payload.refresh === true);
         this.scheduleSynchronization(false, refreshTimeline);
+    }
+
+    noteSnapshotInvalidation(payload) {
+        const channelId = payload.channel_id;
+        let generations = null;
+        if (SNAPSHOT_INVALIDATING_EVENTS.has(payload.event_type)) {
+            generations = this.conversationGenerations;
+        } else if (
+            payload.event_type === "member_seen" &&
+            Boolean(this.currentUserId) &&
+            payload.user_id === this.currentUserId
+        ) {
+            generations = this.ownReadGenerations;
+        }
+        if (generations && Number.isSafeInteger(channelId)) {
+            generations.set(channelId, (generations.get(channelId) || 0) + 1);
+        }
+    }
+
+    /**
+     * A read by this user while a bulk action has an unknown outcome.
+     *
+     * It may be that action committing late: the list is synchronized sooner.
+     * It never settles the outcome (an ordinary read sends the same event).
+     *
+     * @param {Object} payload the notification
+     */
+    noteUncertainBulkRead(payload) {
+        if (
+            this.bulkReadUncertain &&
+            payload.event_type === "member_seen" &&
+            Boolean(this.currentUserId) &&
+            payload.user_id === this.currentUserId
+        ) {
+            this.scheduleSynchronization(false);
+        }
+    }
+
+    conversationGeneration(channelId) {
+        return this.conversationGenerations.get(channelId) || 0;
     }
 
     onNotification(event) {

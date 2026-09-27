@@ -20,6 +20,7 @@ from . import control_events
 from . import queue
 from . import read_receipt
 from . import productivity
+from . import bulk_read
 from . import quick_reply
 from . import followup
 from . import conversation_actions

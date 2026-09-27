@@ -714,6 +714,15 @@ class MailChannel(models.Model):
                 )
         target = self
         if self.channel_type == "contact_center":
+            # Write fence shared with the bulk read (L08): every message versions
+            # the conversation row that read locks, so a read decided on an older
+            # snapshot meets a serialization conflict and is retried instead of
+            # passing over the new message. Every caller already holds this row
+            # lock (canonical projection, send and productivity locks).
+            self.env.cr.execute(
+                "UPDATE mail_channel SET write_date = write_date WHERE id = %s",
+                [self.id],
+            )
             target = self.with_context(
                 contact_center_membership_token=_CONTACT_CENTER_MEMBERSHIP_TOKEN,
                 contact_center_post_token=_CONTACT_CENTER_POST_TOKEN,

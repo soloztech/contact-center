@@ -26,6 +26,11 @@ The inbox provides:
   mute, counted exactly as the list opens them) or the inbox, and refreshes on
   messages, reads, muting and deletion, on window focus and every five minutes;
 * a "Sem silenciadas" filter that hides the conversations the agent muted;
+* "Marcar todas como lidas" for the conversations of the current list (up to 200 per
+  action, the open one excluded): the agent's read pointers advance only up to the newest
+  message present when the action was prepared, never over a message that arrived
+  afterwards, and the customer receives no read receipt; the list then reloads from its
+  first page (rows loaded beyond 200 are paged in again);
 * localized, color-coded conversation states and compact connection-health details;
 * paged conversation and message timelines with unread pointers;
 * provider, platform, origin, reply, delivery, and dispatch context;
