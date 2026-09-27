@@ -1,0 +1,14 @@
+{
+  "type": "text",
+  "text": {"body": "Olá! Vi o anúncio e quero saber o preço."},
+  "referral": {
+    "source_url": "https://www.facebook.com/SolozIndustrial/posts/pfbid02xYz",
+    "source_id": "120210000000000042",
+    "source_type": "ad",
+    "headline": "Painéis solares com desconto",
+    "body": "Fale com um especialista pelo WhatsApp.",
+    "media_type": "image",
+    "image_url": "https://scontent.whatsapp.net/v/t45/ad-image.jpg?stp=dst-jpg&oh=signed",
+    "ctwa_clid": "ARAkLkA8rmlFeiCktEJQ-QTwRiyYHAFDLMNDBH0CD3qpjd0HR4irJ6LEkR7JwFF4XvnO"
+  }
+}

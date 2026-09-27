@@ -1,0 +1,382 @@
+# Translation of Odoo Server.
+# This file contains the translation of the following modules:
+# 	* contact_center_whatsapp_cloud
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Odoo Server 16.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-09-27 00:00+0000\n"
+"PO-Revision-Date: 2026-09-27 00:00+0000\n"
+"Last-Translator: Soloz Technologies\n"
+"Language-Team: Portuguese (Brazil)\n"
+"Language: pt_BR\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+#. module: contact_center_whatsapp_cloud
+#: model:ir.model,name:contact_center_whatsapp_cloud.model_contact_center_whatsapp_cloud_delivery_failure
+msgid "WhatsApp Cloud Delivery Failure"
+msgstr "Falha de entrega do WhatsApp Cloud"
+
+#. module: contact_center_whatsapp_cloud
+#: model:ir.model,name:contact_center_whatsapp_cloud.model_contact_center_whatsapp_cloud_referral_link
+msgid "WhatsApp Cloud Ad Referral Link"
+msgstr "Link de origem de anúncio do WhatsApp Cloud"
+
+#. module: contact_center_whatsapp_cloud
+#: model:ir.model.fields,field_description:contact_center_whatsapp_cloud.field_contact_center_provider_connection__wa_webhook_asset_id
+#: model_terms:ir.ui.view,arch_db:contact_center_whatsapp_cloud.view_contact_center_connection_form_whatsapp_cloud
+msgid "WhatsApp Business Account"
+msgstr "Conta do WhatsApp Business"
+
+#. module: contact_center_whatsapp_cloud
+#: model:ir.model.fields,field_description:contact_center_whatsapp_cloud.field_contact_center_provider_connection__wa_business_account_id
+msgid "WhatsApp Business Account ID"
+msgstr "ID da conta do WhatsApp Business"
+
+#. module: contact_center_whatsapp_cloud
+#: model:ir.model.fields,field_description:contact_center_whatsapp_cloud.field_contact_center_provider_connection__wa_webhook_page_id
+msgid "WhatsApp Business Account Owner"
+msgstr "Dono da conta do WhatsApp Business"
+
+#. module: contact_center_whatsapp_cloud
+#: model:ir.model.fields,field_description:contact_center_whatsapp_cloud.field_contact_center_provider_connection__wa_api_app_id
+msgid "Meta App"
+msgstr "App da Meta"
+
+#. module: contact_center_whatsapp_cloud
+#: model:ir.model.fields,field_description:contact_center_whatsapp_cloud.field_contact_center_provider_connection__wa_phone_number_id
+msgid "Phone Number ID"
+msgstr "ID do número de telefone"
+
+#. module: contact_center_whatsapp_cloud
+#: model:ir.model.fields,field_description:contact_center_whatsapp_cloud.field_contact_center_provider_connection__wa_graph_version
+msgid "Graph API Version"
+msgstr "Versão da Graph API"
+
+#. module: contact_center_whatsapp_cloud
+#: model:ir.model.fields,field_description:contact_center_whatsapp_cloud.field_contact_center_provider_connection__wa_display_phone_number
+msgid "Display Phone Number"
+msgstr "Número exibido"
+
+#. module: contact_center_whatsapp_cloud
+#: model:ir.model.fields,field_description:contact_center_whatsapp_cloud.field_contact_center_provider_connection__wa_verified_name
+msgid "Verified Name"
+msgstr "Nome verificado"
+
+#. module: contact_center_whatsapp_cloud
+#: model:ir.model.fields,field_description:contact_center_whatsapp_cloud.field_contact_center_provider_connection__wa_quality_rating
+msgid "Quality Rating"
+msgstr "Classificação de qualidade"
+
+#. module: contact_center_whatsapp_cloud
+#: model:ir.model.fields,field_description:contact_center_whatsapp_cloud.field_contact_center_provider_connection__wa_phone_status
+msgid "Phone Number Status"
+msgstr "Situação do número"
+
+#. module: contact_center_whatsapp_cloud
+#: model:ir.model.fields,field_description:contact_center_whatsapp_cloud.field_contact_center_provider_connection__wa_throughput_level
+msgid "Throughput Level"
+msgstr "Nível de vazão"
+
+#. module: contact_center_whatsapp_cloud
+#: model:ir.model.fields,field_description:contact_center_whatsapp_cloud.field_contact_center_provider_connection__wa_observed_at
+msgid "Phone Number Observed At"
+msgstr "Número observado em"
+
+#. module: contact_center_whatsapp_cloud
+#: model:ir.model.fields,field_description:contact_center_whatsapp_cloud.field_contact_center_whatsapp_cloud_delivery_failure__kind
+msgid "Kind"
+msgstr "Tipo"
+
+#. module: contact_center_whatsapp_cloud
+#: model:ir.model.fields,field_description:contact_center_whatsapp_cloud.field_contact_center_whatsapp_cloud_delivery_failure__code
+msgid "Code"
+msgstr "Código"
+
+#. module: contact_center_whatsapp_cloud
+#: model:ir.model.fields,field_description:contact_center_whatsapp_cloud.field_contact_center_whatsapp_cloud_delivery_failure__title
+msgid "Title"
+msgstr "Título"
+
+#. module: contact_center_whatsapp_cloud
+#: model:ir.model.fields,field_description:contact_center_whatsapp_cloud.field_contact_center_whatsapp_cloud_delivery_failure__occurred_at
+msgid "Occurred At"
+msgstr "Ocorrido em"
+
+#. module: contact_center_whatsapp_cloud
+#: model:ir.model.fields,field_description:contact_center_whatsapp_cloud.field_contact_center_whatsapp_cloud_delivery_failure__wamid
+msgid "WhatsApp Message ID"
+msgstr "ID da mensagem do WhatsApp"
+
+#. module: contact_center_whatsapp_cloud
+#: model:ir.model.fields.selection,name:contact_center_whatsapp_cloud.selection__contact_center_whatsapp_cloud_delivery_failure__kind__status_failed
+msgid "Failed Delivery Status"
+msgstr "Status de entrega com falha"
+
+#. module: contact_center_whatsapp_cloud
+#: model:ir.model.fields.selection,name:contact_center_whatsapp_cloud.selection__contact_center_whatsapp_cloud_delivery_failure__kind__webhook_error
+msgid "Business Account Webhook Error"
+msgstr "Erro de webhook da conta comercial"
+
+#. module: contact_center_whatsapp_cloud
+#: model:ir.actions.act_window,name:contact_center_whatsapp_cloud.action_contact_center_whatsapp_cloud_delivery_failures
+#: model:ir.ui.menu,name:contact_center_whatsapp_cloud.menu_contact_center_whatsapp_cloud_delivery_failures
+msgid "WhatsApp Cloud Failures"
+msgstr "Falhas do WhatsApp Cloud"
+
+#. module: contact_center_whatsapp_cloud
+#: model_terms:ir.ui.view,arch_db:contact_center_whatsapp_cloud.view_contact_center_connection_form_whatsapp_cloud
+msgid "Register WhatsApp Consumer"
+msgstr "Registrar consumidor do WhatsApp"
+
+#. module: contact_center_whatsapp_cloud
+#: model_terms:ir.ui.view,arch_db:contact_center_whatsapp_cloud.view_contact_center_whatsapp_cloud_delivery_failure_search
+msgid "Failed Statuses"
+msgstr "Status com falha"
+
+#. module: contact_center_whatsapp_cloud
+#: model_terms:ir.ui.view,arch_db:contact_center_whatsapp_cloud.view_contact_center_whatsapp_cloud_delivery_failure_search
+msgid "Webhook Errors"
+msgstr "Erros de webhook"
+
+#. module: contact_center_whatsapp_cloud
+#: model_terms:ir.ui.view,arch_db:contact_center_whatsapp_cloud.view_contact_center_whatsapp_cloud_delivery_failure_search
+msgid "Group By"
+msgstr "Agrupar por"
+
+#. module: contact_center_whatsapp_cloud
+#: model_terms:ir.ui.view,arch_db:contact_center_whatsapp_cloud.view_contact_center_whatsapp_cloud_delivery_failure_search
+msgid "Connection"
+msgstr "Conexão"
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/provider_connection.py:0
+#, python-format
+msgid "A WhatsApp Cloud connection requires a business account asset and a phone number ID."
+msgstr "Uma conexão WhatsApp Cloud exige o ativo da conta comercial e o ID do número de telefone."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/provider_connection.py:0
+#, python-format
+msgid "WhatsApp Cloud settings can only be stored on a WhatsApp Cloud connection."
+msgstr "As configurações do WhatsApp Cloud só podem ficar em uma conexão WhatsApp Cloud."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/provider_connection.py:0
+#, python-format
+msgid "A WhatsApp Cloud route is immutable; archive it and create a new connection."
+msgstr "A rota do WhatsApp Cloud é imutável; arquive-a e crie uma nova conexão."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/provider_connection.py:0
+#, python-format
+msgid "A WhatsApp Cloud connection requires a business account asset."
+msgstr "Uma conexão WhatsApp Cloud exige o ativo da conta comercial."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/provider_connection.py:0
+#, python-format
+msgid "The selected asset is not a WhatsApp Business Account."
+msgstr "O ativo selecionado não é uma conta do WhatsApp Business."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/provider_connection.py:0
+#, python-format
+msgid "The WhatsApp asset and the connection belong to other companies."
+msgstr "O ativo do WhatsApp e a conexão pertencem a empresas diferentes."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/provider_connection.py:0
+#, python-format
+msgid "A WhatsApp Cloud connection requires a WhatsApp inbox."
+msgstr "Uma conexão WhatsApp Cloud exige uma caixa de WhatsApp."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/provider_connection.py:0
+#, python-format
+msgid "The WhatsApp phone number ID is invalid."
+msgstr "O ID do número de telefone do WhatsApp é inválido."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/provider_connection.py:0
+#, python-format
+msgid "The Graph API version must look like v26.0."
+msgstr "A versão da Graph API deve ter o formato v26.0."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/provider_connection.py:0
+#, python-format
+msgid "WhatsApp App, business account, asset or subscription is not ready"
+msgstr "App, conta comercial, ativo ou assinatura do WhatsApp não estão prontos"
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/provider_connection.py:0
+#, python-format
+msgid "WhatsApp Cloud health is not ready"
+msgstr "A saúde do WhatsApp Cloud não está pronta"
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/provider_connection.py:0
+#, python-format
+msgid "Only a system administrator can configure the WhatsApp webhook."
+msgstr "Somente um administrador do sistema pode configurar o webhook do WhatsApp."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/provider_connection.py:0
+#, python-format
+msgid "Select a WhatsApp Business Account asset first."
+msgstr "Selecione antes o ativo da conta do WhatsApp Business."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/provider_connection.py:0
+#, python-format
+msgid "An inbox with a WhatsApp Cloud route must stay WhatsApp."
+msgstr "Uma caixa com rota do WhatsApp Cloud deve continuar como WhatsApp."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/shared_webhook_consumer.py:0
+#, python-format
+msgid "The shared WhatsApp asset route is ambiguous."
+msgstr "A rota do ativo compartilhado do WhatsApp é ambígua."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/shared_webhook_consumer.py:0
+#, python-format
+msgid "More than one Contact Center connection claims this WhatsApp route."
+msgstr "Mais de uma conexão da Central de Atendimento reivindica esta rota do WhatsApp."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/delivery_failure.py:0
+#, python-format
+msgid "WhatsApp failures are recorded by the service only."
+msgstr "As falhas do WhatsApp são registradas somente pelo serviço."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/delivery_failure.py:0
+#, python-format
+msgid "WhatsApp failure records are read-only."
+msgstr "Os registros de falha do WhatsApp são somente leitura."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/referral_link.py:0
+#, python-format
+msgid "WhatsApp referral links are managed internally."
+msgstr "Os links de origem do WhatsApp são gerenciados internamente."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/referral_link.py:0
+#, python-format
+msgid "WhatsApp referral links are immutable."
+msgstr "Os links de origem do WhatsApp são imutáveis."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/application_events.py:0
+#, python-format
+msgid "A WhatsApp status contradicts the recorded message ID."
+msgstr "Um status do WhatsApp contradiz o ID de mensagem registrado."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/application_events.py:0
+#, python-format
+msgid "A WhatsApp status names a recipient outside its conversation."
+msgstr "Um status do WhatsApp indica um destinatário fora da conversa da mensagem."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/application_events.py:0
+#, python-format
+msgid "A WhatsApp reaction comes from outside its message's conversation."
+msgstr "Uma reação do WhatsApp vem de fora da conversa da mensagem."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/shared_webhook_consumer.py:0
+#, python-format
+msgid ""
+"Part of this conversation's WhatsApp content is shared with another webhook "
+"consumer and cannot be erased; the conversation was not deleted."
+msgstr ""
+"Parte do conteúdo do WhatsApp desta conversa é compartilhada com outro "
+"consumidor de webhook e não pode ser apagada; a conversa não foi excluída."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/application_events.py:0
+#, python-format
+msgid "WhatsApp system notices need a Cloud connection."
+msgstr "Avisos de sistema do WhatsApp exigem uma conexão Cloud."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/application_events.py:0
+#, python-format
+msgid "The WhatsApp system notice shape is invalid."
+msgstr "O formato do aviso de sistema do WhatsApp é inválido."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/application_events.py:0
+#, python-format
+msgid "WhatsApp system notices require a primary conversation address."
+msgstr "Avisos de sistema do WhatsApp exigem um endereço primário da conversa."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/application_events.py:0
+#, python-format
+msgid "WhatsApp system notices require a direct conversation."
+msgstr "Avisos de sistema do WhatsApp exigem uma conversa direta."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/application_events.py:0
+#, python-format
+msgid "Control event cards cannot be replied to."
+msgstr "Cartões de evento de controle não podem ser respondidos."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/application_events.py:0
+#, python-format
+msgid "Control event cards cannot be changed."
+msgstr "Cartões de evento de controle não podem ser alterados."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/application_events.py:0
+#, python-format
+msgid "Control event cards are immutable."
+msgstr "Cartões de evento de controle são imutáveis."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/application_events.py:0
+#, python-format
+msgid "O contato alterou o número do WhatsApp."
+msgstr "O contato alterou o número do WhatsApp."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/application_events.py:0
+#, python-format
+msgid "O identificador do contato no WhatsApp foi alterado."
+msgstr "O identificador do contato no WhatsApp foi alterado."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/application_events.py:0
+#, python-format
+msgid "A identidade de segurança do contato no WhatsApp foi alterada."
+msgstr "A identidade de segurança do contato no WhatsApp foi alterada."
+
+#. module: contact_center_whatsapp_cloud
+#: code:addons/contact_center_whatsapp_cloud/models/application_events.py:0
+#, python-format
+msgid "O WhatsApp enviou um aviso de sistema sobre este contato."
+msgstr "O WhatsApp enviou um aviso de sistema sobre este contato."
+
+#. module: contact_center_whatsapp_cloud
+#: model:ir.model.fields,field_description:contact_center_whatsapp_cloud.field_contact_center_outbox_command__wac_reaction_message_id
+msgid "Reaction Message ID"
+msgstr "ID da mensagem de reação"
+
+#. module: contact_center_whatsapp_cloud
+#: model:ir.model.fields,help:contact_center_whatsapp_cloud.field_contact_center_outbox_command__wac_reaction_message_id
+msgid ""
+"WhatsApp message ID of a reaction sent through WhatsApp Cloud. Its statuses "
+"concern no local message and are acknowledged as handled."
+msgstr ""
+"ID da mensagem de uma reação enviada pelo WhatsApp Cloud. Os status dela não "
+"se referem a nenhuma mensagem local e são reconhecidos como tratados."
