@@ -322,6 +322,8 @@ export class ConversationTimeline extends Component {
                     this.store.selectedConversation.unread_count,
                 this.store.selectedConversation &&
                     this.store.selectedConversation.first_unread_message_id,
+                // A restored conversation is read once the agent interacts.
+                this.state.seenPausedChannelId,
             ]
         );
         useEffect(

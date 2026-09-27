@@ -1,6 +1,7 @@
 /** @odoo-module **/
 
-import {Component, onWillDestroy, onWillStart, useState} from "@odoo/owl";
+import {Component, onWillDestroy, onWillStart, useEffect, useState} from "@odoo/owl";
+import {ContactCenterStore, consumeInboxActionParams} from "./contact_center_store.esm";
 import {
     connectionFleetMeta,
     conversationAvatarUrl,
@@ -12,7 +13,6 @@ import {
 } from "./contact_center_model.esm";
 import {useOwnedDialogs, useService} from "@web/core/utils/hooks";
 import {BrowserAttention} from "./browser_attention.esm";
-import {ContactCenterStore} from "./contact_center_store.esm";
 import {ContactPanel} from "./contact_panel.esm";
 import {ConversationList} from "./conversation_list.esm";
 import {ConversationResolution} from "./conversation_resolution.esm";
@@ -23,12 +23,21 @@ import {MessageComposer} from "./message_composer.esm";
 import {browser} from "@web/core/browser/browser";
 import {_t} from "@web/core/l10n/translation";
 import {registry} from "@web/core/registry";
+import {useSetupAction} from "@web/webclient/actions/action_hook";
 
 export function conversationComposerAvailable(policy, capabilities) {
     return Boolean(
         (policy && policy.show_composer === true) ||
             (capabilities && capabilities.internal_notes === true)
     );
+}
+
+function browserLocalStorage() {
+    try {
+        return browser.localStorage;
+    } catch (_error) {
+        return false;
+    }
 }
 
 export class ContactCenterApp extends Component {
@@ -41,20 +50,43 @@ export class ContactCenterApp extends Component {
         this.addDialog = useOwnedDialogs();
         this.action = useService("action");
         this.attention = new BrowserAttention();
+        const inboxContext = useService("contact_center_ui.inbox_context");
         this.store = new ContactCenterStore({
             orm: useService("orm"),
             busService: useService("bus_service"),
             notification: useService("notification"),
             stateFactory: useState,
             attention: this.attention,
-            initialActionParams: this.props.action && this.props.action.params,
+            // A breadcrumb return reuses the action: its parameters apply once.
+            initialActionParams: consumeInboxActionParams(
+                inboxContext,
+                this.props.action
+            ),
+            inboxPreferenceStorage: browserLocalStorage(),
+            inboxContext,
         });
+        this.layoutRestored = false;
+        useEffect(
+            (phase) => {
+                if (phase === "ready" && !this.layoutRestored) {
+                    // Saved after the bootstrap; a CRM panel needs its right.
+                    this.layoutRestored = true;
+                    const saved = this.store.inboxLayout.sidePanel;
+                    this.ui.sidePanel =
+                        saved === "crm" && !this.canViewCrm ? "contact" : saved;
+                }
+            },
+            () => [this.store.state.phase]
+        );
         this.mobileHealthFocusTimer = null;
         // Do not return the promise: the initial loading state is a real skeleton,
         // while bootstrap and the bus start concurrently in the background.
         onWillStart(() => {
             this.store.start();
         });
+        // The next action may boot its inbox before this one is destroyed:
+        // hand the visit over while leaving, before it starts.
+        useSetupAction({beforeLeave: () => this.store.handOffDocument()});
         onWillDestroy(() => {
             if (this.mobileHealthFocusTimer !== null) {
                 browser.clearTimeout(this.mobileHealthFocusTimer);
@@ -112,10 +144,32 @@ export class ContactCenterApp extends Component {
         return this.ui.sidePanel === "contact";
     }
 
+    rememberLayout() {
+        this.store.rememberInboxLayout({
+            sidePanel: this.ui.sidePanel,
+            detailsOpen: Boolean(this.store.state.detailsOpen),
+        });
+    }
+
+    onConversationInteraction(event) {
+        // Clicking, typing, scrolling or focusing the composer is the agent's
+        // consent to read a conversation restored on return. Other focus moves
+        // into the conversation may be programmatic (closing a side panel).
+        if (
+            event &&
+            event.type === "focusin" &&
+            !(event.target instanceof Element && event.target.closest(".cc-composer"))
+        ) {
+            return;
+        }
+        this.store.resumeSeen();
+    }
+
     toggleSidePanel(name) {
         const wasOpen = this.ui.sidePanel === name && this.store.state.detailsOpen;
         this.ui.sidePanel = name;
         this.store.state.detailsOpen = !wasOpen;
+        this.rememberLayout();
     }
 
     toggleContactPanel() {
@@ -124,6 +178,7 @@ export class ContactCenterApp extends Component {
             this.store.state.detailsOpen = false;
         }
         this.store.toggleDetails();
+        this.rememberLayout();
     }
 
     get retentionIndicator() {
@@ -140,6 +195,7 @@ export class ContactCenterApp extends Component {
         this.ui.sidePanel = "contact";
         this.store.state.detailsOpen = true;
         this.store.state.retentionFocusRequest += 1;
+        this.rememberLayout();
     }
 
     get conversationPolicy() {

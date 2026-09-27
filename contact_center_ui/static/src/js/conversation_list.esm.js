@@ -255,8 +255,8 @@ export class ConversationList extends Component {
         this.addDialog = useOwnedDialogs();
         this.ui = useState({
             pendingConversationIds: {},
-            view: "grouped",
-            collapsedInboxes: {},
+            view: this.store.inboxLayout.listView,
+            collapsedInboxes: {...this.store.inboxLayout.collapsedInboxes},
             filtersOpen: false,
             startOpen: false,
             startAccountId: false,
@@ -267,6 +267,22 @@ export class ConversationList extends Component {
             startPending: false,
             startError: "",
         });
+        useEffect(
+            () => {
+                // Return to the position left in this document once the store
+                // has reloaded the same window of conversations.
+                const viewport = this.viewportRef.el;
+                if (!viewport || this.state.listPhase !== "ready") {
+                    return;
+                }
+                const scrollTop = this.store.consumePendingListScroll();
+                if (scrollTop > 0) {
+                    viewport.scrollTop = scrollTop;
+                    this.lastScrollTop = viewport.scrollTop;
+                }
+            },
+            () => [this.state.listScrollRestoreRequest]
+        );
         this.onWindowKeydown = (event) => this.onShortcut(event);
         this.onWindowPointerdown = (event) => this.onFilterOutsidePointerdown(event);
         window.addEventListener("keydown", this.onWindowKeydown);
@@ -784,6 +800,7 @@ export class ConversationList extends Component {
         const viewport = event.currentTarget;
         const movedDown = viewport.scrollTop > this.lastScrollTop;
         this.lastScrollTop = viewport.scrollTop;
+        this.store.rememberListScroll(viewport.scrollTop);
         if (
             movedDown &&
             viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <=
@@ -919,7 +936,14 @@ export class ConversationList extends Component {
     setView(view) {
         if (LIST_VIEWS.has(view)) {
             this.ui.view = view;
+            this.store.rememberInboxLayout({listView: view});
         }
+    }
+
+    rememberCollapsedInboxes() {
+        this.store.rememberInboxLayout({
+            collapsedInboxes: {...this.ui.collapsedInboxes},
+        });
     }
 
     toggleDensity() {
@@ -959,11 +983,13 @@ export class ConversationList extends Component {
         for (const group of this.conversationGroups) {
             this.ui.collapsedInboxes[group.key] = collapsed;
         }
+        this.rememberCollapsedInboxes();
     }
 
     toggleInbox(key) {
         if (typeof key === "string" && key.startsWith("inbox:")) {
             this.ui.collapsedInboxes[key] = !this.inboxCollapsed(key);
+            this.rememberCollapsedInboxes();
         }
     }
 

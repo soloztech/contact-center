@@ -1043,7 +1043,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             });
             store.loadConversations = async (options) => loads.push(options);
             await store.loadBootstrap();
-            assert.deepEqual(loads, [{reset: true, selectFirst: false}]);
+            assert.deepEqual(loads, [{reset: true}]);
             assert.notOk(store.state.selectedChannelId);
             assert.deepEqual(store.state.filters.states, []);
             assert.strictEqual(store.conversationFilters().activity_timing, "due");
@@ -1111,7 +1111,8 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             };
             const loading = store.loadBootstrap();
             await Promise.resolve();
-            store.listRequest += 1;
+            // The synchronous part of a filter edit by the agent.
+            store.bumpFilterRevision();
             resolveList(true);
             await loading;
             assert.deepEqual(calls, ["bootstrap"]);
@@ -1139,7 +1140,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                     store.timelineRequest += 1;
                 }
                 if (change === "filter") {
-                    store.listRequest += 1;
+                    store.bumpFilterRevision();
                 }
                 if (change === "destroy") {
                     store.destroyed = true;
@@ -4096,7 +4097,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
     );
 
     QUnit.test(
-        "filters malformed conversation rows before selecting the first item",
+        "filters malformed conversation rows and never selects the first item",
         async (assert) => {
             const store = new ContactCenterStore({
                 orm: {},
@@ -4130,13 +4131,11 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             await store.reconcileConversationSelection({
                 reset: true,
                 silent: false,
-                selectFirst: true,
                 previousSelected: false,
             });
-            assert.deepEqual(selected, {
-                channelId: 42,
-                options: {preservePane: true},
-            });
+            assert.notOk(selected, "nothing opens without the agent choosing it");
+            assert.notOk(store.state.selectedChannelId);
+            store.state.selectedChannelId = 42;
             store.state.conversations.unshift(null);
             assert.strictEqual(store.selectedConversation.channel_id, 42);
         }
@@ -4190,11 +4189,12 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             };
 
             await store.setFilter("responsibility", "mine");
-            assert.strictEqual(store.state.selectedChannelId, 20);
-            assert.deepEqual(selections.pop(), {
-                channelId: 20,
-                options: {preservePane: true},
-            });
+            assert.strictEqual(
+                store.state.selectedChannelId,
+                false,
+                "a selection outside the new scope is cleared, not replaced"
+            );
+            assert.deepEqual(selections, []);
             assert.deepEqual(store.responsibilityVisibleConversations, [mine]);
             assert.deepEqual(requestedFilters.pop(), {
                 states: ["open"],
@@ -4202,11 +4202,17 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             });
 
             await store.setFilter("responsibility", "unassigned");
-            assert.strictEqual(store.state.selectedChannelId, 30);
-            assert.deepEqual(selections.pop(), {
-                channelId: 30,
-                options: {preservePane: true},
-            });
+            assert.strictEqual(store.state.selectedChannelId, false);
+            assert.deepEqual(selections, []);
+            store.state.selectedChannelId = 30;
+            store.state.timelineChannelId = 30;
+            store.state.messages = [{message_id: 3}];
+            await store.setFilter("responsibility", "unassigned");
+            assert.strictEqual(
+                store.state.selectedChannelId,
+                30,
+                "a selection that stays in the list is kept"
+            );
             assert.notOk(store.setFilter("responsibility", "unexpected"));
             assert.strictEqual(store.state.filters.responsibility, "unassigned");
 
@@ -4227,12 +4233,13 @@ QUnit.module("contact_center_ui > model", (hooks) => {
 
             serverConversations = [other, mine];
             store.state.filters.responsibility = "mine";
-            assert.ok(await store.loadConversations({reset: true, selectFirst: true}));
+            assert.ok(await store.loadConversations({reset: true}));
             assert.strictEqual(
                 store.state.selectedChannelId,
-                20,
-                "server scopes auto-select only a matching conversation"
+                false,
+                "loading a scope never opens a conversation by itself"
             );
+            assert.deepEqual(selections, []);
             assert.strictEqual(store.state.conversationTotal, 1);
         }
     );
@@ -4308,14 +4315,12 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             await store.reconcileConversationSelection({
                 reset: true,
                 silent: true,
-                selectFirst: false,
                 previousSelected: 20,
             });
 
             assert.deepEqual(store.state.conversations, [next]);
-            assert.deepEqual(selections, [
-                {channelId: 30, options: {preservePane: true}},
-            ]);
+            assert.deepEqual(selections, [], "no other conversation is opened");
+            assert.strictEqual(store.state.selectedChannelId, false);
         }
     );
 
@@ -5721,7 +5726,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
 
             assert.ok(await store.setConversationState("resolved"));
             assert.deepEqual(patches, [{state: "resolved"}]);
-            assert.deepEqual(reloads, [{reset: true, selectFirst: true}]);
+            assert.deepEqual(reloads, [{reset: true}]);
 
             store.state.filters.states = [];
             store.state.selectedChannelId = 10;
@@ -6257,16 +6262,23 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                     notification: false,
                 });
                 store.state.filters.responsibility = "all";
+                // Reading the open conversation takes it out of "unread only";
+                // that volatile exclusion keeps it open.
+                store.state.filters.unreadOnly = true;
                 store.state.conversations = [
                     openConversation({channel_id: 10}),
                     openConversation({channel_id: 20}),
                 ];
                 store.state.selectedChannelId = 10;
                 let resolveList = null;
-                store.call = () =>
-                    new Promise((resolve) => {
-                        resolveList = resolve;
-                    });
+                // The preserved row is revalidated; a transient failure of that
+                // read leaves the timeline and reply untouched.
+                store.call = (callMethod) =>
+                    callMethod === "get_conversation"
+                        ? Promise.reject(new Error("temporary"))
+                        : new Promise((resolve) => {
+                              resolveList = resolve;
+                          });
                 const pending = store[method]({reset: true, silent: true});
                 store.state.selectedChannelId = 20;
                 store.state.timelineChannelId = 20;
@@ -7047,6 +7059,31 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                     [100, 101],
                     "a newly visible tail is acknowledged even before its unread counter arrives"
                 );
+            } finally {
+                close();
+            }
+        }
+    );
+
+    QUnit.test(
+        "a restored conversation waits for an interaction before marking read",
+        async (assert) => {
+            const fixture = await mountedUnreadTimeline();
+            const {store, calls, settle, close} = fixture;
+            store.state.seenPausedChannelId = 10;
+            try {
+                await settle();
+                assert.deepEqual(
+                    calls,
+                    [],
+                    "a visible tail of a restored conversation is not read by itself"
+                );
+                window.dispatchEvent(new Event("focus"));
+                await settle();
+                assert.deepEqual(calls, [], "window focus alone is not an interaction");
+                store.resumeSeen();
+                await settle();
+                assert.deepEqual(calls, [{method: "mark_seen", args: [10, 100]}]);
             } finally {
                 close();
             }
@@ -9153,7 +9190,12 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             });
             store.state.listPhase = "ready";
             store.state.conversations = [
-                {channel_id: 60, can_send: true, name: "Active page two"},
+                {
+                    channel_id: 60,
+                    can_send: true,
+                    name: "Active page two",
+                    state: "open",
+                },
             ];
             store.state.selectedChannelId = 60;
             store.call = async () => ({
@@ -9289,7 +9331,11 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 busService: {},
                 notification: false,
             });
-            const selected = {channel_id: 999, name: "Selected outside window"};
+            const selected = {
+                channel_id: 999,
+                name: "Selected outside window",
+                state: "open",
+            };
             store.state.conversations = [
                 ...Array.from({length: 49}, (_value, index) => ({
                     channel_id: index + 1,
@@ -10206,8 +10252,8 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                     item: {channel_id: 10, state: "resolved"},
                 };
             };
-            store.loadConversations = async ({reset, selectFirst}) => {
-                listReloaded = reset && selectFirst;
+            store.loadConversations = async (options) => {
+                listReloaded = options.reset === true && !("selectFirst" in options);
                 return true;
             };
 

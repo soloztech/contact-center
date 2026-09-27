@@ -11,6 +11,16 @@ The inbox provides:
   in the selected-conversation header;
 * a persisted compact desktop density with collapsible filters, while mobile keeps its
   responsive full-width layout;
+* per-user, per-database preferences in ``localStorage`` (filters without the search
+  text, grouped or flat view, collapsed inboxes, side panel and details pane), checked
+  against the current bootstrap on every load and ignored when stale or malformed;
+* returning to the inbox within the same page restores the open conversation, the
+  search text and the list position from web-client memory, after the server authorizes
+  the conversation again; a reload, a new tab or a duplicated tab starts without a
+  selected conversation;
+* no conversation opens by itself: without a remembered selection none is selected, a
+  selection that leaves the list is cleared instead of replaced, and a restored
+  conversation is marked as seen only after the agent interacts with it;
 * localized, color-coded conversation states and compact connection-health details;
 * paged conversation and message timelines with unread pointers;
 * provider, platform, origin, reply, delivery, and dispatch context;

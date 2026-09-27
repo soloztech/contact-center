@@ -619,6 +619,9 @@ QUnit.module("contact_center_crm > customer records", (hooks) => {
                 toggleDetails() {
                     this.state.detailsOpen = !this.state.detailsOpen;
                 },
+                rememberInboxLayout() {
+                    return true;
+                },
             };
             app.toggleCrmPanel();
             assert.ok(app.crmPanelSelected);

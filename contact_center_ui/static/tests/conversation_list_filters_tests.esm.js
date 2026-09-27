@@ -78,6 +78,111 @@ QUnit.module("contact_center_ui > sidebar filter flyout", (hooks) => {
     });
 
     QUnit.test(
+        "the list opens with the saved view, groups and position and remembers changes",
+        async (assert) => {
+            const store = filterStore();
+            const remembered = [];
+            const rememberInboxLayout = store.rememberInboxLayout.bind(store);
+            store.rememberInboxLayout = (patch) => {
+                remembered.push(JSON.parse(JSON.stringify(patch)));
+                return rememberInboxLayout(patch);
+            };
+            store.inboxLayout = {
+                listView: "flat",
+                collapsedInboxes: {"inbox:1": true},
+                sidePanel: "contact",
+            };
+            store.pendingListScrollTop = 120;
+            store.state.conversations = [
+                {channel_id: 20, state: "open", account: {id: 1, name: "Comercial"}},
+            ];
+            try {
+                const {list, target} = await mountList(store);
+                assert.strictEqual(list.ui.view, "flat");
+                assert.ok(
+                    target
+                        .querySelector("[aria-label='Lista sem agrupamento']")
+                        .classList.contains("is-active")
+                );
+                assert.strictEqual(
+                    store.pendingListScrollTop,
+                    0,
+                    "the saved position is applied once to the rendered page"
+                );
+                await click(target, "[aria-label='Agrupar por caixa']");
+                assert.ok(list.inboxCollapsed("inbox:1"), "collapsed groups return");
+                assert.notOk(list.inboxCollapsed("inbox:2"));
+                list.toggleInbox("inbox:2");
+                assert.deepEqual(remembered, [
+                    {listView: "grouped"},
+                    {collapsedInboxes: {"inbox:1": true, "inbox:2": true}},
+                ]);
+                assert.deepEqual(store.inboxLayout.collapsedInboxes, {
+                    "inbox:1": true,
+                    "inbox:2": true,
+                });
+                const viewport = list.viewportRef.el;
+                viewport.dispatchEvent(new Event("scroll"));
+                assert.strictEqual(
+                    store.listScrollTop,
+                    viewport.scrollTop,
+                    "the position of this visit is kept for the document memory"
+                );
+            } finally {
+                store.destroy();
+            }
+        }
+    );
+
+    QUnit.test(
+        "the restored window returns to its real scroll position",
+        async (assert) => {
+            const store = filterStore();
+            store.inboxLayout = {
+                listView: "flat",
+                collapsedInboxes: {},
+                sidePanel: "contact",
+            };
+            store.state.conversations = Array.from({length: 40}, (_value, index) => ({
+                channel_id: index + 1,
+                state: "open",
+                name: `Conversa ${index + 1}`,
+                account: {id: 1, name: "Comercial"},
+            }));
+            const target = getFixture();
+            const originalStyle = target.style.cssText;
+            target.style.cssText =
+                "position:fixed;top:0;left:0;width:360px;height:420px;overflow:hidden";
+            try {
+                const {list} = await mountList(store);
+                const viewport = list.viewportRef.el;
+                // Outside the full inbox layout, give the list its own height.
+                viewport.style.flex = "none";
+                viewport.style.height = "200px";
+                assert.ok(
+                    viewport.scrollHeight > viewport.clientHeight + 300,
+                    "the fixture list is scrollable"
+                );
+                store.pendingListScrollTop = 300;
+                store.state.listScrollRestoreRequest += 1;
+                await nextTick();
+                assert.strictEqual(Math.round(viewport.scrollTop), 300);
+                assert.strictEqual(store.pendingListScrollTop, 0);
+                store.state.listScrollRestoreRequest += 1;
+                await nextTick();
+                assert.strictEqual(
+                    Math.round(viewport.scrollTop),
+                    300,
+                    "a consumed position is not applied twice"
+                );
+            } finally {
+                target.style.cssText = originalStyle;
+                store.destroy();
+            }
+        }
+    );
+
+    QUnit.test(
         "bulk inbox disclosure includes empty boxes and follows mixed and flat views",
         async (assert) => {
             const store = filterStore();
@@ -450,7 +555,7 @@ QUnit.module("contact_center_ui > sidebar filter flyout", (hooks) => {
                 });
                 assert.strictEqual(list.activeFilterCount, 0);
                 assert.strictEqual(store.searchTimer, null);
-                assert.deepEqual(calls, [{reset: true, selectFirst: true}]);
+                assert.deepEqual(calls, [{reset: true}]);
                 assert.strictEqual(
                     target.querySelector(".cc-search-field input").value,
                     "Ana"
@@ -560,7 +665,6 @@ QUnit.module("contact_center_ui > sidebar filter flyout", (hooks) => {
                 await store.reconcileConversationSelection({
                     reset: true,
                     silent: true,
-                    selectFirst: false,
                     previousSelected: 20,
                 });
                 assert.strictEqual(store.state.selectedChannelId, false);

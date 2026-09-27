@@ -1,7 +1,7 @@
 {
     "name": "Contact Center UI",
     "summary": "Standalone operational interface for Contact Center agents",
-    "version": "16.0.1.6.0",
+    "version": "16.0.1.7.0",
     "category": "Productivity/Discuss",
     "author": "Soloz Technologies",
     "website": "https://github.com/soloztech/contact-center",
@@ -54,6 +54,7 @@
             "contact_center_ui/static/tests/history_retention_tests.esm.js",
             "contact_center_ui/static/tests/transcription_tests.esm.js",
             "contact_center_ui/static/tests/ad_origin_preview_tests.esm.js",
+            "contact_center_ui/static/tests/inbox_state_tests.esm.js",
         ],
     },
     "application": False,

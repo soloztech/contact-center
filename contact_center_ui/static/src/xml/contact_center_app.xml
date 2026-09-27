@@ -44,7 +44,14 @@
             <t t-else="">
                 <ConversationList store="store" state="store.state" />
 
-                <main class="cc-conversation-stage">
+                <main
+                    class="cc-conversation-stage"
+                    t-on-pointerdown="onConversationInteraction"
+                    t-on-keydown="onConversationInteraction"
+                    t-on-wheel="onConversationInteraction"
+                    t-on-touchstart="onConversationInteraction"
+                    t-on-focusin="onConversationInteraction"
+                >
                     <t t-if="selectedConversation">
                         <header class="cc-conversation-header">
                             <button

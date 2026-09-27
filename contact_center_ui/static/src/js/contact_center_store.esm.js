@@ -25,6 +25,7 @@ import {
 import {_t} from "@web/core/l10n/translation";
 import {browser} from "@web/core/browser/browser";
 import {outboundStructuredCapabilities} from "./structured_content.esm";
+import {registry} from "@web/core/registry";
 import {session} from "@web/session";
 
 const API_MODEL = "contact.center.ui.api";
@@ -38,6 +39,12 @@ const SEEN_RETRY_DELAYS = Object.freeze([1000, 3000, 10000]);
 const CONNECTION_HEALTH_INVALIDATION_DELAY = 160;
 const INBOX_DENSITY_STORAGE_KEY = "contact_center_ui.inbox_density.v1";
 const INBOX_DENSITIES = new Set(["comfortable", "compact"]);
+const INBOX_STATE_PREFIX = "contact_center_ui.inbox_state";
+const INBOX_STATE_VERSION = 1;
+const INBOX_STATE_SAVE_DELAY = 400;
+const INBOX_LIST_VIEWS = new Set(["grouped", "flat"]);
+const INBOX_SIDE_PANELS = new Set(["contact", "crm"]);
+const ACTIVITY_TIMINGS = new Set(["all", "due", "overdue", "today", "planned"]);
 const CONVERSATION_STATE_KEYS = Object.freeze(["open", "resolved", "archived"]);
 const CONVERSATION_STATES = new Set(CONVERSATION_STATE_KEYS);
 // The bus is an invalidation transport, not the source of truth.  Reconcile at
@@ -516,6 +523,194 @@ export function saveInboxDensityPreference(density, storage = browserLocalStorag
     }
 }
 
+export function inboxStateStorageKey(database, userId) {
+    const cleanDatabase =
+        typeof database === "string" ? database.trim().slice(0, 160) : "";
+    const cleanUserId = Number(userId);
+    if (!cleanDatabase || !Number.isSafeInteger(cleanUserId) || cleanUserId <= 0) {
+        return false;
+    }
+    return `${INBOX_STATE_PREFIX}.v${INBOX_STATE_VERSION}.${encodeURIComponent(
+        cleanDatabase
+    )}.${cleanUserId}`;
+}
+
+function catalogIds(items) {
+    return new Set(
+        (Array.isArray(items) ? items : [])
+            .map((item) => isPlainRecord(item) && item.id)
+            .filter((id) => Number.isSafeInteger(id) && id > 0)
+    );
+}
+
+const FILTER_PREFERENCE_RULES = Object.freeze({
+    accountId: (value, catalog) => catalog.accounts.has(value),
+    responsibility: (value) => isResponsibilityScope(value),
+    responsibleId: (value, catalog) => catalog.agents.has(value),
+    unreadOnly: (value) => typeof value === "boolean",
+    conversationType: (value) => ["direct", "group"].includes(value),
+    activityTiming: (value) => ACTIVITY_TIMINGS.has(value),
+});
+const LAYOUT_PREFERENCE_RULES = Object.freeze({
+    detailsOpen: (value) => typeof value === "boolean",
+    listView: (value) => INBOX_LIST_VIEWS.has(value),
+    sidePanel: (value) => INBOX_SIDE_PANELS.has(value),
+});
+
+function acceptedPreferences(values, rules, catalog) {
+    const result = {};
+    for (const [key, accepts] of Object.entries(rules)) {
+        if (accepts(values[key], catalog)) {
+            result[key] = values[key];
+        }
+    }
+    return result;
+}
+
+function sanitizedFilterPreferences(filters, catalog) {
+    const result = acceptedPreferences(filters, FILTER_PREFERENCE_RULES, catalog);
+    if (result.responsibleId) {
+        // Same rule as the filter itself: a named responsible replaces a scope.
+        result.responsibility = "all";
+    }
+    const states = normalizeConversationStateFilters(filters.states);
+    if (states !== false) {
+        result.states = states;
+    }
+    if (Array.isArray(filters.tagIds)) {
+        result.tagIds = positiveFilterIds(filters.tagIds).filter((id) =>
+            catalog.tags.has(id)
+        );
+    }
+    return result;
+}
+
+function sanitizedLayoutPreferences(layout, catalog) {
+    const result = acceptedPreferences(layout, LAYOUT_PREFERENCE_RULES, catalog);
+    if (isPlainRecord(layout.collapsedInboxes)) {
+        result.collapsedInboxes = Object.fromEntries(
+            Object.entries(layout.collapsedInboxes)
+                .filter(
+                    ([key, flag]) =>
+                        flag === true &&
+                        (key === "inbox:unknown" ||
+                            (key.startsWith("inbox:") &&
+                                catalog.accounts.has(Number(key.slice(6)))))
+                )
+                .map(([key]) => [key, true])
+        );
+    }
+    return result;
+}
+
+/**
+ * Keep only saved inbox preferences that still make sense for this bootstrap.
+ *
+ * Preferences are a convenience: anything unknown, stale or malformed is
+ * dropped silently and the default applies instead.
+ *
+ * @param {*} value parsed storage payload
+ * @param {Object} bootstrap validated bootstrap payload
+ * @returns {Object} sanitized {filters, layout}; empty objects when nothing applies
+ */
+export function sanitizeInboxPreferences(value, bootstrap) {
+    if (!isPlainRecord(value) || value.version !== INBOX_STATE_VERSION) {
+        return {filters: {}, layout: {}};
+    }
+    const source = isPlainRecord(bootstrap) ? bootstrap : {};
+    const catalog = {
+        accounts: catalogIds(source.accounts),
+        agents: catalogIds(source.agents),
+        tags: catalogIds(source.tags),
+    };
+    return {
+        filters: sanitizedFilterPreferences(
+            isPlainRecord(value.filters) ? value.filters : {},
+            catalog
+        ),
+        layout: sanitizedLayoutPreferences(
+            isPlainRecord(value.layout) ? value.layout : {},
+            catalog
+        ),
+    };
+}
+
+export function readInboxPreferences(storage, key, bootstrap) {
+    try {
+        const raw = storage && key ? storage.getItem(key) : null;
+        return sanitizeInboxPreferences(raw ? JSON.parse(raw) : false, bootstrap);
+    } catch (_error) {
+        return sanitizeInboxPreferences(false, bootstrap);
+    }
+}
+
+export function writeInboxPreferences(storage, key, filters, layout) {
+    if (!storage || !key) {
+        return false;
+    }
+    try {
+        storage.setItem(
+            key,
+            JSON.stringify({version: INBOX_STATE_VERSION, filters, layout})
+        );
+        return true;
+    } catch (_error) {
+        return false;
+    }
+}
+
+/**
+ * Per-document memory of where the agent left the inbox.
+ *
+ * It lives in a web client service, so it survives leaving and re-entering the
+ * inbox action but never a reload, a new tab or a duplicated tab.  Unlike
+ * sessionStorage, browsers never copy it into another tab.
+ *
+ * @returns {Object} mutable context owned by the current document
+ */
+export function createInboxDocumentContext() {
+    return {
+        userId: false,
+        channelId: false,
+        query: "",
+        listScrollTop: 0,
+        loadedCount: 0,
+        // The inbox instance that may write this memory: the newest one.
+        owner: false,
+    };
+}
+
+/**
+ * Action parameters apply to the first mount of their action only.
+ *
+ * A breadcrumb return reuses the same action object; it must follow the
+ * remembered state of this document instead of the original directed opening.
+ *
+ * @param {Object} context document context service
+ * @param {Object} action client action descriptor
+ * @returns {Object|Boolean} parameters to apply, or false
+ */
+export function consumeInboxActionParams(context, action) {
+    if (!action || !action.params) {
+        return false;
+    }
+    if (!context) {
+        return action.params;
+    }
+    context.consumedActions = context.consumedActions || new WeakSet();
+    if (context.consumedActions.has(action)) {
+        return false;
+    }
+    context.consumedActions.add(action);
+    return action.params;
+}
+
+registry.category("services").add("contact_center_ui.inbox_context", {
+    start() {
+        return createInboxDocumentContext();
+    },
+});
+
 function uploadErrorMessage(payload) {
     const error = payload && payload.error;
     return (
@@ -959,6 +1154,9 @@ export class ContactCenterStore {
         companyTimer = browser,
         realtimeTimer = browser,
         inboxDensityStorage = browserLocalStorage(),
+        inboxPreferenceStorage = false,
+        inboxContext = createInboxDocumentContext(),
+        inboxPreferenceTimer = browser,
         operationStorage = browserSessionStorage(),
         operationDatabase = false,
         operationNow = () => Date.now(),
@@ -971,6 +1169,42 @@ export class ContactCenterStore {
         this.busService = busService;
         this.notification = notification;
         this.inboxDensityStorage = inboxDensityStorage;
+        this.inboxPreferenceStorage = inboxPreferenceStorage;
+        this.inboxContext = inboxContext;
+        this.inboxPreferenceTimer = inboxPreferenceTimer;
+        this.inboxPreferenceSaveTimer = null;
+        // Nothing is written before the saved preferences were read, so an
+        // early exit can never replace them with defaults.
+        this.inboxPreferencesLoaded = false;
+        this.persistFilters = true;
+        this.savedFilterPreferences = {};
+        this.inboxLayout = {
+            listView: "grouped",
+            collapsedInboxes: {},
+            sidePanel: "contact",
+            // Only an explicit choice is saved; a narrow window never rewrites it.
+            detailsOpen: undefined,
+        };
+        this.inboxPreferencesDirty = false;
+        this.pendingListScrollTop = 0;
+        // This visit's list position, written into the document memory on exit.
+        this.listScrollTop = 0;
+        // Restoration bookkeeping: only the agent's own actions cancel it.
+        this.selectionRevision = 0;
+        this.documentRestore = false;
+        // Identifies this inbox as the owner of the document memory.
+        this.documentOwner = {};
+        this.restoreDeniedChannelId = false;
+        // The restored selection until its first timeline page applies.
+        this.restoringChannelId = false;
+        // Filter revision of the last window the server returned; -1 while
+        // no request has succeeded yet.
+        this.listWindowFilterRevision = -1;
+        this.listLoadsInFlight = 0;
+        this.listIdleWaiters = [];
+        // Bumped synchronously by every filter edit (search included), so an
+        // asynchronous restoration can tell that the agent moved on.
+        this.filterRevision = 0;
         this.operationStorage = operationStorage;
         this.operationDatabase = operationDatabase;
         this.operationNow = operationNow;
@@ -1009,6 +1243,8 @@ export class ContactCenterStore {
             detailsOpen: window.innerWidth >= 1200,
             retentionFocusRequest: 0,
             inboxDensity: loadInboxDensityPreference(inboxDensityStorage),
+            seenPausedChannelId: false,
+            listScrollRestoreRequest: 0,
             mobilePane: "list",
             realtime: "connecting",
             attention: attention
@@ -1093,6 +1329,8 @@ export class ContactCenterStore {
         this.pendingCompanyOperations = new Set();
         this.conversationSelectionGuard = null;
         this.syncTimer = null;
+        // Resolved once the scheduled synchronization refreshed the list.
+        this.syncWaiters = [];
         this.consistencySyncTimer = null;
         this.healthSyncTimer = null;
         this.healthSyncAttempt = 0;
@@ -1114,6 +1352,7 @@ export class ContactCenterStore {
         this.onReconnect = this.onReconnect.bind(this);
         this.onReconnecting = this.onReconnecting.bind(this);
         this.onDisconnect = this.onDisconnect.bind(this);
+        this.onPageHide = this.onPageHide.bind(this);
         if (this.attention) {
             this.attention.setStateListener((snapshot) => {
                 if (!this.destroyed) {
@@ -1316,6 +1555,49 @@ export class ContactCenterStore {
         );
     }
 
+    /**
+     * Filters whose result follows from the conversation's own fields.
+     *
+     * Unread, activity timing and search are "volatile": the agent's own work
+     * (reading, completing the follow-up) can take the open conversation out of
+     * them, so they alone never close it.
+     *
+     * @param {Object} item normalized conversation
+     * @returns {Boolean} whether the item satisfies state, inbox, type,
+     *   responsibility and tag filters
+     */
+    conversationMatchesStructuralFilters(item) {
+        const filters = this.state.filters;
+        if (!isRenderableConversation(item)) {
+            return false;
+        }
+        if (filters.states.length && !filters.states.includes(item.state)) {
+            return false;
+        }
+        if (
+            filters.accountId &&
+            (!item.account || item.account.id !== filters.accountId)
+        ) {
+            return false;
+        }
+        if (
+            ["direct", "group"].includes(filters.conversationType) &&
+            item.conversation_type !== filters.conversationType
+        ) {
+            return false;
+        }
+        return this.conversationMatchesPeopleAndTags(item);
+    }
+
+    get hasVolatileFilters() {
+        const filters = this.state.filters;
+        return Boolean(
+            filters.unreadOnly ||
+                ACTIVITY_TIMINGS.has(filters.activityTiming) ||
+                (filters.query || "").trim()
+        );
+    }
+
     get displayedConversationTotal() {
         const total =
             Number.isSafeInteger(this.state.conversationTotal) &&
@@ -1456,6 +1738,7 @@ export class ContactCenterStore {
 
     async start() {
         this.started = true;
+        window.addEventListener("pagehide", this.onPageHide);
         this.busService.addEventListener("notification", this.onNotification);
         this.busService.addEventListener("connect", this.onConnect);
         this.busService.addEventListener("reconnect", this.onReconnect);
@@ -1482,9 +1765,15 @@ export class ContactCenterStore {
     }
 
     destroy() {
+        if (this.inboxPreferencesDirty && this.ownsDocumentContext()) {
+            this.saveInboxPreferences();
+        }
+        this.cancelInboxPreferencesSave();
+        this.rememberDocumentContext();
         this.destroyed = true;
         this.cancelSeenRetry();
         this.started = false;
+        window.removeEventListener("pagehide", this.onPageHide);
         this.busService.removeEventListener("notification", this.onNotification);
         this.busService.removeEventListener("connect", this.onConnect);
         this.busService.removeEventListener("reconnect", this.onReconnect);
@@ -1497,6 +1786,7 @@ export class ContactCenterStore {
             this.realtimeTimer.clearTimeout(this.syncTimer);
             this.syncTimer = null;
         }
+        this.releaseSynchronizationWaiters();
         if (this.contactSearchTimer !== null) {
             this.contactTimer.clearTimeout(this.contactSearchTimer);
             this.contactSearchTimer = null;
@@ -1511,6 +1801,315 @@ export class ContactCenterStore {
         if (this.attention) {
             this.attention.destroy();
         }
+    }
+
+    inboxStateKey() {
+        const database =
+            this.operationDatabase ||
+            session.db ||
+            session.db_name ||
+            (window.location && window.location.host) ||
+            "";
+        return inboxStateStorageKey(database, this.currentUserId);
+    }
+
+    filterPreferences() {
+        const filters = this.state.filters;
+        return {
+            states: [...filters.states],
+            accountId: filters.accountId,
+            responsibility: filters.responsibility,
+            responsibleId: filters.responsibleId,
+            unreadOnly: filters.unreadOnly,
+            conversationType: filters.conversationType,
+            tagIds: this.selectedFilterTagIds,
+            activityTiming: filters.activityTiming,
+        };
+    }
+
+    layoutPreferences() {
+        return {
+            detailsOpen: this.inboxLayout.detailsOpen,
+            listView: this.inboxLayout.listView,
+            sidePanel: this.inboxLayout.sidePanel,
+            collapsedInboxes: {...this.inboxLayout.collapsedInboxes},
+        };
+    }
+
+    cancelInboxPreferencesSave() {
+        if (this.inboxPreferenceSaveTimer !== null) {
+            this.inboxPreferenceTimer.clearTimeout(this.inboxPreferenceSaveTimer);
+            this.inboxPreferenceSaveTimer = null;
+        }
+    }
+
+    saveInboxPreferences() {
+        this.cancelInboxPreferencesSave();
+        // A replaced inbox never writes over the newer one's preferences.
+        if (!this.inboxPreferencesLoaded || !this.ownsDocumentContext()) {
+            return false;
+        }
+        this.inboxPreferencesDirty = false;
+        return writeInboxPreferences(
+            this.inboxPreferenceStorage,
+            this.inboxStateKey(),
+            // Directed navigation shows temporary neutral filters; keep the
+            // saved ones until the agent changes a filter.
+            this.persistFilters
+                ? this.filterPreferences()
+                : this.savedFilterPreferences,
+            this.layoutPreferences()
+        );
+    }
+
+    scheduleInboxPreferencesSave() {
+        if (
+            !this.inboxPreferencesLoaded ||
+            this.destroyed ||
+            !this.ownsDocumentContext()
+        ) {
+            return false;
+        }
+        this.cancelInboxPreferencesSave();
+        this.inboxPreferencesDirty = true;
+        this.inboxPreferenceSaveTimer = this.inboxPreferenceTimer.setTimeout(() => {
+            this.inboxPreferenceSaveTimer = null;
+            this.saveInboxPreferences();
+        }, INBOX_STATE_SAVE_DELAY);
+        return true;
+    }
+
+    noteFilterPreferenceChange() {
+        this.persistFilters = true;
+        this.scheduleInboxPreferencesSave();
+    }
+
+    rememberInboxLayout(patch = {}) {
+        if (INBOX_LIST_VIEWS.has(patch.listView)) {
+            this.inboxLayout.listView = patch.listView;
+        }
+        if (INBOX_SIDE_PANELS.has(patch.sidePanel)) {
+            this.inboxLayout.sidePanel = patch.sidePanel;
+        }
+        if (typeof patch.detailsOpen === "boolean") {
+            this.inboxLayout.detailsOpen = patch.detailsOpen;
+        }
+        if (isPlainRecord(patch.collapsedInboxes)) {
+            this.inboxLayout.collapsedInboxes = Object.fromEntries(
+                Object.entries(patch.collapsedInboxes).filter(
+                    ([key, flag]) =>
+                        flag === true &&
+                        typeof key === "string" &&
+                        key.startsWith("inbox:")
+                )
+            );
+        }
+        return this.scheduleInboxPreferencesSave();
+    }
+
+    onPageHide() {
+        // Another tab may have saved newer preferences; write only this tab's
+        // unsaved changes.
+        if (this.inboxPreferencesDirty) {
+            this.saveInboxPreferences();
+        }
+    }
+
+    applyLayoutPreferences(layout) {
+        this.inboxLayout = {
+            listView: layout.listView || "grouped",
+            collapsedInboxes: layout.collapsedInboxes || {},
+            sidePanel: layout.sidePanel || "contact",
+            detailsOpen:
+                typeof layout.detailsOpen === "boolean"
+                    ? layout.detailsOpen
+                    : undefined,
+        };
+        // The details pane overlays the conversation on narrow screens; only
+        // a wide viewport restores it open.
+        if (typeof layout.detailsOpen === "boolean") {
+            this.state.detailsOpen = layout.detailsOpen && window.innerWidth >= 1200;
+        }
+    }
+
+    rememberedDocumentState() {
+        const context = this.inboxContext;
+        if (!context) {
+            return false;
+        }
+        if (!this.currentUserId || context.userId !== this.currentUserId) {
+            // Nothing of another user's session survives in this document.
+            Object.assign(context, createInboxDocumentContext());
+            return false;
+        }
+        return {
+            query: typeof context.query === "string" ? context.query.slice(0, 256) : "",
+            listScrollTop:
+                Number.isFinite(context.listScrollTop) && context.listScrollTop > 0
+                    ? context.listScrollTop
+                    : 0,
+            channelId:
+                Number.isSafeInteger(context.channelId) && context.channelId > 0
+                    ? context.channelId
+                    : false,
+            loadedCount:
+                Number.isSafeInteger(context.loadedCount) && context.loadedCount > 0
+                    ? Math.min(context.loadedCount, REALTIME_REFRESH_LIMIT)
+                    : 0,
+        };
+    }
+
+    restoreInboxPreferences(bootstrap, directed, navigation) {
+        const preferences = readInboxPreferences(
+            this.inboxPreferenceStorage,
+            this.inboxStateKey(),
+            bootstrap
+        );
+        this.applyLayoutPreferences(preferences.layout);
+        this.savedFilterPreferences = preferences.filters;
+        const remembered = this.rememberedDocumentState();
+        if (this.inboxContext) {
+            // A newer inbox of this document takes over the memory: an older
+            // one being replaced must not overwrite it when it goes away.
+            this.inboxContext.owner = this.documentOwner;
+        }
+        this.inboxPreferencesLoaded = true;
+        // Action parameters win over saved filters and the remembered
+        // conversation; their neutral filters are temporary.
+        this.persistFilters = !directed;
+        if (directed) {
+            Object.assign(this.state.filters, {
+                states: [],
+                accountId: false,
+                query: "",
+                responsibility: "all",
+                responsibleId: false,
+                unreadOnly: false,
+                conversationType: false,
+                tagId: false,
+                tagIds: [],
+                activityTiming: navigation.activityTiming || false,
+            });
+            return false;
+        }
+        Object.assign(this.state.filters, preferences.filters);
+        if ("tagIds" in preferences.filters) {
+            this.state.filters.tagId = false;
+        }
+        if (!remembered) {
+            return false;
+        }
+        this.state.filters.query = remembered.query;
+        return remembered;
+    }
+
+    ownsDocumentContext() {
+        return Boolean(
+            !this.inboxContext ||
+                !this.inboxContext.owner ||
+                this.inboxContext.owner === this.documentOwner
+        );
+    }
+
+    /**
+     * Publish this visit before the next action starts.
+     *
+     * The action service asks the leaving controller first; the next inbox
+     * may boot before this one is destroyed and must read this state.
+     *
+     * @returns {Boolean} true: leaving is never blocked
+     */
+    handOffDocument() {
+        if (this.inboxPreferencesDirty && this.ownsDocumentContext()) {
+            this.saveInboxPreferences();
+        }
+        this.rememberDocumentContext();
+        return true;
+    }
+
+    rememberDocumentContext() {
+        if (
+            !this.inboxPreferencesLoaded ||
+            !this.inboxContext ||
+            !this.ownsDocumentContext()
+        ) {
+            return false;
+        }
+        const restore = this.documentRestore;
+        if (
+            restore &&
+            ["pending", "failed"].includes(restore.outcome) &&
+            restore.filterRevision === this.filterRevision &&
+            restore.selectionRevision === this.selectionRevision
+        ) {
+            // Leaving before the restoration finished, or after it could not
+            // complete, keeps the previous memory while the agent has chosen
+            // nothing since; a selection or filter edit supersedes it at once.
+            return false;
+        }
+        Object.assign(this.inboxContext, {
+            userId: this.currentUserId,
+            channelId: this.state.selectedChannelId || false,
+            query: this.state.filters.query || "",
+            listScrollTop: this.listScrollTop,
+            loadedCount: this.state.conversations.filter(
+                (item) =>
+                    isRenderableConversation(item) &&
+                    item.channel_id !== this.preservedConversationChannelId
+            ).length,
+        });
+        return true;
+    }
+
+    rememberListScroll(scrollTop) {
+        if (Number.isFinite(scrollTop) && scrollTop >= 0) {
+            this.listScrollTop = scrollTop;
+        }
+    }
+
+    beginListLoad() {
+        this.listLoadsInFlight += 1;
+    }
+
+    endListLoad() {
+        this.listLoadsInFlight = Math.max(0, this.listLoadsInFlight - 1);
+        if (!this.listLoadsInFlight) {
+            const waiters = this.listIdleWaiters;
+            this.listIdleWaiters = [];
+            waiters.forEach((resolve) => resolve());
+        }
+    }
+
+    waitForListIdle() {
+        if (!this.listLoadsInFlight) {
+            return Promise.resolve();
+        }
+        return new Promise((resolve) => this.listIdleWaiters.push(resolve));
+    }
+
+    waitForScheduledSynchronization() {
+        if (this.syncTimer === null) {
+            return Promise.resolve(false);
+        }
+        return new Promise((resolve) => this.syncWaiters.push(resolve));
+    }
+
+    releaseSynchronizationWaiters() {
+        const waiters = this.syncWaiters;
+        this.syncWaiters = [];
+        waiters.forEach((resolve) => resolve(true));
+    }
+
+    bumpFilterRevision() {
+        this.filterRevision += 1;
+        // A position saved for the previous list no longer applies.
+        this.pendingListScrollTop = 0;
+    }
+
+    consumePendingListScroll() {
+        const scrollTop = this.pendingListScrollTop;
+        this.pendingListScrollTop = 0;
+        return scrollTop;
     }
 
     stopConsistencySynchronization() {
@@ -1557,23 +2156,37 @@ export class ContactCenterStore {
             validateEnvelope(payload);
             this.state.bootstrap = payload;
             this.applyConnectionHealth(payload.connection_health);
-            this.state.phase = "ready";
             const navigation = this.initialNavigation;
             this.initialNavigation = false;
-            const directed =
-                navigation && (navigation.channelId || navigation.activityTiming);
-            if (directed) {
-                this.state.filters.states = [];
-                this.state.filters.activityTiming = navigation.activityTiming;
-            }
-            const loading = this.loadConversations({
-                reset: true,
-                selectFirst: !directed,
-            });
-            const listRequest = this.listRequest;
-            await loading;
-            if (directed && navigation.channelId && this.listRequest === listRequest) {
-                await this.openInitialConversation(navigation.channelId);
+            const directed = Boolean(
+                navigation && (navigation.channelId || navigation.activityTiming)
+            );
+            const remembered = this.restoreInboxPreferences(
+                payload,
+                directed,
+                navigation
+            );
+            // The saved or directed filters replace the defaults: a window a
+            // realtime refresh fetched before bootstrap describes other filters.
+            this.bumpFilterRevision();
+            this.state.phase = "ready";
+            // Nothing opens by itself: without a directed or remembered
+            // conversation, the agent chooses what to open.
+            // Captured before the first page: a search typed while it loads
+            // (still inside its debounce) must cancel the restoration too.
+            const revision = this.filterRevision;
+            // Registered before the first page too: leaving while it loads
+            // keeps the previous memory, since the agent chose nothing yet.
+            const restore = remembered && this.beginDocumentRestore(revision);
+            await this.loadConversations({reset: true});
+            // Only the agent's own changes cancel what follows; a realtime
+            // refresh that replaced the first page does not.
+            if (directed && navigation.channelId) {
+                if (this.filterRevision === revision) {
+                    await this.openInitialConversation(navigation.channelId);
+                }
+            } else if (remembered) {
+                await this.restoreDocumentState(remembered, restore);
             }
         } catch (error) {
             if (error instanceof RangeError) {
@@ -1590,11 +2203,15 @@ export class ContactCenterStore {
             return false;
         }
         const timelineRequest = this.timelineRequest;
-        const listRequest = this.listRequest;
+        const selection = this.selectionRevision;
+        const revision = this.filterRevision;
+        // A filter edit or a selection by the agent cancels the opening; a
+        // realtime refresh of the list does not.
         const current = () =>
             !this.destroyed &&
+            this.filterRevision === revision &&
             this.timelineRequest === timelineRequest &&
-            this.listRequest === listRequest &&
+            this.selectionRevision === selection &&
             !this.state.selectedChannelId;
         try {
             const payload = await this.call("get_conversation", [channelId]);
@@ -1619,6 +2236,225 @@ export class ContactCenterStore {
             }
             return false;
         }
+    }
+
+    async restoreConversationWindow(loadedCount, cancelled) {
+        // Reload the same filtered window the agent had, never beyond the
+        // realtime refresh bound, before restoring position or selection. A
+        // realtime refresh may run meanwhile: wait for it and continue.
+        const target = Math.min(loadedCount, REALTIME_REFRESH_LIMIT);
+        // Enough page loads for the bound; a superseded page or a scheduled
+        // refresh spends one too, so the wait stays bounded.
+        const budget = REALTIME_REFRESH_LIMIT / LIST_LIMIT + 1;
+        for (let pass = 0; ; pass += 1) {
+            await this.waitForListIdle();
+            if (cancelled()) {
+                return "cancelled";
+            }
+            // Only a window the server returned for the current filters can
+            // decide that a conversation left them. A failed request, or one
+            // superseded by a refresh that failed, leaves it undecided.
+            if (
+                this.state.listPhase !== "ready" ||
+                this.listWindowFilterRevision !== this.filterRevision
+            ) {
+                // A deletion or retention event superseded the window and
+                // scheduled its refresh: wait for it rather than give up.
+                if (
+                    pass < budget &&
+                    this.state.listPhase !== "error" &&
+                    this.syncTimer !== null
+                ) {
+                    await this.waitForScheduledSynchronization();
+                    continue;
+                }
+                return "failed";
+            }
+            const loaded = this.state.conversations.filter(isRenderableConversation);
+            if (loaded.length >= target || !this.state.conversationsHaveMore) {
+                return "loaded";
+            }
+            if (pass >= budget) {
+                return "failed";
+            }
+            await this.loadMoreConversations();
+        }
+    }
+
+    beginDocumentRestore(filterRevision = this.filterRevision) {
+        this.documentRestore = {
+            outcome: "pending",
+            filterRevision,
+            selectionRevision: this.selectionRevision,
+        };
+        return this.documentRestore;
+    }
+
+    async restoreDocumentState(remembered, restore = this.beginDocumentRestore()) {
+        // Only the agent's own actions abandon the restoration: a filter edit
+        // (search included), choosing a conversation, or leaving.
+        const cancelled = () =>
+            this.destroyed ||
+            this.filterRevision !== restore.filterRevision ||
+            this.selectionRevision !== restore.selectionRevision;
+        try {
+            const windowOutcome = await this.restoreConversationWindow(
+                remembered.loadedCount,
+                cancelled
+            );
+            if (windowOutcome !== "loaded") {
+                restore.outcome = windowOutcome;
+                return false;
+            }
+            // The position comes back with the window, before the remembered
+            // conversation's timeline, so a slow timeline never moves the list
+            // under the agent's hands.
+            this.listScrollTop = remembered.listScrollTop;
+            this.pendingListScrollTop = remembered.listScrollTop;
+            this.state.listScrollRestoreRequest += 1;
+            if (remembered.channelId) {
+                const outcome = await this.restoreRememberedConversation(
+                    remembered.channelId,
+                    cancelled
+                );
+                restore.outcome = outcome === "failed" ? "failed" : "done";
+            } else {
+                restore.outcome = "done";
+            }
+            return restore.outcome === "done";
+        } finally {
+            if (restore.outcome === "pending") {
+                restore.outcome = "failed";
+            }
+        }
+    }
+
+    acceptsRestoredConversation(channelId, item, visible) {
+        // Only a conversation inside the reloaded window, still matching the
+        // effective filters with its fresh projection, is reopened.
+        return Boolean(
+            visible() &&
+                item &&
+                item.channel_id === channelId &&
+                !this.readSinceListed(item) &&
+                this.replaceConversation(item) &&
+                visible()
+        );
+    }
+
+    /**
+     * Whether the fresh conversation left the Unread filter since the list.
+     *
+     * Read in another tab meanwhile, it no longer satisfies the effective
+     * filters; the volatile-filter tolerance is only for a conversation
+     * already in use, not for one being restored.
+     *
+     * @param {Object} item the conversation just authorized by the server
+     * @returns {Boolean}
+     */
+    readSinceListed(item) {
+        return Boolean(this.state.filters.unreadOnly && !(item.unread_count > 0));
+    }
+
+    forgetRememberedConversation(channelId) {
+        if (this.inboxContext && this.inboxContext.channelId === channelId) {
+            this.inboxContext.channelId = false;
+        }
+    }
+
+    /**
+     * Reopen the remembered conversation after the server authorizes it again.
+     *
+     * @param {Number} channelId remembered conversation
+     * @param {Function} cancelled returns true once the agent moved on
+     * @returns {Promise<String>} "restored"; "unavailable" (forgotten: no
+     *   access or outside the filters); "failed" (transient, remembered); or
+     *   "cancelled" (the agent moved on; nothing is decided)
+     */
+    async restoreRememberedConversation(channelId, cancelled = () => false) {
+        const visible = () =>
+            this.responsibilityVisibleConversations.some(
+                (item) => item.channel_id === channelId
+            );
+        if (this.destroyed || cancelled() || this.state.selectedChannelId) {
+            return "cancelled";
+        }
+        // Only a conversation inside the reloaded, server-filtered window still
+        // satisfies every effective filter (inbox, search, unread, activity...).
+        if (!visible()) {
+            this.forgetRememberedConversation(channelId);
+            return "unavailable";
+        }
+        const timelineRequest = this.timelineRequest;
+        const current = () =>
+            !this.destroyed &&
+            !cancelled() &&
+            this.timelineRequest === timelineRequest &&
+            !this.state.selectedChannelId;
+        let payload = null;
+        try {
+            // The server authorizes again; the browser memory is only a hint.
+            payload = await this.call("get_conversation", [channelId]);
+        } catch (error) {
+            if (!current()) {
+                return "cancelled";
+            }
+            if (!accessWasRevoked(error)) {
+                // A transient failure decides nothing about the memory.
+                return "failed";
+            }
+            // Silent on purpose: the error must not reveal the conversation.
+            this.forgetRememberedConversation(channelId);
+            return "unavailable";
+        }
+        if (!current()) {
+            return "cancelled";
+        }
+        try {
+            validateEnvelope(payload);
+        } catch (_error) {
+            return "failed";
+        }
+        if (!this.acceptsRestoredConversation(channelId, payload.item, visible)) {
+            this.forgetRememberedConversation(channelId);
+            return "unavailable";
+        }
+        return this.reopenRestoredConversation(channelId);
+    }
+
+    async reopenRestoredConversation(channelId) {
+        // Restoring is not reading: wait for the agent to interact.
+        this.state.seenPausedChannelId = channelId;
+        this.restoreDeniedChannelId = false;
+        await this.selectConversation(channelId, {restored: true});
+        // A timeline refused right after the authorization cleared it.
+        const refused = this.restoreDeniedChannelId === channelId;
+        this.restoreDeniedChannelId = false;
+        return refused ? "unavailable" : "restored";
+    }
+
+    /**
+     * Re-read the selection when the refresh kept it only from the cache.
+     *
+     * A preserved row, or a row kept from the cached tail beyond the refresh
+     * bound, is only the previous projection. Every silent refresh caller (bus,
+     * periodic, preferences, message actions...) re-checks the current item on
+     * the server, which authorizes it and applies the structural filters.
+     *
+     * @param {Array} serverItems rows actually returned by this refresh
+     * @returns {Promise<Boolean>} whether a revalidation ran
+     */
+    async revalidatePreservedSelection(serverItems = []) {
+        const channelId = this.state.selectedChannelId;
+        if (
+            !channelId ||
+            !this.loadedConversation(channelId) ||
+            (serverItems || []).some((item) => item && item.channel_id === channelId)
+        ) {
+            return false;
+        }
+        await this.refreshSelectedConversation({silent: true});
+        return true;
     }
 
     applyConnectionHealth(value) {
@@ -1793,6 +2629,7 @@ export class ContactCenterStore {
     }
 
     clearConversationSelection({closePanes = false} = {}) {
+        this.restoringChannelId = false;
         this.cancelSeenRetry();
         this.timelineRequest += 1;
         this.resetTimelineContinuity();
@@ -1800,6 +2637,7 @@ export class ContactCenterStore {
         this.resetProductivity();
         this.resetQuickReplies();
         this.state.selectedChannelId = false;
+        this.state.seenPausedChannelId = false;
         this.state.timelineChannelId = false;
         this.state.messages = [];
         this.state.timelineHasMore = false;
@@ -1835,11 +2673,15 @@ export class ContactCenterStore {
                 !items.some(
                     (item) => item.channel_id === previousConversation.channel_id
                 );
+            // A silent refresh keeps the open conversation only when its absence
+            // may be pagination or a volatile filter; the next conversation
+            // refresh re-checks the structural filters on the current item.
             if (
                 silent &&
                 previousIsMissing &&
                 !this.deletedConversationIds.has(previousConversation.channel_id) &&
-                !this.hasPeopleOrTagFilters
+                (payload.has_more || this.hasVolatileFilters) &&
+                this.conversationMatchesStructuralFilters(previousConversation)
             ) {
                 this.state.conversations.push(previousConversation);
                 this.preservedConversationChannelId = previousConversation.channel_id;
@@ -1875,36 +2717,15 @@ export class ContactCenterStore {
         this.state.listPhase = "ready";
     }
 
-    async reconcileConversationSelection({
-        reset,
-        silent,
-        selectFirst,
-        previousSelected,
-    }) {
-        const visibleConversations = this.responsibilityVisibleConversations;
-        const selectedStillVisible = visibleConversations.some(
+    reconcileConversationSelection({reset, previousSelected}) {
+        const selectedStillVisible = this.responsibilityVisibleConversations.some(
             (item) => item.channel_id === previousSelected
         );
-        const selectedConversationWasRemoved =
-            Boolean(previousSelected) && !selectedStillVisible;
-        const responsibilitySelectionChanged =
-            this.hasPeopleOrTagFilters && selectedConversationWasRemoved;
-        if (
-            !selectedStillVisible &&
-            reset &&
-            (!silent || responsibilitySelectionChanged)
-        ) {
+        // A selection that left the list is cleared, never replaced: another
+        // conversation opens only when the agent chooses it.
+        if (previousSelected && !selectedStillVisible && reset) {
             this.clearConversationSelection({
-                closePanes: !visibleConversations.length,
-            });
-        }
-        if (
-            (selectFirst || responsibilitySelectionChanged) &&
-            !this.state.selectedChannelId &&
-            visibleConversations.length
-        ) {
-            await this.selectConversation(visibleConversations[0].channel_id, {
-                preservePane: true,
+                closePanes: !this.responsibilityVisibleConversations.length,
             });
         }
     }
@@ -1923,11 +2744,24 @@ export class ContactCenterStore {
         return false;
     }
 
-    async loadConversations({reset = false, selectFirst = false, silent = false} = {}) {
+    async loadConversations(options = {}) {
+        if (this.destroyed) {
+            return false;
+        }
+        this.beginListLoad();
+        try {
+            return await this.loadConversationsPage(options);
+        } finally {
+            this.endListLoad();
+        }
+    }
+
+    async loadConversationsPage({reset = false, silent = false} = {}) {
         if (this.destroyed) {
             return false;
         }
         const request = ++this.listRequest;
+        const filterRevision = this.filterRevision;
         if (!silent) {
             this.state.listPhase = reset ? "loading" : "loading_more";
         }
@@ -1949,23 +2783,35 @@ export class ContactCenterStore {
                 silent,
                 previousConversation,
             });
-            await this.reconcileConversationSelection({
-                reset,
-                silent,
-                selectFirst,
-                previousSelected,
-            });
+            this.listWindowFilterRevision = filterRevision;
+            this.reconcileConversationSelection({reset, previousSelected});
+            if (reset && silent) {
+                await this.revalidatePreservedSelection(payload.items);
+            }
             return true;
         } catch (error) {
             return this.conversationLoadFailed(error, request, silent);
         }
     }
 
-    async refreshLoadedConversations({silent = true} = {}) {
+    async refreshLoadedConversations(options = {}) {
+        if (this.destroyed) {
+            return false;
+        }
+        this.beginListLoad();
+        try {
+            return await this.refreshLoadedConversationWindow(options);
+        } finally {
+            this.endListLoad();
+        }
+    }
+
+    async refreshLoadedConversationWindow({silent = true} = {}) {
         if (this.destroyed) {
             return false;
         }
         const request = ++this.listRequest;
+        const filterRevision = this.filterRevision;
         const cachedWindow = this.state.conversations.filter(
             (item) =>
                 isRenderableConversation(item) &&
@@ -2033,12 +2879,9 @@ export class ContactCenterStore {
                 },
                 {reset: true, silent, previousConversation}
             );
-            await this.reconcileConversationSelection({
-                reset: true,
-                silent,
-                selectFirst: false,
-                previousSelected,
-            });
+            this.listWindowFilterRevision = filterRevision;
+            this.reconcileConversationSelection({reset: true, previousSelected});
+            await this.revalidatePreservedSelection(items);
             return true;
         } catch (error) {
             return this.conversationLoadFailed(error, request, silent);
@@ -2059,6 +2902,7 @@ export class ContactCenterStore {
         if (!(name in this.state.filters)) {
             return false;
         }
+        this.bumpFilterRevision();
         if (name === "states") {
             return this.setConversationStateFilters(value);
         }
@@ -2068,7 +2912,8 @@ export class ContactCenterStore {
             }
             this.state.filters.responsibility = value;
             this.state.filters.responsibleId = false;
-            return this.loadConversations({reset: true, selectFirst: true});
+            this.noteFilterPreferenceChange();
+            return this.loadConversations({reset: true});
         }
         let normalizedValue = value;
         if (name === "unreadOnly") {
@@ -2100,14 +2945,17 @@ export class ContactCenterStore {
             }
             this.searchTimer = browser.setTimeout(() => {
                 this.searchTimer = null;
-                this.loadConversations({reset: true, selectFirst: true});
+                this.loadConversations({reset: true});
             }, 260);
             return;
         }
-        return this.loadConversations({reset: true, selectFirst: true});
+        // Search text stays out of saved preferences.
+        this.noteFilterPreferenceChange();
+        return this.loadConversations({reset: true});
     }
 
     clearConversationFilters() {
+        this.bumpFilterRevision();
         if (this.searchTimer !== null) {
             browser.clearTimeout(this.searchTimer);
             this.searchTimer = null;
@@ -2123,7 +2971,8 @@ export class ContactCenterStore {
             tagIds: [],
             activityTiming: false,
         });
-        return this.loadConversations({reset: true, selectFirst: true});
+        this.noteFilterPreferenceChange();
+        return this.loadConversations({reset: true});
     }
 
     setConversationStateFilters(value) {
@@ -2131,8 +2980,10 @@ export class ContactCenterStore {
         if (states === false) {
             return false;
         }
+        this.bumpFilterRevision();
         this.state.filters.states = states;
-        return this.loadConversations({reset: true, selectFirst: true});
+        this.noteFilterPreferenceChange();
+        return this.loadConversations({reset: true});
     }
 
     toggleInboxDensity() {
@@ -2204,6 +3055,7 @@ export class ContactCenterStore {
             // Change only the list view, never the existing channel's state,
             // assignment or tags. In-flight pages must not hide this result.
             this.listRequest += 1;
+            this.bumpFilterRevision();
             Object.assign(this.state.filters, {
                 states: [],
                 accountId,
@@ -2216,6 +3068,7 @@ export class ContactCenterStore {
                 tagIds: [],
                 activityTiming: false,
             });
+            this.noteFilterPreferenceChange();
             this.state.conversations = [];
             this.preservedConversationChannelId = false;
             this.state.conversationTotal = 1;
@@ -2240,7 +3093,7 @@ export class ContactCenterStore {
         }
     }
 
-    async selectConversation(channelId, {preservePane = false} = {}) {
+    async selectConversation(channelId, {preservePane = false, restored = false} = {}) {
         if (this.deletedConversationIds.has(channelId)) {
             return false;
         }
@@ -2249,6 +3102,10 @@ export class ContactCenterStore {
             this.state.timelineChannelId === channelId &&
             this.state.messages.length
         ) {
+            if (!restored) {
+                // Choosing the open conversation again is an interaction.
+                this.state.seenPausedChannelId = false;
+            }
             if (!preservePane) {
                 this.state.mobilePane = "conversation";
             }
@@ -2260,7 +3117,14 @@ export class ContactCenterStore {
             this.conversationSelectionGuard &&
             this.conversationSelectionGuard(channelId) === false
         ) {
+            // A refused switch changes nothing, the reading pause included.
             return false;
+        }
+        if (!restored) {
+            // A selection by the agent is an interaction: reading resumes, and
+            // any pending restoration gives way to the agent's choice.
+            this.state.seenPausedChannelId = false;
+            this.selectionRevision += 1;
         }
         this.state.selectedChannelId = channelId;
         if (changedConversation) {
@@ -2288,7 +3152,34 @@ export class ContactCenterStore {
         if (!preservePane) {
             this.state.mobilePane = "conversation";
         }
+        // Until its first page applies, any current timeline request of a
+        // restored conversation, a realtime refresh included, is its check.
+        this.restoringChannelId = restored ? channelId : false;
         return this.loadTimeline({reset: true});
+    }
+
+    /**
+     * Clear a restored conversation whose timeline the server now refuses.
+     *
+     * Authorized a moment ago, refused now: it leaves silently, as if it had
+     * never been remembered, so the error reveals nothing about it.
+     *
+     * @param {Number} channelId the restored conversation
+     */
+    forgetRefusedRestoration(channelId) {
+        this.restoreDeniedChannelId = channelId;
+        const wasLoaded = Boolean(this.loadedConversation(channelId));
+        this.state.conversations = this.state.conversations.filter(
+            (item) => item.channel_id !== channelId
+        );
+        if (wasLoaded) {
+            this.state.conversationTotal = Math.max(
+                0,
+                this.state.conversationTotal - 1
+            );
+        }
+        this.clearConversationSelection({closePanes: true});
+        this.forgetRememberedConversation(channelId);
     }
 
     resetProductivity(channelId = false) {
@@ -2919,6 +3810,9 @@ export class ContactCenterStore {
     }
 
     applyTimelinePage(payload, mode, channelId) {
+        if (this.restoringChannelId === channelId) {
+            this.restoringChannelId = false;
+        }
         const incoming = Array.isArray(payload.items) ? payload.items : [];
         const incomingPage = mergeTimelineItems([], incoming, {prepend: false});
         const ownsTimeline = this.state.timelineChannelId === channelId;
@@ -3167,7 +4061,13 @@ export class ContactCenterStore {
     }
 
     timelineLoadFailed(error, request, channelId, silent) {
+        // Only the current request decides: a late refusal never clears a
+        // newer choice of the agent.
         if (!this.isCurrentTimelineRequest(request, channelId)) {
+            return false;
+        }
+        if (this.restoringChannelId === channelId && accessWasRevoked(error)) {
+            this.forgetRefusedRestoration(channelId);
             return false;
         }
         if (silent) {
@@ -3400,6 +4300,7 @@ export class ContactCenterStore {
             messageId <= 0 ||
             this.suspendedSeenChannels.has(channelId) ||
             this.deletedConversationIds.has(channelId) ||
+            this.state.seenPausedChannelId === channelId ||
             this.destroyed
         ) {
             return Promise.resolve(false);
@@ -3417,6 +4318,14 @@ export class ContactCenterStore {
         }
         this.cancelSeenRetry();
         return this.persistSeenPointer(channelId, messageId, this.seenRetryToken, 0);
+    }
+
+    resumeSeen(channelId = this.state.selectedChannelId) {
+        if (!channelId || this.state.seenPausedChannelId !== channelId) {
+            return false;
+        }
+        this.state.seenPausedChannelId = false;
+        return true;
     }
 
     setReply(message) {
@@ -3803,11 +4712,7 @@ export class ContactCenterStore {
         ) {
             return false;
         }
-        const stateFilters = this.state.filters.states;
-        if (
-            (stateFilters.length && !stateFilters.includes(normalizedItem.state)) ||
-            !this.conversationMatchesPeopleAndTags(normalizedItem)
-        ) {
+        if (!this.conversationMatchesStructuralFilters(normalizedItem)) {
             this.state.conversations = this.state.conversations.filter(
                 (conversation) => conversation.channel_id !== normalizedItem.channel_id
             );
@@ -3860,7 +4765,7 @@ export class ContactCenterStore {
             throw new TypeError("A conversa retornada pelo servidor é inválida.");
         }
         if (targetIsSelected && !this.state.selectedChannelId) {
-            await this.loadConversations({reset: true, selectFirst: true});
+            await this.loadConversations({reset: true});
         }
         return true;
     }
@@ -4272,7 +5177,7 @@ export class ContactCenterStore {
                 this.state.filters.responsibility !== "all" &&
                 !this.state.selectedChannelId
             ) {
-                await this.loadConversations({reset: true, selectFirst: true});
+                await this.loadConversations({reset: true});
             }
             return true;
         } catch (error) {
@@ -4674,7 +5579,7 @@ export class ContactCenterStore {
                 this.reconcileTagCatalog(payload.item && payload.item.tags);
                 this.replaceConversation(payload.item);
                 if (!this.state.selectedChannelId) {
-                    await this.loadConversations({reset: true, selectFirst: true});
+                    await this.loadConversations({reset: true});
                 }
             }
             return true;
@@ -4694,6 +5599,14 @@ export class ContactCenterStore {
     }
 
     revokeConversation(channelId) {
+        if (
+            this.restoringChannelId === channelId &&
+            this.state.selectedChannelId === channelId
+        ) {
+            // Still being restored: it leaves silently, memory included.
+            this.forgetRefusedRestoration(channelId);
+            return;
+        }
         this.state.conversations = this.state.conversations.filter(
             (item) => item.channel_id !== channelId
         );
@@ -4706,6 +5619,7 @@ export class ContactCenterStore {
         this.resetProductivity();
         this.resetQuickReplies();
         this.state.selectedChannelId = false;
+        this.state.seenPausedChannelId = false;
         this.state.timelineChannelId = false;
         this.state.messages = [];
         this.state.timelinePhase = "idle";
@@ -5164,6 +6078,8 @@ export class ContactCenterStore {
 
     toggleDetails() {
         this.state.detailsOpen = !this.state.detailsOpen;
+        this.inboxLayout.detailsOpen = this.state.detailsOpen;
+        this.scheduleInboxPreferencesSave();
         if (
             this.state.detailsOpen &&
             this.state.selectedChannelId &&
@@ -5408,7 +6324,11 @@ export class ContactCenterStore {
             const synchronizeTimeline = this.syncTimeline;
             this.syncReconnect = false;
             this.syncTimeline = false;
-            await this.refreshLoadedConversations({silent: true});
+            try {
+                await this.refreshLoadedConversations({silent: true});
+            } finally {
+                this.releaseSynchronizationWaiters();
+            }
             if (this.state.selectedChannelId) {
                 await this.refreshSelectedConversation({silent: true});
                 if (

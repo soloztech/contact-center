@@ -420,13 +420,16 @@ QUnit.module("contact_center_ui > history retention", (hooks) => {
         (assert) => {
             const app = Object.create(ContactCenterApp.prototype);
             app.ui = {sidePanel: "crm"};
+            const layouts = [];
             app.store = {
                 state: {detailsOpen: false, retentionFocusRequest: 0},
                 selectedConversation: {channel_id: 10, retention: policy({days: 15})},
+                rememberInboxLayout: (patch) => layouts.push(patch),
             };
             assert.strictEqual(app.retentionIndicator, "Histórico: 15 dias");
             app.openRetentionPanel();
             assert.strictEqual(app.ui.sidePanel, "contact");
+            assert.deepEqual(layouts, [{sidePanel: "contact", detailsOpen: true}]);
             assert.ok(app.store.state.detailsOpen);
             assert.strictEqual(app.store.state.retentionFocusRequest, 1);
             app.store.selectedConversation.retention = policy({
