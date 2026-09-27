@@ -1,6 +1,7 @@
 import datetime
 import hashlib
 import json
+import re
 import uuid
 
 from odoo import _, api, fields, models
@@ -73,6 +74,19 @@ _CRITICAL_FIELDS = {
     "utm_campaign",
 }
 _RECONCILIATION_RETRY_CEILING = 3
+# Only these provider identifiers name one concrete ad or ad click. Entry
+# references (meta.ref) and bare markers do not identify an ad.
+_AD_IDENTITY_KEYS = frozenset(
+    {
+        ("meta.ad_id", "ad_source"),
+        ("meta.source_id", "ad_source"),
+        ("meta.ctwa_clid", "click"),
+    }
+)
+_META_OBJECT_ID_PATTERN = re.compile(r"[0-9]+")
+_PLACEHOLDER_IDENTIFIER_VALUES = frozenset(
+    {"null", "undefined", "none", "nan", "0", "false", "true"}
+)
 _ACTIVE_QUEUE_JOB_STATES = (
     "pending",
     "enqueued",
@@ -944,6 +958,25 @@ class ContactCenterAttributionTouchpoint(models.Model):
             )
         return True
 
+    def _has_ad_identity(self):
+        """Return whether a provider identifier names one concrete ad or click."""
+
+        self.ensure_one()
+        for identifier in self.sudo().identifier_ids:
+            if (identifier.namespace, identifier.role) not in _AD_IDENTITY_KEYS:
+                continue
+            value = (identifier.value or "").strip()
+            if identifier.namespace == "meta.ctwa_clid":
+                if (
+                    value
+                    and not any(character.isspace() for character in value)
+                    and value.lower() not in _PLACEHOLDER_IDENTIFIER_VALUES
+                ):
+                    return True
+            elif _META_OBJECT_ID_PATTERN.fullmatch(value) and value.strip("0"):
+                return True
+        return False
+
     @api.model
     def _safe_projection_for_binding(self, binding, limit=3, before_public_ref=None):
         binding.ensure_one()
@@ -960,6 +993,11 @@ class ContactCenterAttributionTouchpoint(models.Model):
             ("channel_binding_id", "=", binding.id),
             ("account_id", "=", account.id),
             ("conflict_state", "=", "clean"),
+            # Historical lone conversionSource markers carry no identifier and
+            # are not origin evidence; keep them for audit, not for agents.
+            "|",
+            ("touchpoint_type", "!=", "paid_ad_signal"),
+            ("identifier_ids", "!=", False),
         ]
         if before_public_ref:
             cursor = self.sudo().search(

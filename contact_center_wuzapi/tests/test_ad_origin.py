@@ -2,12 +2,22 @@
 
 import copy
 import json
+import uuid
 from unittest import mock
 
 from odoo.tests import tagged
 
+from odoo.addons.contact_center_base.services.dto import (
+    AttributionDTO,
+    ExternalIdentifierDTO,
+)
+
 from ..controllers.webhook import _capture_ad_origin_preview, sanitize_webhook_envelope
-from ..services.adapter import WuzapiAdapter, ad_origin_preview_candidate
+from ..services.adapter import (
+    WUZAPI_VERSION,
+    WuzapiAdapter,
+    ad_origin_preview_candidate,
+)
 from .common import WuzapiCase
 
 
@@ -100,3 +110,138 @@ class TestWuzapiAdOrigin(WuzapiCase):
         self.assertFalse(
             self.env["contact.center.ad.preview.locator"].sudo().search_count([])
         )
+
+    def _process_inbox(self, raw):
+        sanitized = sanitize_webhook_envelope(raw)
+        _capture_ad_origin_preview(self.connection, raw, sanitized)
+        inbox = (
+            self.env["contact.center.inbox.event"]
+            .sudo()
+            .with_context(contact_center_skip_enqueue=True)
+            .create(
+                {
+                    "provider_connection_id": self.connection.id,
+                    "inbox_dedupe_key": "wuzapi:ad-origin-test:%s" % uuid.uuid4(),
+                    "provider_schema_version": WUZAPI_VERSION,
+                    "raw_envelope_json": sanitized,
+                }
+            )
+        )
+        inbox.write({"queue_job_uuid": str(uuid.uuid4())})
+        inbox.with_context(job_uuid=inbox.queue_job_uuid)._job_process()
+        inbox.invalidate_recordset(["state"])
+        self.assertEqual(inbox.state, "done")
+        return inbox
+
+    def test_lone_conversion_marker_projects_messages_without_ad_origin(self):
+        inboxes = self.env["contact.center.inbox.event"]
+        raws = []
+        for index in range(3):
+            raw = self.load_fixture("message_text_lid.json")
+            raw["event"]["Info"]["ID"] = "3EB0FBADS%023d" % index
+            # A fresh message, not a reply: only the marker is left in context.
+            raw["event"]["Message"]["extendedTextMessage"]["contextInfo"] = {
+                "conversionSource": "FB_Ads",
+                "conversionData": "opaque-marker",
+            }
+            raws.append(raw)
+            inboxes |= self._process_inbox(copy.deepcopy(raw))
+        # Replaying one delivery is idempotent and still creates no ad origin.
+        inboxes |= self._process_inbox(copy.deepcopy(raws[0]))
+        message_ids = [raw["event"]["Info"]["ID"] for raw in raws]
+        touchpoints = (
+            self.env["contact.center.attribution.touchpoint"]
+            .sudo()
+            .search([("inbox_event_id", "in", inboxes.ids)])
+        )
+        self.assertFalse(touchpoints)
+        self.assertFalse(
+            self.env["contact.center.attribution.preview"]
+            .sudo()
+            .search_count([("account_id", "=", self.account.id)])
+        )
+        bindings = (
+            self.env["contact.center.message.binding"]
+            .sudo()
+            .search(
+                [
+                    ("external_message_id", "in", message_ids),
+                    ("provider_connection_id", "=", self.connection.id),
+                ]
+            )
+        )
+        self.assertEqual(sorted(bindings.mapped("external_message_id")), message_ids)
+
+    def test_real_click_keeps_one_idempotent_origin_with_marker(self):
+        raw = self._fixture()
+        external = raw["event"]["Message"]["extendedTextMessage"]["contextInfo"][
+            "externalAdReply"
+        ]
+        external["sourceID"] = "120212345678900017"
+        raw["event"]["Message"]["extendedTextMessage"]["contextInfo"][
+            "conversionSource"
+        ] = "FB_Ads"
+        first = self._process_inbox(copy.deepcopy(raw))
+        replay = self._process_inbox(copy.deepcopy(raw))
+        touchpoints = (
+            self.env["contact.center.attribution.touchpoint"]
+            .sudo()
+            .search([("inbox_event_id", "in", (first | replay).ids)])
+        )
+        self.assertEqual(len(touchpoints), 1)
+        self.assertEqual(touchpoints.touchpoint_type, "paid_ad_click")
+        self.assertEqual(touchpoints.conversion_source, "fb_ads")
+        self.assertTrue(touchpoints._has_ad_identity())
+
+    def test_backfill_recovers_copy_of_touchpoint_recorded_from_legacy_marker(self):
+        raw = self.load_fixture("message_text_lid.json")
+        raw["event"]["Info"]["ID"] = "3EB0LEGACYFBADS%017d" % 1
+        raw["event"]["Message"]["extendedTextMessage"]["contextInfo"] = {
+            "conversionSource": "FB_Ads",
+            "externalAdReply": {
+                "sourceID": "120212345678900017",
+                "title": "Legacy copy",
+                "body": "Legacy body",
+            },
+        }
+        # A new delivery of this shape no longer creates any ad origin.
+        sanitized = sanitize_webhook_envelope(copy.deepcopy(raw))
+        self.assertEqual(
+            self.adapter.normalize_event(self.connection, sanitized).attribution, ()
+        )
+        # Simulate a touchpoint recorded before this release and before previews.
+        legacy = (
+            AttributionDTO(
+                touchpoint_type="paid_ad_signal",
+                evidence_level="provider_hint",
+                network="meta",
+                external_identifiers=(
+                    ExternalIdentifierDTO(
+                        namespace="meta.source_id",
+                        role="ad_source",
+                        value="120212345678900017",
+                        source_field="contextInfo.externalAdReply.sourceID",
+                    ),
+                ),
+                entry_point={"conversion_source": "fb_ads"},
+            ),
+        )
+        previews = self.env["contact.center.attribution.preview"]
+        with mock.patch(
+            "odoo.addons.contact_center_wuzapi.services.adapter._attribution_values",
+            return_value=legacy,
+        ), mock.patch.object(type(previews), "_capture", return_value=previews):
+            inbox = self._process_inbox(copy.deepcopy(raw))
+        point = (
+            self.env["contact.center.attribution.touchpoint"]
+            .sudo()
+            .search([("inbox_event_id", "=", inbox.id)])
+        )
+        self.assertEqual(point.touchpoint_type, "paid_ad_signal")
+        self.assertFalse(previews.sudo().search([("touchpoint_id", "=", point.id)]))
+
+        previews.sudo()._backfill_account(self.account)
+
+        preview = previews.sudo().search([("touchpoint_id", "=", point.id)])
+        self.assertEqual((preview.title, preview.body), ("Legacy copy", "Legacy body"))
+        self.assertTrue(preview._is_presentable())

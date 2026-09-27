@@ -17,6 +17,8 @@ from ..services.ad_origin_preview import (
     clean_text,
     fetch_thumbnail,
     normalize_creative,
+    presentable_source_url,
+    presentable_text,
     public_source_url,
     thumbnail_url,
 )
@@ -292,6 +294,32 @@ class ContactCenterAttributionPreview(models.Model):
     def _identity(self):
         self.ensure_one()
         return "contact_center:ad_preview:%s" % self.id
+
+    def _presentation_state(self):
+        """State the UI receives: pending without an owning job is unavailable."""
+
+        self.ensure_one()
+        if self.state == "pending" and not canonical_queue_job(
+            self, self._identity(), ACTIVE_QUEUE_JOB_STATES, adopt=False
+        ):
+            return "unavailable"
+        return self.state
+
+    def _is_presentable(self):
+        """Show a card only for an identified ad or for content the UI renders.
+
+        Mirrors normalizeAdOriginPreview in contact_center_ui: trimmed text,
+        a browser-stable public link, and a thumbnail only when ready.
+        """
+
+        self.ensure_one()
+        return bool(
+            presentable_text(self.title, 256)
+            or presentable_text(self.body, 2000)
+            or presentable_source_url(self.source_public_url)
+            or (self.thumbnail_attachment_id and self._presentation_state() == "ready")
+            or self.touchpoint_id._has_ad_identity()
+        )
 
     def _eligible(self):
         self.ensure_one()
@@ -656,16 +684,12 @@ class ContactCenterAttributionPreview(models.Model):
     def _descriptor(self):
         self.ensure_one()
         self._authorize_read()
-        state = self.state
-        if state == "pending" and not canonical_queue_job(
-            self, self._identity(), ACTIVE_QUEUE_JOB_STATES, adopt=False
-        ):
-            state = "unavailable"
+        state = self._presentation_state()
         return {
             "public_ref": self.public_ref,
-            "title": self.title or "",
-            "body": self.body or "",
-            "source_url": self.source_public_url or "",
+            "title": presentable_text(self.title, 256),
+            "body": presentable_text(self.body, 2000),
+            "source_url": presentable_source_url(self.source_public_url),
             "thumbnail_url": "/contact_center/attribution/%s/thumbnail"
             % self.public_ref
             if self.thumbnail_attachment_id

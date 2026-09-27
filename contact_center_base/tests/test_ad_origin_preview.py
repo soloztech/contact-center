@@ -17,7 +17,12 @@ from odoo.addons.queue_job.exception import RetryableJobError
 from odoo.addons.queue_job.job import Job
 
 from ..models.ad_origin_preview import _owned
-from ..services.ad_origin_preview import PreviewError
+from ..services.ad_origin_preview import (
+    PreviewError,
+    presentable_source_url,
+    presentable_text,
+    public_source_url,
+)
 from ..services.adapter import ProviderAdapter, adapter_registry
 from ..services.dto import AttributionDTO, EventDTO
 from ..services.tokens import CONTACT_CENTER_DELETION_TOKEN
@@ -758,3 +763,213 @@ class TestContactCenterAdOriginPreview(SavepointCase):
         self.assertNotIn("private-database-context", str(raised.exception))
         self.assertEqual(preview.state, "pending")
         self.assertFalse(preview.body)
+
+    def _point_with(self, identifiers, *, creative=None):
+        inbox = self._process_job(
+            self._event(
+                attribution=self._attribution(
+                    external_identifiers=[
+                        {"namespace": namespace, "role": role, "value": value}
+                        for namespace, role, value in identifiers
+                    ],
+                    creative=creative or {"media_type": "image"},
+                )
+            )
+        )
+        self.assertEqual(inbox.state, "done")
+        return (
+            self.env["contact.center.attribution.touchpoint"]
+            .sudo()
+            .search([("inbox_event_id", "=", inbox.id)], limit=1)
+        )
+
+    def test_ad_identity_requires_one_concrete_ad_identifier(self):
+        cases = (
+            ([("meta.source_id", "ad_source", "120212345678900017")], True),
+            ([("meta.ad_id", "ad_source", "120212345678900018")], True),
+            ([("meta.ctwa_clid", "click", "AfhOpaqueClick-17_x")], True),
+            ([("meta.source_id", "ad_source", " 120212345678900019 ")], True),
+            ([("meta.source_id", "ad_source", "null")], False),
+            ([("meta.source_id", "ad_source", "0")], False),
+            ([("meta.source_id", "ad_source", "000")], False),
+            ([("meta.source_id", "ad_source", "abc")], False),
+            ([("meta.source_id", "ad_source", "12 34")], False),
+            ([("meta.ad_id", "ad_source", "１２３")], False),
+            ([("meta.ctwa_clid", "click", "NULL")], False),
+            ([("meta.ctwa_clid", "click", "undefined")], False),
+            ([("meta.ctwa_clid", "click", "opaque click")], False),
+            ([("meta.ref", "entry_reference", "campaign-ref-17")], False),
+            ([("meta.source_id", "click", "120212345678900020")], False),
+            ([], False),
+        )
+        for identifiers, expected in cases:
+            with self.subTest(identifiers=identifiers):
+                point = self._point_with(identifiers)
+                self.assertEqual(point._has_ad_identity(), expected)
+
+    def test_preview_without_identity_or_content_is_not_presented(self):
+        api = self.env["contact.center.ui.api"].with_user(self.agent)
+        cases = (
+            ([("meta.source_id", "ad_source", "null")], None, False),
+            ([("meta.ref", "entry_reference", "campaign-ref-17")], None, False),
+            ([("meta.source_id", "ad_source", "120212345678900017")], None, True),
+            (
+                [("meta.ref", "entry_reference", "campaign-ref-18")],
+                {"title": "Provider title"},
+                True,
+            ),
+        )
+        for identifiers, creative, presentable in cases:
+            with self.subTest(identifiers=identifiers, creative=creative):
+                point = self._point_with(identifiers, creative=creative)
+                # Capture is unchanged: the internal cache row still exists.
+                preview = self.previews.sudo().search(
+                    [("touchpoint_id", "=", point.id)]
+                )
+                self.assertEqual(len(preview), 1)
+                self.assertEqual(preview._is_presentable(), presentable)
+                binding = point.message_binding_id
+                result = api._serialize_message(
+                    binding.message_id.sudo(), binding=binding.sudo()
+                )
+                self.assertEqual(len(result["ad_origin_previews"]), int(presentable))
+                payload = api.get_attribution(point.channel_binding_id.channel_id.id)
+                self.assertEqual(
+                    [item["public_ref"] for item in payload["items"]],
+                    [point.public_ref],
+                )
+                self.assertEqual(
+                    "ad_origin_preview" in payload["items"][0], presentable
+                )
+
+    def test_presentable_link_rule_matches_browser_and_gates_presentation(self):
+        valid = "https://www.facebook.com/photo/?fbid=123"
+        duplicate = "https://www.facebook.com/photo/?fbid=123&fbid=456"
+        for value, expected in (
+            (valid, valid),
+            (duplicate, ""),
+            ("https://www.facebook.com/photo/?fbid=123#", ""),
+            ("https://www.facebook.com/p/%E0%A4%A/", ""),
+            ("https://www.facebook.com/p/%ZZ/", ""),
+            ("https://www.facebook.com/p/%FF/", ""),
+            ("https://www.facebook.com/messages/", ""),
+            ("https://www.facebook.com/p/../messages/", ""),
+            ("https://www.facebook.com/p/%2E%2E/messages/", ""),
+            ("https://www.facebook.com/p/%2e/x/", ""),
+            ("https://www.facebook.com/./photo/?fbid=123", ""),
+            ("https://www.facebook.com/p/" + "\u00e9" * 400, ""),
+            ("https://www.facebook.com/p/\u00e9/", ""),
+            ("https://www.facebook.com/p'x/", ""),
+            ("https://www.facebook.com/" + "a" * 2023, ""),
+            (
+                "https://www.facebook.com/" + "a" * 2022,
+                "https://www.facebook.com/" + "a" * 2022,
+            ),
+            (
+                "https://www.facebook.com/p.../photo/?fbid=123",
+                "https://www.facebook.com/p.../photo/?fbid=123",
+            ),
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(presentable_source_url(value), expected)
+        # Capture is unchanged, so stored DTOs with such links still replay.
+        self.assertEqual(public_source_url(duplicate), duplicate)
+        api = self.env["contact.center.ui.api"].with_user(self.agent)
+        dot_segments = "https://www.facebook.com/p/../messages/"
+        for url, presentable in (
+            (valid, True),
+            (duplicate, False),
+            (dot_segments, False),
+        ):
+            with self.subTest(url=url):
+                point = self._point_with(
+                    [("meta.ref", "entry_reference", "campaign-ref-19")],
+                    creative={"public_url": url},
+                )
+                preview = self.previews.sudo().search(
+                    [("touchpoint_id", "=", point.id)]
+                )
+                self.assertEqual(preview.source_public_url, url)
+                self.assertEqual(preview._is_presentable(), presentable)
+                binding = point.message_binding_id
+                result = api._serialize_message(
+                    binding.message_id.sudo(), binding=binding.sudo()
+                )
+                self.assertEqual(len(result["ad_origin_previews"]), int(presentable))
+        # With other content, the descriptor withholds a link the browser drops.
+        point = self._point_with(
+            [("meta.ref", "entry_reference", "campaign-ref-20")],
+            creative={"title": "Provider title", "public_url": duplicate},
+        )
+        preview = self.previews.sudo().search([("touchpoint_id", "=", point.id)])
+        self.assertEqual(self._descriptor(preview)["source_url"], "")
+
+    def test_presentation_follows_browser_text_and_thumbnail_rules(self):
+        tags = "\U000e0001" * 128
+        for value, limit, expected in (
+            ("\ufeff", 256, ""),
+            ("\u200b", 256, ""),
+            ("\u034f", 256, ""),
+            ("\u00a0\u3000", 256, ""),
+            ("Ol\u00e1", 256, "Ol\u00e1"),
+            (" x ", 256, "x"),
+            ("Ol\u00e1\u034f", 256, "Ol\u00e1\u034f"),
+            # 128 tag characters fill 256 UTF-16 units; the browser cuts the X.
+            (tags + "X", 256, ""),
+            (tags + "X", 2000, tags + "X"),
+            ("a" * 255 + "\U0001f600", 256, "a" * 255),
+        ):
+            with self.subTest(value=value[:8], limit=limit):
+                self.assertEqual(presentable_text(value, limit), expected)
+        api = self.env["contact.center.ui.api"].with_user(self.agent)
+
+        def serialized(point):
+            binding = point.message_binding_id
+            return api._serialize_message(
+                binding.message_id.sudo(), binding=binding.sudo()
+            )["ad_origin_previews"]
+
+        invisible = self._point_with(
+            [("meta.ref", "entry_reference", "campaign-ref-21")],
+            creative={"title": "\ufeff"},
+        )
+        preview = self.previews.sudo().search([("touchpoint_id", "=", invisible.id)])
+        self.assertEqual(preview.title, "\ufeff")
+        self.assertFalse(preview._is_presentable())
+        self.assertEqual(serialized(invisible), [])
+        for number, title in enumerate(("\u034f", tags + "X")):
+            with self.subTest(title=title[:4]):
+                point = self._point_with(
+                    [("meta.ref", "entry_reference", "campaign-ref-3%s" % number)],
+                    creative={"title": title},
+                )
+                self.assertFalse(
+                    self.previews.sudo()
+                    .search([("touchpoint_id", "=", point.id)])
+                    ._is_presentable()
+                )
+                self.assertEqual(serialized(point), [])
+                payload = api.get_attribution(point.channel_binding_id.channel_id.id)
+                self.assertNotIn("ad_origin_preview", payload["items"][0])
+        mixed = self._point_with(
+            [("meta.ref", "entry_reference", "campaign-ref-22")],
+            creative={"title": "\u200b", "body": "Provider body"},
+        )
+        [descriptor] = serialized(mixed)
+        self.assertEqual(
+            (descriptor["title"], descriptor["body"]), ("", "Provider body")
+        )
+
+        image_only = self._preview(creative={"media_type": "image"}, image=True)
+        self._perform(image_only)
+        self.assertEqual(image_only.state, "ready")
+        self.assertTrue(image_only.thumbnail_attachment_id)
+        self.assertFalse(image_only.touchpoint_id._has_ad_identity())
+        self.assertTrue(image_only._is_presentable())
+        # A retry keeps the attachment, but the UI drops a thumbnail unless ready.
+        _owned(image_only).write({"state": "pending"})
+        self.assertFalse(image_only._is_presentable())
+        self.assertEqual(serialized(image_only.touchpoint_id), [])
+        _owned(image_only).write({"state": "ready"})
+        [descriptor] = serialized(image_only.touchpoint_id)
+        self.assertTrue(descriptor["thumbnail_url"])

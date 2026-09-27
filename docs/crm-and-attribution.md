@@ -101,12 +101,13 @@ associações comerciais nem a projeção de etapas.
 
 ## Como interpretar a origem
 
-| Observação                                   | O que permite afirmar                                                                | O que ainda precisa ser verificado                                                |
-| -------------------------------------------- | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
-| `conversionSource=fbads` isolado no WhatsApp | O provedor enviou um sinal de mídia paga (`paid_ad_signal`, `provider_hint`)         | Identificador utilizável, correspondência de catálogo e decisão comercial         |
-| Referral de anúncio ou CTWA                  | Existe a evidência normalizada correspondente; anúncio e clique têm papéis distintos | Escopo, identificação da campanha e política de atribuição                        |
-| UTM observada                                | A origem informou aquele valor                                                       | Confiabilidade e relação com campanha; UTM isolada não prova mídia paga           |
-| Cartão com título ou miniatura               | Há contexto visual disponível para o operador                                        | Resolução da campanha e associação comercial; o cartão não comprova nenhuma delas |
+| Observação                                   | O que permite afirmar                                                                        | O que ainda precisa ser verificado                                                                                 |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `conversionSource=fbads` isolado no WhatsApp | Nada sobre a origem: o marcador se repete em conversas já estabelecidas; não gera touchpoint | Só vale ao lado de clique, entrada CTWA ou UTM; históricos `paid_ad_signal` sem identificador ficam fora do painel |
+| Referral de anúncio ou CTWA                  | Existe a evidência normalizada correspondente; anúncio e clique têm papéis distintos         | Escopo, identificação da campanha e política de atribuição                                                         |
+| UTM observada                                | A origem informou aquele valor                                                               | Confiabilidade e relação com campanha; UTM isolada não prova mídia paga                                            |
+| Cartão com título ou miniatura               | Há contexto visual disponível para o operador                                                | Resolução da campanha e associação comercial; o cartão não comprova nenhuma delas                                  |
+| Cartão sem conteúdo                          | Só aparece com identificador concreto de anúncio (`sourceID`/`ad_id` numérico ou `ctwaClid`) | Sem identificador nem conteúdo, o cartão não é exibido                                                             |
 
 O Base preserva touchpoints e identificadores. A exibição depende da configuração
 `attribution_ui_enabled`, do acesso à conversa e das regras de retenção. O Marketing
