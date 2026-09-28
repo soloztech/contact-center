@@ -1,5 +1,6 @@
 from . import (
     test_architecture_contract,
+    test_attendance,
     test_attribution,
     test_concurrency,
     test_consumer,

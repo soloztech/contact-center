@@ -14,8 +14,9 @@ owner's reference; nothing secret is stored.
 
 Inbound text, media (image, audio/voice, video, document, sticker), location,
 contacts, button and list replies, reactions, replies, system notices and
-unsupported types enter the canonical inbox pipeline. Each atomic item becomes one
-inbox event only at dispatch, after the shared subscription policy; items of an
+unsupported types enter the canonical inbox pipeline. System notices (number or
+identity changes) are control cards: they cannot be answered or reacted to and open
+no attendance episode. Each atomic item becomes one inbox event only at dispatch, after the shared subscription policy; items of an
 ignored conversation are never claimed, on any number that can claim (primary,
 standby or migration connection). Only phone numbers with a connection on the
 receiving endpoint are claimed: another number of the same business account (used by
@@ -52,8 +53,9 @@ connection of the same inbox, business account and number. Reactions reach such 
 message too, and only its own contact can react to it.
 ``failed`` statuses and business account ``errors[]`` are recorded in an
 administrator-only diagnostic list; a ``failed`` status still records the provider
-message ID and completes a send left uncertain as sent, and Meta repeating it after a
-connection replacement records it only once. A controlled primary switch
+message ID and completes a send left uncertain as sent (so the attendance report
+counts it as an answer: there is no "failed after acceptance" state yet), and Meta
+repeating it after a connection replacement records it only once. A controlled primary switch
 keeps the consumer subscription; the subscription is archived only when the last live
 route of its business account owner retires. Lifecycle decisions for one business
 account are serialized with every change that can make a route live (creation,
