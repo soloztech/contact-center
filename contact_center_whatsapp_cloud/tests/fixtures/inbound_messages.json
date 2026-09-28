@@ -1,0 +1,116 @@
+{
+  "text": {
+    "type": "text",
+    "text": {"body": "Bom dia! Vocês entregam em Campinas?"}
+  },
+  "image": {
+    "type": "image",
+    "image": {
+      "caption": "Foto do defeito",
+      "mime_type": "image/jpeg",
+      "sha256": "n4bQgYhMfLWWL+dQCtbj/b1r8ibWiPBaKFB/tZkT5KY=",
+      "id": "900000000000101"
+    }
+  },
+  "audio": {
+    "type": "audio",
+    "audio": {
+      "mime_type": "audio/ogg; codecs=opus",
+      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "id": "900000000000102",
+      "voice": true
+    }
+  },
+  "video": {
+    "type": "video",
+    "video": {
+      "mime_type": "video/mp4",
+      "sha256": "60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752",
+      "id": "900000000000103"
+    }
+  },
+  "document": {
+    "type": "document",
+    "document": {
+      "caption": "Pedido de compra",
+      "filename": "pedido-2026.pdf",
+      "mime_type": "application/pdf",
+      "sha256": "fd61a03af4f77d870fc21e05e7e80678095c92d808cfb3b5c279ee04c74aca13",
+      "id": "900000000000104"
+    }
+  },
+  "sticker": {
+    "type": "sticker",
+    "sticker": {
+      "mime_type": "image/webp",
+      "sha256": "a4ayc/80/OGda4BO/1o/V0etpOqiLx1JwB5S3beHW0s=",
+      "id": "900000000000105",
+      "animated": false
+    }
+  },
+  "location": {
+    "type": "location",
+    "location": {
+      "latitude": -23.5505,
+      "longitude": -46.6333,
+      "name": "Fábrica Soloz",
+      "address": "Av. Paulista, 1000",
+      "url": "https://maps.example.invalid/must-not-persist"
+    }
+  },
+  "contacts": {
+    "type": "contacts",
+    "contacts": [
+      {
+        "name": {"formatted_name": "Maria Compras", "first_name": "Maria"},
+        "phones": [
+          {"phone": "+55 11 97777-6666", "wa_id": "5511977776666", "type": "CELL"}
+        ],
+        "emails": [{"email": "maria@example.invalid", "type": "WORK"}],
+        "urls": [{"url": "https://example.invalid/profile", "type": "WORK"}],
+        "org": {"company": "Cliente SA"}
+      }
+    ]
+  },
+  "button_reply": {
+    "type": "interactive",
+    "interactive": {
+      "type": "button_reply",
+      "button_reply": {"id": "quote-yes", "title": "Quero orçamento"}
+    }
+  },
+  "list_reply": {
+    "type": "interactive",
+    "interactive": {
+      "type": "list_reply",
+      "list_reply": {
+        "id": "product-42",
+        "title": "Painel solar 550 W",
+        "description": "Monocristalino"
+      }
+    }
+  },
+  "template_button": {
+    "type": "button",
+    "button": {"payload": "CONFIRMAR_VISITA", "text": "Confirmar visita"}
+  },
+  "system": {
+    "type": "system",
+    "system": {
+      "body": "User A changed from +55 11 98888-7777 to +55 11 96666-5555",
+      "wa_id": "5511966665555",
+      "type": "user_changed_number"
+    }
+  },
+  "unsupported": {
+    "type": "unsupported",
+    "errors": [
+      {
+        "code": 131051,
+        "title": "Message type unknown",
+        "message": "Message type unknown",
+        "error_data": {"details": "Message type is currently not supported."}
+      }
+    ]
+  }
+}

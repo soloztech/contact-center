@@ -19,6 +19,7 @@ from odoo.addons.queue_job.tests.common import trap_jobs
 
 from ..models.application import IdentityConflictError
 from ..services.adapter import (
+    AdapterError,
     ProviderAdapter,
     ProviderPausedError,
     ProviderRateLimitError,
@@ -6877,3 +6878,182 @@ class TestContactCenter(SavepointCase):
             send_outbox.with_user(self.admin)._resolve_uncertain(
                 "external_application_confirmed", "Wrong resolution kind"
             )
+
+    # L12: database conflicts must never be swallowed by best-effort handlers.
+
+    def test_ui_bus_failure_stays_best_effort(self):
+        channel, _binding, _identity = self._channel_binding()
+        bus = type(self.env["bus.bus"])
+        with mock.patch.object(
+            bus, "_sendmany", side_effect=RuntimeError("bus down")
+        ), mute_logger("odoo.addons.contact_center_base.models.application"):
+            self.assertIsNone(
+                self.env["contact.center.application"]._notify_ui(
+                    channel, "message_updated", {"message_id": 0}
+                )
+            )
+        for error in (
+            SerializationFailure("concurrent update"),
+            DeadlockDetected("deadlock"),
+        ):
+            with self.subTest(error=type(error).__name__), mock.patch.object(
+                bus, "_sendmany", side_effect=error
+            ), self.assertRaises(type(error)):
+                self.env["contact.center.application"]._notify_ui(
+                    channel, "message_updated", {"message_id": 0}
+                )
+
+    def test_media_locator_cleanup_propagates_only_database_conflicts(self):
+        media = self._media_binding()
+        with mock.patch.object(
+            FakeAdapter, "finalize_media_download", side_effect=RuntimeError("vault")
+        ), mute_logger("odoo.addons.contact_center_base.models.media"):
+            self.assertIsNone(media._finalize_provider_locator(succeeded=True))
+        for error in (
+            SerializationFailure("concurrent update"),
+            DeadlockDetected("deadlock"),
+        ):
+            with self.subTest(error=type(error).__name__), mock.patch.object(
+                FakeAdapter, "finalize_media_download", side_effect=error
+            ), self.assertRaises(type(error)):
+                media._finalize_provider_locator(succeeded=True)
+
+    def _ready_download(self, media):
+        content = b"\x89PNG\r\n\x1a\nconflict-fixture"
+        result = MediaDownloadResult(
+            content=content, mime_type="image/png", file_name="conflict.png"
+        )
+        media.write({"size_bytes": result.size_bytes, "sha256": result.sha256})
+        return result
+
+    def test_media_job_retries_database_conflicts_from_every_point(self):
+        application = type(self.env["contact.center.application"])
+        media_model = type(self.env["contact.center.media.binding"])
+        for error_class in (SerializationFailure, DeadlockDetected):
+            for point in ("finalizer", "final_notification", "discard", "failure"):
+                with self.subTest(error=error_class.__name__, point=point):
+                    media = self._media_binding()
+                    media.write({"attempts": QUEUE_ATTEMPT_CEILING - 1})
+                    result = self._ready_download(media)
+                    error = error_class("concurrent %s" % point)
+                    download = mock.patch.object(
+                        FakeAdapter, "download_media", return_value=result
+                    )
+                    if point == "finalizer":
+                        injected = mock.patch.object(
+                            FakeAdapter, "finalize_media_download", side_effect=error
+                        )
+                    elif point == "final_notification":
+                        injected = mock.patch.object(
+                            application, "_notify_ui", side_effect=error
+                        )
+                    elif point == "discard":
+                        media.message_binding_id.write(
+                            {
+                                "message_state": "deleted",
+                                "deleted_display_mode": "redact",
+                                "deleted_at": fields.Datetime.now(),
+                            }
+                        )
+                        injected = mock.patch.object(
+                            FakeAdapter, "finalize_media_download", side_effect=error
+                        )
+                    else:
+                        download = mock.patch.object(
+                            FakeAdapter,
+                            "download_media",
+                            side_effect=AdapterError("permanent provider error"),
+                        )
+                        injected = mock.patch.object(
+                            media_model, "_finish_failure", side_effect=error
+                        )
+                    with download, injected, self.env.cr.savepoint(), self.assertRaises(
+                        RetryableJobError
+                    ) as raised:
+                        self._process_media(media)
+                    self.assertTrue(raised.exception.ignore_retry)
+                    self.assertIs(raised.exception.__cause__, error)
+                    media.invalidate_recordset(["state", "last_error_class"])
+                    self.assertNotEqual(media.state, "failed")
+
+    def test_media_job_conflict_keeps_persisted_queue_retry_count(self):
+        media = self._media_binding()
+        media.write({"state": "pending"})
+        result = self._ready_download(media)
+        media._enqueue_download()
+        job = Job.load(self.env, media.queue_job_uuid)
+        media_model = type(media)
+        for error_class in (SerializationFailure, DeadlockDetected):
+            with self.subTest(error=error_class.__name__), mock.patch.object(
+                FakeAdapter, "download_media", return_value=result
+            ), mock.patch.object(
+                FakeAdapter,
+                "finalize_media_download",
+                side_effect=error_class("concurrent cleanup"),
+            ), mock.patch.object(
+                media_model, "_finish_failure"
+            ) as finish, self.env.cr.savepoint(), self.assertRaises(
+                RetryableJobError
+            ) as raised:
+                job.perform()
+            self.assertTrue(raised.exception.ignore_retry)
+            self.assertEqual(job.retry, 0)
+            finish.assert_not_called()
+
+    def test_conflict_in_post_success_notification_settles_without_redispatch(self):
+        channel, _binding, _identity = self._channel_binding()
+        result = self._send_message_without_enqueue(
+            channel, "Provider accepted before the UI notification conflicted"
+        )
+        outbox = self.env["contact.center.outbox.command"].browse(
+            result["outbox_command_id"]
+        )
+        message_binding = outbox.message_binding_id
+        outbox_model = type(outbox)
+        original_notify = outbox_model._notify_delivery_ui
+        adapter_calls = []
+        notify_calls = []
+
+        def provider_success(_adapter, _connection, command):
+            adapter_calls.append(command.command_id)
+            return AdapterResult.success(
+                external_message_id="provider-%s" % command.command_id,
+                provider_response={"accepted": True},
+            )
+
+        def conflict_once(records, refresh_message=False):
+            notify_calls.append(records.id)
+            if len(notify_calls) == 1:
+                raise SerializationFailure("bus flush met a concurrent update")
+            return original_notify(records, refresh_message=refresh_message)
+
+        def preserve_test_transaction(records):
+            records.env.invalidate_all(flush=False)
+            return True
+
+        with mock.patch.object(
+            FakeAdapter,
+            "execute_command",
+            autospec=True,
+            side_effect=provider_success,
+        ), mock.patch.object(
+            outbox_model, "_notify_delivery_ui", new=conflict_once
+        ), mock.patch.object(
+            outbox_model,
+            "_restart_provider_success_reconciliation_transaction",
+            new=preserve_test_transaction,
+        ):
+            self.assertTrue(self._process_outbox(outbox))
+            self.assertFalse(self._process_outbox(outbox))
+
+        outbox.invalidate_recordset(["state", "last_error_class"])
+        message_binding.invalidate_recordset(["delivery_state"])
+        self.assertEqual(len(adapter_calls), 1)
+        self.assertGreater(len(notify_calls), 1)
+        self.assertEqual(outbox.state, "done")
+        self.assertFalse(outbox.last_error_class)
+        self.assertEqual(message_binding.delivery_state, "sent")
+        self.assertEqual(
+            outbox.provider_response_json["dispatch_outcome"],
+            "provider_returned_success",
+        )

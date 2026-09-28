@@ -1256,6 +1256,10 @@ class TestWuzapiAdapter(WuzapiCase):
             "productMessage": {
                 "product": {"productImageCount": 1},
                 "contextInfo": {
+                    "externalAdReply": {
+                        "sourceType": "ad",
+                        "sourceID": "120212345678900017",
+                    },
                     "conversionSource": "FB_Ads",
                     "conversionData": "opaque-product-conversion-data",
                 },
@@ -1270,8 +1274,8 @@ class TestWuzapiAdapter(WuzapiCase):
         self.assertFalse(event.message.media)
         self.assertEqual(len(event.attribution), 1)
         attribution = event.attribution[0]
-        self.assertEqual(attribution.touchpoint_type, "paid_ad_signal")
-        self.assertEqual(attribution.evidence_level, "provider_hint")
+        self.assertEqual(attribution.touchpoint_type, "paid_ad_click")
+        self.assertEqual(attribution.evidence_level, "provider_asserted")
         self.assertEqual(
             attribution.entry_point,
             {"conversion_source": "fb_ads"},
@@ -1283,6 +1287,84 @@ class TestWuzapiAdapter(WuzapiCase):
             hashlib.sha256(b"opaque-product-conversion-data").hexdigest(),
         )
         self.assertNotIn("opaque-product-conversion-data", repr(event.to_dict()))
+
+    def test_lone_conversion_source_marker_is_not_acquisition_evidence(self):
+        # WhatsApp repeats this marker on established conversations without any
+        # ad identity. Alone it proves neither paid media nor an ad origin.
+        external_variants = (
+            ("absent", None),
+            ("null", "null"),
+            ("empty", {}),
+            ("title_only", {"title": "Presentation only"}),
+            ("blank_ids", {"sourceType": "ad", "sourceID": "  ", "ctwaClid": " "}),
+            ("non_ad_source", {"sourceType": "post"}),
+        )
+        for marker in ("FB_Ads", "fbads", "Facebook Ads", "meta_ads", " FB_ADS "):
+            for label, external in external_variants:
+                with self.subTest(marker=marker, external=label):
+                    envelope = self.load_fixture("message_text_lid.json")
+                    context = envelope["event"]["Message"]["extendedTextMessage"][
+                        "contextInfo"
+                    ]
+                    context.update(
+                        {
+                            "conversionSource": marker,
+                            "conversionData": "opaque-conversion-data",
+                        }
+                    )
+                    if external == "null":
+                        context["externalAdReply"] = None
+                    elif external is not None:
+                        context["externalAdReply"] = external
+                    event = self.adapter.normalize_event(self.connection, envelope)
+                    self.assertEqual(event.event_type, "message.created")
+                    self.assertEqual(event.message.text, "Mensagem de teste 👍")
+                    self.assertEqual(event.attribution, ())
+                    self.assertNotIn("opaque-conversion-data", repr(event.to_dict()))
+
+    def test_conversion_source_marker_is_kept_only_beside_real_evidence(self):
+        cases = (
+            (
+                "click",
+                {
+                    "externalAdReply": {
+                        "sourceType": "ad",
+                        "sourceID": "120212345678900017",
+                    }
+                },
+                "paid_ad_click",
+                {"conversion_source": "fb_ads"},
+            ),
+            (
+                "ctwa_entry",
+                {"entryPointConversionSource": "ctwa_ad"},
+                "paid_ad_click",
+                {"source": "ctwa_ad", "conversion_source": "fb_ads"},
+            ),
+            (
+                "non_paid_entry",
+                {"entryPointConversionSource": "click_to_chat_link"},
+                "entry_point",
+                {"source": "click_to_chat_link", "conversion_source": "fb_ads"},
+            ),
+            (
+                "utm",
+                {"utm": {"source": "instagram"}},
+                "unknown",
+                {"conversion_source": "fb_ads"},
+            ),
+        )
+        for label, evidence, touchpoint_type, entry_point in cases:
+            with self.subTest(case=label):
+                envelope = self.load_fixture("message_text_lid.json")
+                context = envelope["event"]["Message"]["extendedTextMessage"][
+                    "contextInfo"
+                ]
+                context.update(evidence, conversionSource="FB_Ads")
+                event = self.adapter.normalize_event(self.connection, envelope)
+                self.assertEqual(len(event.attribution), 1)
+                self.assertEqual(event.attribution[0].touchpoint_type, touchpoint_type)
+                self.assertEqual(event.attribution[0].entry_point, entry_point)
 
     def test_non_paid_entry_points_are_never_promoted_to_paid_media(self):
         for entry_point in (

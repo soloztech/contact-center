@@ -38,6 +38,19 @@
                     />
                     <button
                         type="button"
+                        class="cc-icon-button o_contact_center_mark_all_read"
+                        title="Marcar todas como lidas"
+                        aria-label="Marcar todas como lidas"
+                        t-att-disabled="!canMarkAllRead"
+                        t-on-click="markAllRead"
+                    >
+                        <i
+                            t-attf-class="fa #{state.bulkReadPending or ui.markAllOpen ? 'fa-spinner fa-spin' : 'fa-check-square-o'}"
+                            aria-hidden="true"
+                        />
+                    </button>
+                    <button
+                        type="button"
                         class="cc-icon-button cc-inbox-density-toggle"
                         t-att-title="densityButtonLabel"
                         t-att-aria-label="densityButtonLabel"
@@ -253,6 +266,16 @@
                                 >
                         <i class="fa fa-envelope" aria-hidden="true" />
                         <span>Não lidas</span>
+                    </button>
+                    <button
+                                    type="button"
+                                    t-att-class="state.filters.excludeMuted ? 'cc-filter-chip is-active' : 'cc-filter-chip'"
+                                    t-att-aria-pressed="state.filters.excludeMuted ? 'true' : 'false'"
+                                    title="Esconde as conversas que você silenciou"
+                                    t-on-click="toggleExcludeMuted"
+                                >
+                        <i class="fa fa-bell-slash-o" aria-hidden="true" />
+                        <span>Sem silenciadas</span>
                     </button>
                     <div
                                     class="cc-conversation-type-filter"

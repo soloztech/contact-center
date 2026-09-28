@@ -78,6 +78,111 @@ QUnit.module("contact_center_ui > sidebar filter flyout", (hooks) => {
     });
 
     QUnit.test(
+        "the list opens with the saved view, groups and position and remembers changes",
+        async (assert) => {
+            const store = filterStore();
+            const remembered = [];
+            const rememberInboxLayout = store.rememberInboxLayout.bind(store);
+            store.rememberInboxLayout = (patch) => {
+                remembered.push(JSON.parse(JSON.stringify(patch)));
+                return rememberInboxLayout(patch);
+            };
+            store.inboxLayout = {
+                listView: "flat",
+                collapsedInboxes: {"inbox:1": true},
+                sidePanel: "contact",
+            };
+            store.pendingListScrollTop = 120;
+            store.state.conversations = [
+                {channel_id: 20, state: "open", account: {id: 1, name: "Comercial"}},
+            ];
+            try {
+                const {list, target} = await mountList(store);
+                assert.strictEqual(list.ui.view, "flat");
+                assert.ok(
+                    target
+                        .querySelector("[aria-label='Lista sem agrupamento']")
+                        .classList.contains("is-active")
+                );
+                assert.strictEqual(
+                    store.pendingListScrollTop,
+                    0,
+                    "the saved position is applied once to the rendered page"
+                );
+                await click(target, "[aria-label='Agrupar por caixa']");
+                assert.ok(list.inboxCollapsed("inbox:1"), "collapsed groups return");
+                assert.notOk(list.inboxCollapsed("inbox:2"));
+                list.toggleInbox("inbox:2");
+                assert.deepEqual(remembered, [
+                    {listView: "grouped"},
+                    {collapsedInboxes: {"inbox:1": true, "inbox:2": true}},
+                ]);
+                assert.deepEqual(store.inboxLayout.collapsedInboxes, {
+                    "inbox:1": true,
+                    "inbox:2": true,
+                });
+                const viewport = list.viewportRef.el;
+                viewport.dispatchEvent(new Event("scroll"));
+                assert.strictEqual(
+                    store.listScrollTop,
+                    viewport.scrollTop,
+                    "the position of this visit is kept for the document memory"
+                );
+            } finally {
+                store.destroy();
+            }
+        }
+    );
+
+    QUnit.test(
+        "the restored window returns to its real scroll position",
+        async (assert) => {
+            const store = filterStore();
+            store.inboxLayout = {
+                listView: "flat",
+                collapsedInboxes: {},
+                sidePanel: "contact",
+            };
+            store.state.conversations = Array.from({length: 40}, (_value, index) => ({
+                channel_id: index + 1,
+                state: "open",
+                name: `Conversa ${index + 1}`,
+                account: {id: 1, name: "Comercial"},
+            }));
+            const target = getFixture();
+            const originalStyle = target.style.cssText;
+            target.style.cssText =
+                "position:fixed;top:0;left:0;width:360px;height:420px;overflow:hidden";
+            try {
+                const {list} = await mountList(store);
+                const viewport = list.viewportRef.el;
+                // Outside the full inbox layout, give the list its own height.
+                viewport.style.flex = "none";
+                viewport.style.height = "200px";
+                assert.ok(
+                    viewport.scrollHeight > viewport.clientHeight + 300,
+                    "the fixture list is scrollable"
+                );
+                store.pendingListScrollTop = 300;
+                store.state.listScrollRestoreRequest += 1;
+                await nextTick();
+                assert.strictEqual(Math.round(viewport.scrollTop), 300);
+                assert.strictEqual(store.pendingListScrollTop, 0);
+                store.state.listScrollRestoreRequest += 1;
+                await nextTick();
+                assert.strictEqual(
+                    Math.round(viewport.scrollTop),
+                    300,
+                    "a consumed position is not applied twice"
+                );
+            } finally {
+                target.style.cssText = originalStyle;
+                store.destroy();
+            }
+        }
+    );
+
+    QUnit.test(
         "bulk inbox disclosure includes empty boxes and follows mixed and flat views",
         async (assert) => {
             const store = filterStore();
@@ -417,6 +522,7 @@ QUnit.module("contact_center_ui > sidebar filter flyout", (hooks) => {
                     query: "Ana",
                     responsibility: "mine",
                     unreadOnly: true,
+                    excludeMuted: true,
                     conversationType: "direct",
                     tagId: 3,
                     activityTiming: "today",
@@ -433,7 +539,7 @@ QUnit.module("contact_center_ui > sidebar filter flyout", (hooks) => {
                     );
                 }, 1000);
                 const {list, target} = await mountList(store);
-                assert.strictEqual(list.activeFilterCount, 7);
+                assert.strictEqual(list.activeFilterCount, 8);
                 await click(target, ".cc-inbox-filter-toggle");
                 await click(target, ".cc-inbox-filter-clear");
                 assert.deepEqual(store.state.filters, {
@@ -443,6 +549,7 @@ QUnit.module("contact_center_ui > sidebar filter flyout", (hooks) => {
                     responsibility: "all",
                     responsibleId: false,
                     unreadOnly: false,
+                    excludeMuted: false,
                     conversationType: false,
                     tagId: false,
                     tagIds: [],
@@ -450,7 +557,7 @@ QUnit.module("contact_center_ui > sidebar filter flyout", (hooks) => {
                 });
                 assert.strictEqual(list.activeFilterCount, 0);
                 assert.strictEqual(store.searchTimer, null);
-                assert.deepEqual(calls, [{reset: true, selectFirst: true}]);
+                assert.deepEqual(calls, [{reset: true}]);
                 assert.strictEqual(
                     target.querySelector(".cc-search-field input").value,
                     "Ana"
@@ -560,11 +667,11 @@ QUnit.module("contact_center_ui > sidebar filter flyout", (hooks) => {
                 await store.reconcileConversationSelection({
                     reset: true,
                     silent: true,
-                    selectFirst: false,
                     previousSelected: 20,
                 });
                 assert.strictEqual(store.state.selectedChannelId, false);
-                store.replaceConversation(original);
+                // Inserted explicitly, as an opening flow does.
+                store.replaceConversation(original, {insert: true});
                 assert.strictEqual(
                     store.state.conversations.length,
                     1,
@@ -804,6 +911,163 @@ QUnit.module("contact_center_ui > sidebar filter flyout", (hooks) => {
                 );
                 assert.ok(list.ui.startOpen);
                 assert.ok(list.canSubmitStart, "the agent can retry after an error");
+            } finally {
+                store.destroy();
+            }
+        }
+    );
+
+    QUnit.test(
+        "an older start answer never undoes a newer preference of the channel",
+        async (assert) => {
+            const store = filterStore();
+            try {
+                const newer = {pinned: false, muted: false, revision: 4};
+                store.state.conversations = [
+                    {
+                        channel_id: 22,
+                        state: "open",
+                        account: {id: 1},
+                        preference: newer,
+                    },
+                ];
+                store.call = async () => ({
+                    schema_version: SUPPORTED_SCHEMA_VERSION,
+                    channel_id: 22,
+                    created: false,
+                    normalized_phone: "5511912345678",
+                    item: {
+                        channel_id: 22,
+                        state: "open",
+                        account: {id: 1},
+                        preference: {pinned: false, muted: true, revision: 3},
+                    },
+                });
+                store.selectConversation = async (id) => {
+                    store.state.selectedChannelId = id;
+                    return true;
+                };
+                // The follow-up list refresh fails.
+                store.loadConversations = async () => false;
+                assert.ok(await store.startConversation(1, "(11) 91234-5678"));
+                assert.deepEqual(store.selectedConversation.preference, newer);
+            } finally {
+                store.destroy();
+            }
+        }
+    );
+
+    QUnit.test(
+        "mark all read is offered only with unread, confirms the count and runs",
+        async (assert) => {
+            const store = filterStore();
+            try {
+                store.state.conversations = [
+                    {
+                        channel_id: 1,
+                        state: "open",
+                        account: {id: 1},
+                        unread_count: 0,
+                        tags: [],
+                    },
+                ];
+                const prepared = {
+                    targets: [
+                        {channel_id: 2, message_id: 20, max_message_id: 20},
+                        {channel_id: 3, message_id: 30, max_message_id: 30},
+                    ],
+                    count: 2,
+                    remaining: true,
+                };
+                const runs = [];
+                const notes = [];
+                let answer = {marked: 2, remaining: true};
+                store.prepareMarkAllRead = async () => prepared;
+                store.markAllRead = async (value) => {
+                    runs.push(value);
+                    return answer;
+                };
+                store.notify = (message) => notes.push(message);
+                const dialogs = [];
+                registry.category("services").add("hotkey", hotkeyService);
+                registry.category("services").add("ui", uiService);
+                registry.category("services").add("dialog", {
+                    start: () => ({
+                        add: (_component, props, options) => {
+                            dialogs.push({props, options});
+                            return () => undefined;
+                        },
+                    }),
+                });
+                makeFakeLocalizationService();
+                const env = await makeTestEnv();
+                const target = getFixture();
+                const list = await mount(ConversationList, target, {
+                    env,
+                    props: {state: store.state, store},
+                });
+                const button = target.querySelector(".o_contact_center_mark_all_read");
+                assert.ok(button.disabled, "nothing unread");
+                store.state.conversations = [
+                    ...store.state.conversations,
+                    {
+                        channel_id: 2,
+                        state: "open",
+                        account: {id: 1},
+                        unread_count: 2,
+                        tags: [],
+                    },
+                ];
+                await nextTick();
+                assert.notOk(button.disabled);
+                assert.ok(await list.markAllRead());
+                assert.ok(
+                    dialogs[0].props.body.startsWith("Marcar 2 conversas como lidas?")
+                );
+                assert.ok(
+                    dialogs[0].props.body.includes("não recebe confirmação de leitura")
+                );
+                // A second click while it is open opens nothing (L08-CLI-01).
+                assert.notOk(await list.markAllRead());
+                assert.strictEqual(dialogs.length, 1);
+                assert.ok(await dialogs[0].props.confirm());
+                dialogs[0].options.onClose();
+                assert.deepEqual(runs, [prepared]);
+                assert.ok(notes.includes("2 conversas marcadas como lidas."));
+                // Closed by any path, the action is available again.
+                answer = {marked: 0, remaining: false};
+                assert.ok(await list.markAllRead());
+                dialogs[1].options.onClose();
+                assert.ok(await list.markAllRead(), "closing with X frees the action");
+                assert.ok(await dialogs[2].props.confirm());
+                assert.ok(notes.includes("Nenhuma conversa precisou ser marcada."));
+                // An unknown outcome is reported as such; the reload claim depends
+                // on the reload (L08-R09).
+                let reloaded = true;
+                store.markAllRead = async () => {
+                    throw Object.assign(new Error("connection lost"), {
+                        bulkReadUncertain: true,
+                        listReloaded: reloaded,
+                    });
+                };
+                assert.ok(await list.markAllRead());
+                assert.notOk(await dialogs[3].props.confirm());
+                assert.ok(
+                    notes.includes(
+                        "Não foi possível confirmar se as conversas foram marcadas " +
+                            "como lidas. A lista foi recarregada."
+                    )
+                );
+                reloaded = false;
+                dialogs[3].options.onClose();
+                assert.ok(await list.markAllRead());
+                assert.notOk(await dialogs[4].props.confirm());
+                assert.ok(
+                    notes.includes(
+                        "Não foi possível confirmar se as conversas foram marcadas " +
+                            "como lidas. A lista será atualizada quando a conexão voltar."
+                    )
+                );
             } finally {
                 store.destroy();
             }

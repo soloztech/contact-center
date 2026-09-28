@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="action_contact_center_attendance_report" model="ir.actions.client">
+        <field name="name">Atendimento</field>
+        <field name="tag">contact_center_ui.attendance_report</field>
+    </record>
+
+    <menuitem
+        id="menu_contact_center_attendance_report"
+        name="Atendimento"
+        parent="contact_center_base.menu_contact_center_reports"
+        action="action_contact_center_attendance_report"
+        groups="contact_center_base.group_contact_center_supervisor"
+        sequence="10"
+    />
+</odoo>

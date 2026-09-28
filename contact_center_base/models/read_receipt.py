@@ -9,6 +9,7 @@ from odoo.exceptions import UserError, ValidationError
 from ..services.adapter import conversation_capabilities
 from ..services.dto import CommandDTO, ConversationDTO, DTOValidationError
 from ..services.timeline import MISSING_MESSAGE_DATE, message_chronology_key
+from ..services.tokens import CONTACT_CENTER_BULK_READ_TOKEN
 
 _logger = logging.getLogger(__name__)
 
@@ -492,6 +493,13 @@ class ContactCenterUiApiReadReceipt(models.AbstractModel):
             channel_id, message_id=message_id, seen=seen
         )
         if not seen or not result.get("message_id"):
+            return result
+        if (
+            self.env.context.get("contact_center_bulk_read_token")
+            is CONTACT_CENTER_BULK_READ_TOKEN
+        ):
+            # "Marcar todas como lidas" reads on the agent side only: the customer
+            # receives no read receipt (L08). Opening a conversation keeps the rule.
             return result
         channel = self.env["mail.channel"].browse(result["channel_id"]).exists()
         message = self.env["mail.message"].browse(result["message_id"]).exists()

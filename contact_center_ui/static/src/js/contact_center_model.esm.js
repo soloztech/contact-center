@@ -447,6 +447,11 @@ export function conversationPreference(conversation) {
                 ? source.pinned_at.trim()
                 : false,
         muted: source.muted === true,
+        // The server's order of this user's preference changes.
+        revision:
+            Number.isSafeInteger(source.revision) && source.revision > 0
+                ? source.revision
+                : 0,
     };
 }
 

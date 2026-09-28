@@ -260,13 +260,6 @@ _KNOWN_NON_PAID_ENTRY_POINTS = frozenset(
         "status",
     }
 )
-_META_PAID_CONVERSION_SOURCES = frozenset(
-    {
-        "fb_ads",
-        "facebook_ads",
-        "meta_ads",
-    }
-)
 _ATTRIBUTION_CONTEXT_SKIP_KEYS = frozenset(
     {
         "quotedmessage",
@@ -1225,9 +1218,6 @@ def _attribution_values(message, is_from_me, preferred_context=None):
     if actionable_external_ad or entry_source == "ctwa_ad":
         touchpoint_type = "paid_ad_click"
         evidence_level = "provider_asserted"
-    elif conversion_source in _META_PAID_CONVERSION_SOURCES:
-        touchpoint_type = "paid_ad_signal"
-        evidence_level = "provider_hint"
     elif entry_source:
         touchpoint_type = "entry_point"
         evidence_level = (
@@ -1243,7 +1233,9 @@ def _attribution_values(message, is_from_me, preferred_context=None):
     else:
         # An empty or presentation-only externalAdReply is not acquisition
         # evidence. In particular, it must not turn an outbound echo into a
-        # paid touchpoint.
+        # paid touchpoint. A lone conversionSource marker (for example FB_Ads)
+        # also lands here: WhatsApp repeats it on established conversations
+        # without any ad identity, so it does not prove paid media.
         return ()
 
     identifiers = []
@@ -1338,11 +1330,13 @@ def _attribution_values(message, is_from_me, preferred_context=None):
     )
 
 
-def ad_origin_preview_candidate(envelope):
+def ad_origin_preview_candidate(envelope, *, historical=False):
     """Return one current inbound ad snapshot and its private image candidate.
 
     Private URLs returned here belong only in the preview vault. A complementary
     context with a conflicting source ID must not donate another ad's creative.
+    ``historical`` serves an already recorded paid touchpoint: its creative is
+    recovered even when today's live classification would not create it.
     """
     if _normalized_key(_lookup(envelope, "type")) != "message":
         return None
@@ -1361,20 +1355,21 @@ def ad_origin_preview_candidate(envelope):
     source_key = _provider_string(_lookup(info, "ID", "Id"), maximum=512)
     if not source_key:
         return None
-    return _ad_origin_preview_for_message(message, source_key)
+    return _ad_origin_preview_for_message(message, source_key, historical=historical)
 
 
-def _ad_origin_preview_for_message(message, source_key):
+def _ad_origin_preview_for_message(message, source_key, *, historical=False):
     try:
         context = _message_content(message, source_key)[1]
     except AdapterError:
         context = None
-    evidence = _attribution_values(message, False, preferred_context=context)
-    if not evidence or evidence[0].touchpoint_type not in {
-        "paid_ad_click",
-        "paid_ad_signal",
-    }:
-        return None
+    if not historical:
+        evidence = _attribution_values(message, False, preferred_context=context)
+        if not evidence or evidence[0].touchpoint_type not in {
+            "paid_ad_click",
+            "paid_ad_signal",
+        }:
+            return None
     canonical = _attribution_context(message, preferred_context=context)
     canonical_external = canonical.get("externalAdReply") or {}
     source_id = _provider_string(_lookup(canonical_external, "sourceID", "sourceId"))
@@ -2651,7 +2646,9 @@ class WuzapiAdapter(WuzapiDirectStartMixin, WuzapiGroupMetadataMixin, ProviderAd
 
     def ad_origin_preview_from_history(self, payload, source_key):
         """Recover bounded copy only, without fetching or recreating old images."""
-        candidate = ad_origin_preview_candidate(payload)
+        # Only backfill of an existing paid touchpoint calls this; touchpoints
+        # recorded before the lone FB_Ads marker stopped counting keep their copy.
+        candidate = ad_origin_preview_candidate(payload, historical=True)
         if not candidate or candidate["source_key"] != source_key:
             return {}
         return {

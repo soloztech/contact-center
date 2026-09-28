@@ -35,6 +35,40 @@ The inbox provides:
   in the selected-conversation header;
 * a persisted compact desktop density with collapsible filters, while mobile keeps its
   responsive full-width layout;
+* per-user, per-database preferences in ``localStorage`` (filters without the search
+  text, grouped or flat view, collapsed inboxes, side panel and details pane), checked
+  against the current bootstrap on every load and ignored when stale or malformed;
+* returning to the inbox within the same page restores the open conversation, the
+  search text and the list position from web-client memory, after the server authorizes
+  the conversation again; a reload, a new tab or a duplicated tab starts without a
+  selected conversation;
+* no conversation opens by itself: without a remembered selection none is selected, a
+  selection that leaves the list is cleared instead of replaced, and a restored
+  conversation is marked as seen only after the agent interacts with it;
+* a top-bar item for agents with the number of unread conversations assigned to them;
+  its menu opens "My unread" or "All unread" (unread conversations the agent did not
+  mute, counted exactly as the list opens them) or the inbox, and refreshes on
+  messages, reads, muting and deletion, on window focus and every five minutes;
+* a "Sem silenciadas" filter that hides the conversations the agent muted;
+* "Marcar todas como lidas" for the conversations of the current list (up to 200 per
+  action, the open one excluded): the agent's read pointers advance only up to the newest
+  message present when the action was prepared, never over a message that arrived
+  afterwards, and the customer receives no read receipt; the list then reloads from its
+  first page (rows loaded beyond 200 are paged in again);
+* for supervisors, *Relatórios › Atendimento*: per inbox, responsible at the start or
+  channel, the episodes, answers, server-side median and 90th percentile of the first
+  and of the following responses, pending and closed-without-response episodes,
+  transfers, reopenings and inbound/outbound volume of direct conversations
+  (outbound: agent and automation messages with confirmed delivery, and phone
+  replies), filtered by period, inbox, responsible and channel (archived inboxes and
+  former, archived or deleted responsibles with history the supervisor may read
+  remain selectable); every number states
+  its coverage (known responsible, time basis, history start, phone replies not
+  placed); the history starts at its publication and a period is partial only when
+  a conversation in scope predates it, and a missing measurement reads "sem dados",
+  never zero; a rejected reload
+  clears the numbers, and "Ver episódios" opens, as a list or pivot, the episodes of
+  the report on screen;
 * localized, color-coded conversation states and compact connection-health details;
 * paged conversation and message timelines with unread pointers;
 * provider, platform, origin, reply, delivery, and dispatch context;

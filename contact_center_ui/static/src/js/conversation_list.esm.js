@@ -254,9 +254,11 @@ export class ConversationList extends Component {
         this.destroyed = false;
         this.addDialog = useOwnedDialogs();
         this.ui = useState({
+            // "Marcar todas como lidas" is being prepared or confirmed.
+            markAllOpen: false,
             pendingConversationIds: {},
-            view: "grouped",
-            collapsedInboxes: {},
+            view: this.store.inboxLayout.listView,
+            collapsedInboxes: {...this.store.inboxLayout.collapsedInboxes},
             filtersOpen: false,
             startOpen: false,
             startAccountId: false,
@@ -267,6 +269,22 @@ export class ConversationList extends Component {
             startPending: false,
             startError: "",
         });
+        useEffect(
+            () => {
+                // Return to the position left in this document once the store
+                // has reloaded the same window of conversations.
+                const viewport = this.viewportRef.el;
+                if (!viewport || this.state.listPhase !== "ready") {
+                    return;
+                }
+                const scrollTop = this.store.consumePendingListScroll();
+                if (scrollTop > 0) {
+                    viewport.scrollTop = scrollTop;
+                    this.lastScrollTop = viewport.scrollTop;
+                }
+            },
+            () => [this.state.listScrollRestoreRequest]
+        );
         this.onWindowKeydown = (event) => this.onShortcut(event);
         this.onWindowPointerdown = (event) => this.onFilterOutsidePointerdown(event);
         window.addEventListener("keydown", this.onWindowKeydown);
@@ -402,6 +420,7 @@ export class ConversationList extends Component {
             filters.responsibility !== "all",
             Boolean(filters.responsibleId),
             filters.unreadOnly,
+            filters.excludeMuted,
             Boolean(filters.conversationType),
             this.selectedFilterTagIds.length > 0,
             Boolean(filters.activityTiming),
@@ -784,6 +803,7 @@ export class ConversationList extends Component {
         const viewport = event.currentTarget;
         const movedDown = viewport.scrollTop > this.lastScrollTop;
         this.lastScrollTop = viewport.scrollTop;
+        this.store.rememberListScroll(viewport.scrollTop);
         if (
             movedDown &&
             viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <=
@@ -845,6 +865,10 @@ export class ConversationList extends Component {
 
     toggleUnreadOnly() {
         this.store.setFilter("unreadOnly", !this.state.filters.unreadOnly);
+    }
+
+    toggleExcludeMuted() {
+        this.store.setFilter("excludeMuted", !this.state.filters.excludeMuted);
     }
 
     setConversationType(type) {
@@ -919,7 +943,142 @@ export class ConversationList extends Component {
     setView(view) {
         if (LIST_VIEWS.has(view)) {
             this.ui.view = view;
+            this.store.rememberInboxLayout({listView: view});
         }
+    }
+
+    rememberCollapsedInboxes() {
+        this.store.rememberInboxLayout({
+            collapsedInboxes: {...this.ui.collapsedInboxes},
+        });
+    }
+
+    get canMarkAllRead() {
+        return Boolean(
+            !this.state.bulkReadPending &&
+                !this.ui.markAllOpen &&
+                this.state.listPhase === "ready" &&
+                this.state.conversations.some(
+                    (conversation) =>
+                        conversation.unread_count > 0 &&
+                        conversation.channel_id !== this.state.selectedChannelId
+                )
+        );
+    }
+
+    /**
+     * "Marcar todas como lidas": prepare, confirm with the count, execute.
+     *
+     * @returns {Promise<Boolean>} whether the confirmation was shown
+     */
+    async markAllRead() {
+        if (!this.canMarkAllRead) {
+            return false;
+        }
+        const title = "Marcar todas como lidas";
+        // One preparation or confirmation at a time (L08-CLI-01).
+        this.ui.markAllOpen = true;
+        let prepared = null;
+        try {
+            prepared = await this.store.prepareMarkAllRead();
+        } catch (_error) {
+            this.ui.markAllOpen = false;
+            this.store.notify("Não foi possível preparar a leitura. Tente novamente.", {
+                type: "danger",
+                title,
+            });
+            return false;
+        }
+        if (!prepared || !prepared.count) {
+            this.ui.markAllOpen = false;
+        }
+        if (!prepared) {
+            this.store.notify(
+                "A lista mudou enquanto a ação era preparada. Tente novamente.",
+                {
+                    type: "warning",
+                    title,
+                }
+            );
+            return false;
+        }
+        if (!prepared.count) {
+            this.store.notify("Não há outra conversa não lida nesta lista.", {
+                type: "info",
+                title,
+            });
+            return false;
+        }
+        const plural = prepared.count !== 1;
+        this.addDialog(
+            ConfirmationDialog,
+            {
+                title,
+                body:
+                    `Marcar ${prepared.count} ${
+                        plural ? "conversas" : "conversa"
+                    } como ` +
+                    `${
+                        plural ? "lidas" : "lida"
+                    }? A conversa aberta não é alterada e o ` +
+                    "cliente não recebe confirmação de leitura. Ao abrir uma conversa " +
+                    "depois, a confirmação segue a regra normal da caixa.",
+                confirmLabel: "Marcar como lidas",
+                cancelLabel: "Cancelar",
+                confirm: () => this.confirmMarkAllRead(prepared),
+                cancel: () => undefined,
+            },
+            {
+                // Any way of closing (cancel, confirm, X, Escape) frees the action.
+                onClose: () => {
+                    this.ui.markAllOpen = false;
+                },
+            }
+        );
+        return true;
+    }
+
+    async confirmMarkAllRead(prepared) {
+        const title = "Marcar todas como lidas";
+        let result = false;
+        try {
+            result = await this.store.markAllRead(prepared);
+        } catch (error) {
+            this.store.notify(
+                error && error.listReloaded === false
+                    ? "Não foi possível confirmar se as conversas foram marcadas como " +
+                          "lidas. A lista será atualizada quando a conexão voltar."
+                    : "Não foi possível confirmar se as conversas foram marcadas como " +
+                          "lidas. A lista foi recarregada.",
+                {type: "danger", title}
+            );
+            return false;
+        } finally {
+            this.ui.markAllOpen = false;
+        }
+        if (!result) {
+            return false;
+        }
+        if (result.marked) {
+            this.store.notify(
+                result.marked === 1
+                    ? "1 conversa marcada como lida."
+                    : `${result.marked} conversas marcadas como lidas.`,
+                {type: "success", title}
+            );
+        } else {
+            this.store.notify("Nenhuma conversa precisou ser marcada.", {
+                type: "info",
+                title,
+            });
+        }
+        if (result.remaining) {
+            this.store.notify("Ainda há conversas não lidas nesta lista.", {
+                type: "info",
+                title,
+            });
+        }
+        return true;
     }
 
     toggleDensity() {
@@ -959,11 +1118,13 @@ export class ConversationList extends Component {
         for (const group of this.conversationGroups) {
             this.ui.collapsedInboxes[group.key] = collapsed;
         }
+        this.rememberCollapsedInboxes();
     }
 
     toggleInbox(key) {
         if (typeof key === "string" && key.startsWith("inbox:")) {
             this.ui.collapsedInboxes[key] = !this.inboxCollapsed(key);
+            this.rememberCollapsedInboxes();
         }
     }
 

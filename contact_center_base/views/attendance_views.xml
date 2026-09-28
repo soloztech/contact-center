@@ -1,0 +1,231 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="view_contact_center_attendance_episode_tree" model="ir.ui.view">
+        <field name="name">contact.center.attendance.episode.tree</field>
+        <field name="model">contact.center.attendance.episode</field>
+        <field name="arch" type="xml">
+            <tree
+                create="false"
+                edit="false"
+                delete="false"
+                decoration-warning="outcome == 'pending'"
+                decoration-danger="outcome == 'closed_unanswered'"
+            >
+                <field name="start_at" />
+                <field name="channel_id" />
+                <field name="account_id" />
+                <field name="platform" optional="hide" />
+                <field name="response_order" />
+                <field name="outcome" />
+                <field name="end_at" />
+                <!-- 0 s is a measurement; a wait exists only for an answer. -->
+                <field
+                    name="wait_seconds"
+                    attrs="{'invisible': [('outcome', '!=', 'answered')]}"
+                />
+                <field name="response_origin" optional="show" />
+                <field name="responsible_status" optional="show" />
+                <!-- Name, or "Removed user" for a deleted responsible (L09-18). -->
+                <field name="responsible_label" />
+                <field name="responsible_id" optional="hide" />
+                <field name="respondent_id" optional="hide" />
+                <field name="company_id" groups="base.group_multi_company" />
+            </tree>
+        </field>
+    </record>
+    <record id="view_contact_center_attendance_episode_pivot" model="ir.ui.view">
+        <field name="name">contact.center.attendance.episode.pivot</field>
+        <field name="model">contact.center.attendance.episode</field>
+        <field name="arch" type="xml">
+            <pivot disable_linking="1">
+                <field name="account_id" type="row" />
+                <field name="outcome" type="col" />
+            </pivot>
+        </field>
+    </record>
+    <record id="view_contact_center_attendance_episode_search" model="ir.ui.view">
+        <field name="name">contact.center.attendance.episode.search</field>
+        <field name="model">contact.center.attendance.episode</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="channel_id" />
+                <field name="account_id" />
+                <field name="responsible_id" />
+                <field name="platform" />
+                <filter
+                    name="answered"
+                    string="Answered"
+                    domain="[('outcome', '=', 'answered')]"
+                />
+                <filter
+                    name="pending"
+                    string="Pending"
+                    domain="[('outcome', '=', 'pending')]"
+                />
+                <filter
+                    name="closed_unanswered"
+                    string="Closed without response"
+                    domain="[('outcome', '=', 'closed_unanswered')]"
+                />
+                <separator />
+                <filter
+                    name="first_response"
+                    string="First response"
+                    domain="[('response_order', '=', 'first')]"
+                />
+                <filter
+                    name="subsequent_response"
+                    string="Subsequent response"
+                    domain="[('response_order', '=', 'subsequent')]"
+                />
+                <separator />
+                <filter name="start_at" string="Start" date="start_at" />
+                <group expand="0" string="Group By">
+                    <filter
+                        name="group_account"
+                        string="Inbox"
+                        context="{'group_by': 'account_id'}"
+                    />
+                    <filter
+                        name="group_platform"
+                        string="Channel"
+                        context="{'group_by': 'platform'}"
+                    />
+                    <filter
+                        name="group_responsible"
+                        string="Responsible at Start"
+                        context="{'group_by': 'responsible_group'}"
+                    />
+                    <filter
+                        name="group_responsible_status"
+                        string="Responsible Status"
+                        context="{'group_by': 'responsible_status'}"
+                    />
+                    <filter
+                        name="group_outcome"
+                        string="Outcome"
+                        context="{'group_by': 'outcome'}"
+                    />
+                    <filter
+                        name="group_start"
+                        string="Start"
+                        context="{'group_by': 'start_at:day'}"
+                    />
+                </group>
+            </search>
+        </field>
+    </record>
+    <record
+        id="action_contact_center_attendance_episodes"
+        model="ir.actions.act_window"
+    >
+        <field name="name">Attendance Episodes</field>
+        <field name="res_model">contact.center.attendance.episode</field>
+        <field name="view_mode">tree,pivot</field>
+        <field
+            name="search_view_id"
+            ref="view_contact_center_attendance_episode_search"
+        />
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">No attendance episode yet</p>
+            <p>
+                Episodes start with a customer message recorded after the
+                attendance history was published and end with the first human
+                response. Waiting times are elapsed time.
+            </p>
+        </field>
+    </record>
+
+    <record id="view_contact_center_conversation_event_tree" model="ir.ui.view">
+        <field name="name">contact.center.conversation.event.tree</field>
+        <field name="model">contact.center.conversation.event</field>
+        <field name="arch" type="xml">
+            <tree create="false" edit="false" delete="false">
+                <field name="occurred_at" />
+                <field name="channel_id" />
+                <field name="sequence" optional="hide" />
+                <field name="event_type" />
+                <field name="previous_responsible_label" optional="show" />
+                <field name="responsible_label" />
+                <field name="previous_state" optional="hide" />
+                <field name="state" />
+                <field name="actor_label" />
+                <field name="source" />
+                <field name="account_id" optional="show" />
+                <field name="company_id" groups="base.group_multi_company" />
+            </tree>
+        </field>
+    </record>
+    <record id="view_contact_center_conversation_event_search" model="ir.ui.view">
+        <field name="name">contact.center.conversation.event.search</field>
+        <field name="model">contact.center.conversation.event</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="channel_id" />
+                <field name="account_id" />
+                <field name="responsible_id" />
+                <field name="actor_id" />
+                <filter
+                    name="transfers"
+                    string="Transfers"
+                    domain="[('event_type', '=', 'assigned'), ('previous_responsible_ref', '>', 0)]"
+                />
+                <filter
+                    name="reopenings"
+                    string="Reopenings"
+                    domain="[('event_type', '=', 'reopened')]"
+                />
+                <separator />
+                <filter name="occurred_at" string="Date" date="occurred_at" />
+                <group expand="0" string="Group By">
+                    <filter
+                        name="group_event_type"
+                        string="Event"
+                        context="{'group_by': 'event_type'}"
+                    />
+                    <filter
+                        name="group_source"
+                        string="Source"
+                        context="{'group_by': 'source'}"
+                    />
+                </group>
+            </search>
+        </field>
+    </record>
+    <record
+        id="action_contact_center_conversation_events"
+        model="ir.actions.act_window"
+    >
+        <field name="name">Conversation History</field>
+        <field name="res_model">contact.center.conversation.event</field>
+        <field name="view_mode">tree,pivot</field>
+        <field
+            name="search_view_id"
+            ref="view_contact_center_conversation_event_search"
+        />
+    </record>
+
+    <menuitem
+        id="menu_contact_center_reports"
+        name="Reports"
+        parent="menu_contact_center_root"
+        sequence="70"
+        groups="contact_center_base.group_contact_center_supervisor"
+    />
+    <menuitem
+        id="menu_contact_center_attendance_episodes"
+        name="Attendance Episodes"
+        parent="menu_contact_center_reports"
+        action="action_contact_center_attendance_episodes"
+        sequence="20"
+        groups="contact_center_base.group_contact_center_supervisor"
+    />
+    <menuitem
+        id="menu_contact_center_conversation_events"
+        name="Conversation History"
+        parent="menu_contact_center_reports"
+        action="action_contact_center_conversation_events"
+        sequence="30"
+        groups="contact_center_base.group_contact_center_supervisor"
+    />
+</odoo>

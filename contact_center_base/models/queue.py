@@ -3,6 +3,7 @@ import logging
 import math
 
 from psycopg2.errors import DeadlockDetected, SerializationFailure
+from psycopg2.extensions import TransactionRollbackError
 
 from odoo import _, api, fields, models
 from odoo.exceptions import AccessError, UserError, ValidationError
@@ -3525,9 +3526,14 @@ class ContactCenterOutboxCommand(models.Model):
             self.env.flush_all()
         except Exception as error:
             raise PostDispatchPersistenceError(error, result=result) from error
-        self._notify_delivery_ui(
-            refresh_message=bool(refresh_message or participant_changed)
-        )
+        try:
+            self._notify_delivery_ui(
+                refresh_message=bool(refresh_message or participant_changed)
+            )
+        except TransactionRollbackError as error:
+            # The provider already accepted the send: settle it through the
+            # local-only reconciliation path, never through a redispatch.
+            raise PostDispatchPersistenceError(error, result=result) from error
         return True
 
     def _notify_delivery_ui(self, refresh_message=False):

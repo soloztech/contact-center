@@ -3,6 +3,8 @@
 import uuid
 from unittest import mock
 
+from psycopg2.errors import DeadlockDetected, InFailedSqlTransaction
+
 from odoo.exceptions import AccessError, ValidationError
 from odoo.tests import tagged
 from odoo.tests.common import SavepointCase
@@ -835,3 +837,46 @@ class TestAudioTranscription(SavepointCase):
         )
         self.assertTrue(first in collected)
         self.assertTrue(second in collected)
+
+    def test_database_conflict_retries_without_recording_internal_error(self):
+        self._enable()
+        media_model = type(self.env["contact.center.media.binding"])
+        for point in ("body", "outside"):
+            with self.subTest(point=point):
+                media = self._media()
+                self._request(media)
+                if point == "outside":
+                    # The duration guard finishes before the provider I/O block.
+                    media.write({"duration_seconds": 10**6})
+                self.transcribe.return_value = TranscriptionResult("Olá", "pt")
+                error = DeadlockDetected("concurrent transcription state")
+                with mock.patch.object(
+                    media_model, "_finish_transcription", side_effect=error
+                ) as finish, self.env.cr.savepoint(), self.assertRaises(
+                    RetryableJobError
+                ) as raised:
+                    Job.load(self.env, media.transcription_queue_job_uuid).perform()
+                self.assertTrue(raised.exception.ignore_retry)
+                self.assertIs(raised.exception.__cause__, error)
+                self.assertEqual(finish.call_count, 1)
+                self.assertEqual(self._job(media).retry, 0)
+                media.invalidate_recordset(
+                    ["transcription_state", "transcription_error_code"]
+                )
+                self.assertEqual(media.transcription_state, "pending")
+                self.assertFalse(media.transcription_error_code)
+
+    def test_aborted_transaction_propagates_without_new_write(self):
+        self._enable()
+        media = self._media()
+        self._request(media)
+        self.transcribe.return_value = TranscriptionResult("Olá", "pt")
+        media_model = type(media)
+        with mock.patch.object(
+            media_model,
+            "_finish_transcription",
+            side_effect=InFailedSqlTransaction("aborted"),
+        ) as finish, self.assertRaises(InFailedSqlTransaction):
+            self._perform(media)
+        self.assertEqual(finish.call_count, 1)
+        self.assertEqual(media.transcription_state, "pending")

@@ -5,11 +5,16 @@ ad context and Meta Messenger/Instagram referrals can supply a bounded title, bo
 public Facebook/Instagram link and thumbnail. Available fields vary by provider and
 event; missing details are not inferred from tracking IDs.
 
-The card appears next to the original message and in the attribution panel. Standalone
-referrals appear only in the panel until a provider supplies a real message
-relationship. The customer's text, acquisition identity and attribution evidence remain
-unchanged. Duplicates fill only missing presentation fields; they cannot replace the
-first observed copy.
+The card appears next to the original message and in the attribution panel only when it
+has presentable content (title, body, public link or thumbnail) or its touchpoint has a
+concrete ad identifier: a numeric `sourceID`/`ad_id` or a CTWA click ID. Rows without
+either stay as internal cache, expire through the normal cleanup and are never shown;
+historical `paid_ad_signal` touchpoints without identifiers (lone `conversionSource`
+markers) stay in the ledger but are left out of the agent panel. Standalone referrals
+appear only in the panel until a provider supplies a real message relationship. The
+customer's text, acquisition identity and attribution evidence remain unchanged.
+Duplicates fill only missing presentation fields; they cannot replace the first observed
+copy.
 
 ## Configure
 
@@ -44,7 +49,11 @@ creative was displayed at the time of the message.
 
 - Titles are limited to 256 characters and bodies to 2,000. HTML is rendered as text.
   Public links accept only HTTPS Facebook/Instagram URLs with public query keys and
-  reject private parameters, fragments, account, login and messaging paths.
+  reject private parameters, fragments, account, login and messaging paths. A stored
+  link counts as card content, and reaches the browser, only if it also passes the
+  browser rule: ASCII characters the browser keeps unchanged, no repeated keys, no `#`,
+  no `.`/`..` segments, valid path encoding and at most 2,047 characters. Text counts
+  only when it has a visible character, and a thumbnail only when the preview is ready.
 - Signed thumbnail URLs stay in an internal locator vault scoped to the exact connection
   and event. Operational payloads use opaque references. Locators expire after one day
   and their URLs are erased after use.

@@ -1,0 +1,93 @@
+.cc-attendance-report {
+    height: 100%;
+    overflow: auto;
+    padding: 1.25rem 1.5rem;
+    background: #f6f8f8;
+    color: #172730;
+
+    .cc-attendance-report__header {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-bottom: 1rem;
+
+        h1 {
+            margin: 0;
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+    }
+
+    .cc-attendance-report__kicker {
+        margin: 0;
+        color: #5d6f76;
+        font-size: 0.75rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+    }
+
+    .cc-attendance-report__filters {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        margin-bottom: 1rem;
+
+        label {
+            display: grid;
+            gap: 0.25rem;
+            min-width: 10rem;
+            margin: 0;
+            font-size: 0.8125rem;
+        }
+    }
+
+    .cc-attendance-report__table {
+        margin-bottom: 0;
+        background: #fff;
+        font-size: 0.8125rem;
+
+        thead th {
+            vertical-align: bottom;
+            white-space: normal;
+        }
+
+        tbody th,
+        tfoot th,
+        td {
+            vertical-align: top;
+            white-space: nowrap;
+        }
+
+        tbody th,
+        tfoot th {
+            min-width: 10rem;
+            white-space: normal;
+            overflow-wrap: anywhere;
+        }
+
+        .cc-attendance-report__first,
+        .cc-attendance-report__subsequent {
+            min-width: 11rem;
+            white-space: normal;
+        }
+
+        .cc-attendance-report__coverage {
+            min-width: 12rem;
+            color: #5d6f76;
+            white-space: normal;
+        }
+
+        .cc-attendance-report__total tr {
+            border-top: 2px solid #ced7d8;
+            font-weight: 600;
+        }
+    }
+
+    .cc-attendance-report__notes {
+        margin: 0.5rem 0 0;
+        padding-left: 1.25rem;
+        color: #5d6f76;
+        font-size: 0.8125rem;
+    }
+}

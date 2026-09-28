@@ -38,6 +38,7 @@ patch(ContactCenterApp.prototype, "contact_center_crm.customer_records", {
 
     closeCrmPanel() {
         this.store.state.detailsOpen = false;
+        this.rememberLayout();
         const trigger = document.querySelector(".o_contact_center_ui .cc-crm-toggle");
         if (trigger) {
             trigger.focus();

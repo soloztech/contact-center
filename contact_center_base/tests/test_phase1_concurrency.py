@@ -1460,6 +1460,147 @@ class TestPhase1Concurrency(TransactionCase):
             # Persist cleanup performed through this independent test cursor.
             cr.commit()  # pylint: disable=invalid-commit
 
+    def _create_dated_inbox(self, fixture, token, suffix, occurred_at):
+        """A committed inbound event of the established conversation."""
+
+        with self.registry.cursor() as cr:
+            env = api.Environment(cr, SUPERUSER_ID, {})
+            account = env["contact.center.account"].browse(fixture["account_id"])
+            connection = env["contact.center.provider.connection"].browse(
+                fixture["connection_id"]
+            )
+            addresses = [
+                {
+                    "namespace": "whatsapp.pn",
+                    "value": fixture["pn"],
+                    "value_normalized": fixture["pn"],
+                    "role": "primary",
+                },
+                {
+                    "namespace": "whatsapp.lid",
+                    "value": fixture["lid"],
+                    "value_normalized": fixture["lid"],
+                    "role": "alternate",
+                },
+            ]
+            event = EventDTO.from_dict(
+                {
+                    "schema_version": 1,
+                    "provider_schema_version": "fixture-v1",
+                    "event_id": "concurrent-%s-event-%s" % (suffix, token),
+                    "event_type": "message.created",
+                    "occurred_at": occurred_at,
+                    "account_ref": account.external_ref,
+                    "connection_ref": connection.external_ref,
+                    "conversation_ref": "concurrent-conversation-%s" % token,
+                    "platform": "whatsapp",
+                    "direction": "inbound",
+                    "is_from_me": False,
+                    "origin": "provider",
+                    "actor": {
+                        "display_name": fixture["actor_name"],
+                        "addresses": addresses,
+                    },
+                    "conversation": {
+                        "conversation_type": "direct",
+                        "addresses": addresses,
+                    },
+                    "message": {
+                        "external_message_id": "concurrent-%s-%s" % (suffix, token),
+                        "content_type": "text",
+                        "text": "Concurrent %s inbound text" % suffix,
+                    },
+                }
+            )
+            inbox = (
+                env["contact.center.inbox.event"]
+                .sudo()
+                .with_context(contact_center_skip_enqueue=True)
+                .create(
+                    {
+                        "provider_connection_id": connection.id,
+                        "inbox_dedupe_key": event.event_id,
+                        "provider_schema_version": "fixture-v1",
+                        "raw_envelope_json": event.to_dict(),
+                    }
+                )
+            )
+            inbox.write({"queue_job_uuid": str(uuid.uuid4())})
+            cr.commit()  # pylint: disable=invalid-commit
+            return inbox.id
+
+    def test_bulk_read_retries_instead_of_reading_an_arrival_after_its_snapshot(self):
+        """L08 criterion 4d: the write fence of message_post versions the channel."""
+
+        token = uuid.uuid4().hex
+        try:
+            fixture = self._setup_committed_fixture(token)
+            for inbox_id in fixture["inbox_ids"]:
+                self.assertEqual(
+                    self._process_inbox_transaction(inbox_id)["outcome"], "done"
+                )
+            # The prepared target: a newer message of the established conversation.
+            target_inbox = self._create_dated_inbox(
+                fixture, token, "target", "2026-08-25T13:00:00Z"
+            )
+            self.assertEqual(
+                self._process_inbox_transaction(target_inbox)["outcome"], "done"
+            )
+            with self.registry.cursor() as cr:
+                env = api.Environment(cr, fixture["agent_id"], {})
+                prepared = env["contact.center.ui.api"].prepare_mark_conversations_read(
+                    filters={"account_id": fixture["account_id"]}
+                )
+            self.assertEqual(prepared["count"], 1)
+            targets = prepared["targets"]
+            channel_id = targets[0]["channel_id"]
+            late_inbox = self._create_dated_inbox(
+                fixture, token, "late", "2026-08-24T10:00:00Z"
+            )
+            # The execution's snapshot starts before the late arrival commits.
+            with self.registry.cursor() as execution_cr:
+                execution_cr.execute("SET LOCAL lock_timeout = '5s'")
+                execution_env = api.Environment(execution_cr, fixture["agent_id"], {})
+                execution_cr.execute(
+                    "SELECT id FROM mail_channel WHERE id = %s", [channel_id]
+                )
+                self.assertEqual(
+                    self._process_inbox_transaction(late_inbox)["outcome"], "done"
+                )
+                with self.assertRaises(SerializationFailure):
+                    execution_env["contact.center.ui.api"].with_context(
+                        contact_center_skip_enqueue=True
+                    ).mark_conversations_read(targets)
+                execution_cr.rollback()
+            # The retried request sees the arrival and never reads it.
+            with self.registry.cursor() as cr:
+                env = api.Environment(cr, fixture["agent_id"], {})
+                env["contact.center.ui.api"].with_context(
+                    contact_center_skip_enqueue=True
+                ).mark_conversations_read(targets)
+                channel = env["mail.channel"].browse(channel_id)
+                member = channel.channel_member_ids.filtered(
+                    lambda row: row.partner_id == env.user.partner_id
+                )
+                late = env["mail.message"].search(
+                    [
+                        ("model", "=", "mail.channel"),
+                        ("res_id", "=", channel_id),
+                        ("body", "ilike", "Concurrent late inbound text"),
+                    ]
+                )
+                self.assertTrue(late)
+                self.assertTrue(
+                    not member.seen_message_id
+                    or (member.seen_message_id.date, member.seen_message_id.id)
+                    < (late.date, late.id),
+                    "the pointer never passes the late arrival",
+                )
+                self.assertGreaterEqual(member.message_unread_counter, 1)
+                cr.commit()  # pylint: disable=invalid-commit
+        finally:
+            self._cleanup_committed_fixture(token)
+
     def test_concurrent_duplicate_events_converge_after_retry(self):
         token = uuid.uuid4().hex
         fixture = None
@@ -2200,6 +2341,51 @@ class TestPhase1Concurrency(TransactionCase):
                 self.assertEqual(
                     older.details_json["projection"]["reason"], "superseded"
                 )
+        finally:
+            if fixture:
+                self._cleanup_committed_fixture(token)
+
+    def test_ui_notification_propagates_conflict_raised_by_savepoint_flush(self):
+        """The bus savepoint flushes pending writes; their conflict must escape."""
+
+        token = uuid.uuid4().hex
+        fixture = {}
+        try:
+            fixture = self._setup_committed_fixture(token)
+            result = self._process_inbox_transaction(fixture["inbox_ids"][0])
+            self.assertEqual(result["outcome"], "done")
+            stale = self.registry.cursor()
+            try:
+                env = api.Environment(stale, SUPERUSER_ID, {})
+                connection = (
+                    env["contact.center.provider.connection"]
+                    .sudo()
+                    .browse(fixture["connection_id"])
+                )
+                channel = (
+                    env["contact.center.channel.binding"]
+                    .sudo()
+                    .search([("account_id", "=", fixture["account_id"])], limit=1)
+                    .channel_id
+                )
+                self.assertTrue(channel.channel_member_ids.partner_id)
+                # REPEATABLE READ snapshot, then a concurrent committed update.
+                connection.read(["last_success_at"])
+                with self.registry.cursor() as cr:
+                    cr.execute(
+                        "UPDATE contact_center_provider_connection "
+                        "SET write_date = now() WHERE id = %s",
+                        [fixture["connection_id"]],
+                    )
+                # Pending ORM write on the same row, flushed by the savepoint.
+                connection.write({"last_success_at": fields.Datetime.now()})
+                with self.assertRaises(SerializationFailure):
+                    env["contact.center.application"]._notify_ui(
+                        channel, "message_updated", {"message_id": 0}
+                    )
+                stale.rollback()
+            finally:
+                stale.close()
         finally:
             if fixture:
                 self._cleanup_committed_fixture(token)

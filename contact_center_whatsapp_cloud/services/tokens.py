@@ -1,0 +1,2 @@
+CONTACT_CENTER_WHATSAPP_CLOUD_CONTEXT_KEY = "contact_center_whatsapp_cloud_internal"
+CONTACT_CENTER_WHATSAPP_CLOUD_INTERNAL_TOKEN = object()

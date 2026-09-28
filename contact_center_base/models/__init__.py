@@ -20,6 +20,7 @@ from . import control_events
 from . import queue
 from . import read_receipt
 from . import productivity
+from . import bulk_read
 from . import quick_reply
 from . import followup
 from . import conversation_actions
@@ -37,3 +38,5 @@ from . import transcription_retention
 from . import transcription_ui_api
 from . import ad_origin_preview
 from . import ad_origin_preview_hooks
+from . import conversation_event
+from . import attendance_episode

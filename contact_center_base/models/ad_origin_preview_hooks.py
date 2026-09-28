@@ -147,7 +147,7 @@ class ContactCenterAttributionTouchpoint(models.Model):
         by_ref = {item.touchpoint_id.public_ref: item for item in previews}
         for item in result["items"]:
             preview = by_ref.get(item["public_ref"])
-            if preview:
+            if preview and preview._is_presentable():
                 try:
                     item["ad_origin_preview"] = preview._descriptor()
                 except (AccessError, ValidationError):
@@ -203,7 +203,7 @@ class ContactCenterUiApi(models.AbstractModel):
                 limit=8,
             )
         )
-        for preview in previews:
+        for preview in previews.filtered(lambda item: item._is_presentable()):
             try:
                 result["ad_origin_previews"].append(preview._descriptor())
             except (AccessError, ValidationError):

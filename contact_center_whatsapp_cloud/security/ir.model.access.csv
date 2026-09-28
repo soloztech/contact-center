@@ -1,0 +1,2 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_contact_center_whatsapp_cloud_delivery_failure_admin,contact.center.whatsapp.cloud.delivery.failure admin,model_contact_center_whatsapp_cloud_delivery_failure,contact_center_base.group_contact_center_admin,1,0,0,0

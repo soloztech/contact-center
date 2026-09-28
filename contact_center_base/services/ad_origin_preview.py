@@ -3,6 +3,7 @@
 import io
 import re
 import time
+import unicodedata
 import uuid
 from urllib.parse import parse_qsl, unquote, urljoin, urlsplit
 
@@ -114,6 +115,95 @@ def public_source_url(value):
         or not re.fullmatch(r"[A-Za-z0-9_.:/-]{1,256}", val)
         for key, val in values
     ):
+        return ""
+    return value
+
+
+# Characters the browser's URL serializer keeps as they are, so url.href never
+# grows beyond the stored value (no "#", quote, apostrophe or non-ASCII).
+_BROWSER_STABLE_URL_RE = re.compile(r"[A-Za-z0-9._~!$&()*+,;=:@/%?-]+")
+_INVISIBLE_CATEGORIES = frozenset(("Cc", "Cf", "Cs", "Zs", "Zl", "Zp"))
+# ECMAScript String.prototype.trim(): WhiteSpace (plus any Zs) and LineTerminator.
+_JS_TRIM_CHARACTERS = frozenset("\t\n\v\f\r\u2028\u2029\ufeff")
+# Unicode Default_Ignorable_Code_Point ranges (rendered as nothing).
+_DEFAULT_IGNORABLE_RANGES = (
+    (0x00AD, 0x00AD),
+    (0x034F, 0x034F),
+    (0x061C, 0x061C),
+    (0x115F, 0x1160),
+    (0x17B4, 0x17B5),
+    (0x180B, 0x180F),
+    (0x200B, 0x200F),
+    (0x202A, 0x202E),
+    (0x2060, 0x206F),
+    (0x3164, 0x3164),
+    (0xFE00, 0xFE0F),
+    (0xFEFF, 0xFEFF),
+    (0xFFA0, 0xFFA0),
+    (0xFFF0, 0xFFF8),
+    (0x1BCA0, 0x1BCA3),
+    (0x1D173, 0x1D17A),
+    (0xE0000, 0xE0FFF),
+)
+
+
+def _js_trim_character(character):
+    return character in _JS_TRIM_CHARACTERS or unicodedata.category(character) == "Zs"
+
+
+def _visible_character(character):
+    codepoint = ord(character)
+    return not (
+        unicodedata.category(character) in _INVISIBLE_CATEGORIES
+        or character.isspace()
+        or any(low <= codepoint <= high for low, high in _DEFAULT_IGNORABLE_RANGES)
+    )
+
+
+def presentable_text(value, limit):
+    """Return the text the browser renders, or "" if nothing visible is left.
+
+    Mirrors boundedText in contact_center_ui: trim(), then slice(0, limit) in
+    UTF-16 code units. A cut surrogate pair renders nothing and is dropped.
+    """
+
+    if not isinstance(value, str):
+        return ""
+    start, end = 0, len(value)
+    while start < end and _js_trim_character(value[start]):
+        start += 1
+    while end > start and _js_trim_character(value[end - 1]):
+        end -= 1
+    units = value[start:end].encode("utf-16-le", "surrogatepass")[: limit * 2]
+    text = units.decode("utf-16-le", "ignore")
+    return text if any(_visible_character(character) for character in text) else ""
+
+
+def presentable_source_url(value):
+    """Return the stored public link only if the browser will also render it.
+
+    Mirrors safeAdOriginSourceUrl in contact_center_ui, which additionally
+    rejects repeated query keys, any "#" and malformed path encoding, and is
+    applied again to its own url.href (at most 2048 UTF-16 units). Capture
+    keeps public_source_url so stored DTOs remain valid when replayed.
+    """
+    value = public_source_url(value)
+    # href may gain a trailing "/" for an empty path, hence 2047.
+    if not value or len(value) > 2047 or not _BROWSER_STABLE_URL_RE.fullmatch(value):
+        return ""
+    parsed = urlsplit(value)
+    if re.search(r"%(?![0-9A-Fa-f]{2})", parsed.path):
+        return ""
+    try:
+        path = unquote(parsed.path, errors="strict")
+    except UnicodeDecodeError:
+        return ""
+    # The browser resolves "." and ".." segments (also percent-encoded) before
+    # checking private paths; refuse them instead of re-implementing that.
+    if any(segment in {".", ".."} for segment in path.split("/")):
+        return ""
+    keys = [key for key, _val in parse_qsl(parsed.query, keep_blank_values=True)]
+    if len(keys) != len(set(keys)):
         return ""
     return value
 

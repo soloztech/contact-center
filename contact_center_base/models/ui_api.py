@@ -235,6 +235,7 @@ class ContactCenterUiApi(models.AbstractModel):
                 else False
             ),
             "muted": bool(preference and preference.muted),
+            "revision": preference.revision if preference else 0,
         }
 
     @api.model
@@ -2596,10 +2597,7 @@ class ContactCenterUiApi(models.AbstractModel):
                 raise _ConversationPreferenceSerializationFailure(
                     "Concurrent conversation preference requires a fresh snapshot"
                 ) from error
-        if preference and not preference.pinned_at and not preference.muted:
-            preference.unlink()
-            preference = preference_model
-
+        # A cleared preference keeps its row, and so its revision order.
         serialized_preference = self._serialize_conversation_preference(preference)
         self._application()._notify_ui(
             channel,

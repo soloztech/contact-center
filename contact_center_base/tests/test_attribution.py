@@ -643,7 +643,19 @@ class TestContactCenterAttribution(SavepointCase):
         self.assertFalse(touchpoint.channel_binding_id)
 
     def test_opt_in_ui_is_safe_and_scoped_to_exact_binding(self):
-        first_event = self._event()
+        # A card without copy is shown only for a concrete (numeric) ad ID.
+        first_event = self._event(
+            attribution=self._attribution(
+                external_identifiers=[
+                    {
+                        "namespace": "meta.source_id",
+                        "role": "ad_source",
+                        "value": "120212345678900099",
+                        "source_field": "contextInfo.externalAdReply.sourceID",
+                    }
+                ]
+            )
+        )
         first_inbox = self._process_job(first_event)
         first_touchpoint = (
             self.env["contact.center.attribution.touchpoint"]
@@ -724,6 +736,7 @@ class TestContactCenterAttribution(SavepointCase):
         self.assertFalse(preview["thumbnail_url"])
         serialized = json.dumps(payload, sort_keys=True)
         for secret in (
+            "120212345678900099",
             "secret-ad-id",
             "secret-click-id",
             "https://example.invalid/private-campaign",
@@ -814,3 +827,83 @@ class TestContactCenterAttribution(SavepointCase):
             touchpoint.sudo().write({"network": "tampered"})
         with self.assertRaises(AccessError):
             touchpoint.sudo().unlink()
+
+    def test_projection_hides_lone_paid_signal_history_and_paginates_consistently(
+        self,
+    ):
+        self.account.sudo().write({"attribution_ui_enabled": True})
+        person = "5511%s@s.whatsapp.net" % str(uuid.uuid4().int)[:9]
+        signal = {
+            "touchpoint_type": "paid_ad_signal",
+            "evidence_level": "provider_hint",
+            "network": "meta",
+            "entry_point": {"conversion_source": "fb_ads"},
+        }
+        attributions = (
+            ("click", self._attribution()),
+            ("lone_signal", signal),
+            (
+                "identified_signal",
+                dict(
+                    signal,
+                    external_identifiers=[
+                        {
+                            "namespace": "meta.source_id",
+                            "role": "ad_source",
+                            "value": "120212345678900017",
+                        }
+                    ],
+                ),
+            ),
+            ("second_lone_signal", signal),
+            (
+                "entry_point",
+                {
+                    "touchpoint_type": "entry_point",
+                    "evidence_level": "provider_asserted_non_paid",
+                    "network": "whatsapp",
+                    "entry_point": {"source": "click_to_chat_link"},
+                },
+            ),
+        )
+        points = {}
+        for name, attribution in attributions:
+            inbox = self._process_job(
+                self._event(attribution=attribution, person_address=person)
+            )
+            points[name] = (
+                self.env["contact.center.attribution.touchpoint"]
+                .sudo()
+                .search([("inbox_event_id", "=", inbox.id)])
+            )
+            self.assertEqual(len(points[name]), 1)
+        binding = points["click"].channel_binding_id
+        self.assertTrue(binding)
+        self.assertEqual(
+            {point.channel_binding_id for point in points.values()}, {binding}
+        )
+        api = self.env["contact.center.ui.api"].with_user(self.agent)
+        channel_id = binding.channel_id.id
+
+        full = api.get_attribution(channel_id, limit=20)
+        expected = [
+            points[name].public_ref
+            for name in ("entry_point", "identified_signal", "click")
+        ]
+        self.assertEqual([item["public_ref"] for item in full["items"]], expected)
+        self.assertFalse(full["has_more"])
+
+        seen, cursor, pages = [], None, 0
+        while True:
+            page = api.get_attribution(channel_id, cursor=cursor, limit=1)
+            pages += 1
+            seen += [item["public_ref"] for item in page["items"]]
+            self.assertEqual(page["has_more"], bool(page["next_cursor"]))
+            if not page["has_more"]:
+                break
+            cursor = page["next_cursor"]
+        self.assertEqual(seen, expected)
+        self.assertEqual(pages, 3)
+        # The hidden evidence stays in the append-only ledger.
+        self.assertEqual(points["lone_signal"].touchpoint_type, "paid_ad_signal")
+        self.assertFalse(points["lone_signal"].identifier_ids)

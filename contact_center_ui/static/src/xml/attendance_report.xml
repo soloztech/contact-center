@@ -1,0 +1,211 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<templates xml:space="preserve">
+    <t t-name="contact_center_ui.AttendanceReport" owl="1">
+        <div class="o_action cc-attendance-report">
+            <header class="cc-attendance-report__header">
+                <div>
+                    <p class="cc-attendance-report__kicker">Relatórios</p>
+                    <h1>Atendimento</h1>
+                </div>
+                <button
+                    type="button"
+                    class="btn btn-secondary cc-attendance-report__episodes"
+                    t-att-disabled="!canOpenEpisodes"
+                    t-on-click="openEpisodes"
+                >Ver episódios</button>
+            </header>
+
+            <div class="cc-attendance-report__filters" role="search">
+                <label>
+                    <span>De</span>
+                    <input
+                        type="date"
+                        class="form-control cc-attendance-report__date-from"
+                        t-att-value="state.filters.date_from"
+                        t-on-change="(ev) => this.onFilterChange('date_from', ev)"
+                    />
+                </label>
+                <label>
+                    <span>Até</span>
+                    <input
+                        type="date"
+                        class="form-control cc-attendance-report__date-to"
+                        t-att-value="state.filters.date_to"
+                        t-on-change="(ev) => this.onFilterChange('date_to', ev)"
+                    />
+                </label>
+                <label>
+                    <span>Caixa</span>
+                    <select
+                        class="form-select cc-attendance-report__account"
+                        t-on-change="(ev) => this.onFilterChange('account_id', ev)"
+                    >
+                        <option value="">Todas</option>
+                        <t
+                            t-foreach="options.accounts"
+                            t-as="account"
+                            t-key="account.id"
+                        >
+                            <option
+                                t-att-value="account.id"
+                                t-att-selected="isSelected(account.id, state.filters.account_id)"
+                                t-esc="account.name"
+                            />
+                        </t>
+                    </select>
+                </label>
+                <label>
+                    <span>Responsável</span>
+                    <select
+                        class="form-select cc-attendance-report__responsible"
+                        t-on-change="(ev) => this.onFilterChange('responsible_id', ev)"
+                    >
+                        <option value="">Todos</option>
+                        <t t-foreach="options.responsibles" t-as="user" t-key="user.id">
+                            <option
+                                t-att-value="user.id"
+                                t-att-selected="isSelected(user.id, state.filters.responsible_id)"
+                                t-esc="user.name"
+                            />
+                        </t>
+                    </select>
+                </label>
+                <label>
+                    <span>Canal</span>
+                    <select
+                        class="form-select cc-attendance-report__platform"
+                        t-on-change="(ev) => this.onFilterChange('platform', ev)"
+                    >
+                        <option value="">Todos</option>
+                        <t
+                            t-foreach="options.platforms"
+                            t-as="platform"
+                            t-key="platform"
+                        >
+                            <option
+                                t-att-value="platform"
+                                t-att-selected="isSelected(platform, state.filters.platform)"
+                                t-esc="platform"
+                            />
+                        </t>
+                    </select>
+                </label>
+                <label>
+                    <span>Agrupar por</span>
+                    <select
+                        class="form-select cc-attendance-report__group-by"
+                        t-on-change="(ev) => this.onFilterChange('group_by', ev)"
+                    >
+                        <t
+                            t-foreach="groupByOptions"
+                            t-as="option"
+                            t-key="option.value"
+                        >
+                            <option
+                                t-att-value="option.value"
+                                t-att-selected="isSelected(option.value, state.filters.group_by)"
+                                t-esc="option.label"
+                            />
+                        </t>
+                    </select>
+                </label>
+            </div>
+
+            <div
+                t-if="state.error"
+                class="alert alert-warning cc-attendance-report__error"
+                role="alert"
+                t-esc="state.error"
+            />
+            <p
+                t-if="state.loading and !report"
+                class="cc-attendance-report__loading"
+            >Carregando…</p>
+
+            <div t-if="report" class="cc-attendance-report__body">
+                <div class="table-responsive">
+                    <table
+                        class="table table-sm cc-attendance-report__table"
+                        t-att-aria-busy="state.loading ? 'true' : 'false'"
+                    >
+                        <thead>
+                            <tr>
+                                <th scope="col">Grupo</th>
+                                <th scope="col" class="text-end">Episódios</th>
+                                <th scope="col" class="text-end">Respondidos</th>
+                                <th scope="col">1ª resposta (mediana · p90)</th>
+                                <th scope="col">Respostas seguintes (mediana · p90)</th>
+                                <th
+                                    scope="col"
+                                    class="text-end"
+                                >Sem resposta (em aberto)</th>
+                                <th
+                                    scope="col"
+                                    class="text-end"
+                                >Encerrados sem resposta</th>
+                                <th scope="col" class="text-end">Transferências</th>
+                                <th scope="col" class="text-end">Reaberturas</th>
+                                <th scope="col" class="text-end">Entradas / saídas</th>
+                                <th scope="col">Cobertura</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <t t-foreach="rows" t-as="row" t-key="row_index">
+                                <t t-call="contact_center_ui.AttendanceReportRow" />
+                            </t>
+                            <tr
+                                t-if="!rows.length and report.filters.group_by !== 'none'"
+                            >
+                                <td
+                                    colspan="11"
+                                    class="cc-attendance-report__empty"
+                                >Nenhum grupo no escopo: sem dados.</td>
+                            </tr>
+                        </tbody>
+                        <tfoot class="cc-attendance-report__total">
+                            <t t-set="row" t-value="report.total" />
+                            <t t-call="contact_center_ui.AttendanceReportRow" />
+                        </tfoot>
+                    </table>
+                </div>
+                <ul class="cc-attendance-report__notes">
+                    <t t-foreach="notes" t-as="note" t-key="note_index">
+                        <li t-esc="note" />
+                    </t>
+                </ul>
+            </div>
+        </div>
+    </t>
+
+    <t t-name="contact_center_ui.AttendanceReportRow" owl="1">
+        <tr t-att-data-group-key="row.key">
+            <th scope="row" t-esc="row.label" />
+            <td
+                class="text-end cc-attendance-report__episodes-count"
+                t-esc="row.episodes"
+            />
+            <td class="text-end" t-esc="row.answered" />
+            <td class="cc-attendance-report__first">
+                <span t-esc="formatPercentiles(row.first_response)" />
+                <small t-if="row.first_response.measured" class="d-block text-muted"><t
+                        t-esc="row.first_response.measured"
+                    /> medições</small>
+            </td>
+            <td class="cc-attendance-report__subsequent">
+                <span t-esc="formatPercentiles(row.subsequent_response)" />
+                <small
+                    t-if="row.subsequent_response.measured"
+                    class="d-block text-muted"
+                ><t t-esc="row.subsequent_response.measured" /> medições</small>
+            </td>
+            <td class="text-end cc-attendance-report__pending" t-esc="row.pending" />
+            <td class="text-end" t-esc="row.closed_unanswered" />
+            <td class="text-end" t-esc="row.transfers" />
+            <td class="text-end" t-esc="row.reopenings" />
+            <td class="text-end">
+                <t t-esc="row.inbound" /> / <t t-esc="row.outbound" />
+            </td>
+            <td class="cc-attendance-report__coverage" t-esc="formatCoverage(row)" />
+        </tr>
+    </t>
+</templates>

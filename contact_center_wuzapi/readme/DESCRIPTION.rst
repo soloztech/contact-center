@@ -28,9 +28,9 @@ Acquisition evidence is separate from CRM intake
 
 The addon depends on ``contact_center_base`` and has no CRM dependency. WhatsApp
 ``externalAdReply``, entry-point and UTM observations are normalized into Base's
-attribution DTOs. An isolated ``conversionSource=fbads`` hint is classified as
-``paid_ad_signal`` with ``provider_hint`` evidence; it neither identifies a campaign
-nor qualifies the conversation for CRM.
+attribution DTOs. An isolated ``conversionSource`` marker (for example ``FB_Ads``)
+is not acquisition evidence: WhatsApp repeats it on established conversations without
+any ad identity, so it creates no touchpoint. It is kept only beside real evidence.
 
 A supported ad referral with an identifier, or an explicit CTWA entry point, can
 carry stronger provider evidence. Identifiers such as an ad source and a CTWA click

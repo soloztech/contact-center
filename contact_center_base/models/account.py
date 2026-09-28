@@ -13,6 +13,10 @@ from ..services.adapter import (
     TransientAdapterError,
     adapter_registry,
 )
+from ..services.lifecycle import (
+    LIFECYCLE_SOURCE_ACCESS_CHANGE,
+    LIFECYCLE_SOURCE_CONTEXT_KEY,
+)
 from ..services.tokens import CONTACT_CENTER_MEMBERSHIP_TOKEN
 
 _logger = logging.getLogger(__name__)
@@ -1465,7 +1469,8 @@ class ContactCenterAccount(models.Model):
                 if responsible and responsible not in users:
                     values["contact_center_responsible_id"] = False
                 channel.sudo().with_context(
-                    contact_center_membership_token=CONTACT_CENTER_MEMBERSHIP_TOKEN
+                    contact_center_membership_token=CONTACT_CENTER_MEMBERSHIP_TOKEN,
+                    **{LIFECYCLE_SOURCE_CONTEXT_KEY: LIFECYCLE_SOURCE_ACCESS_CHANGE},
                 ).write(values)
                 channel._contact_center_reconcile_members(
                     partner_ids=users.partner_id.ids,

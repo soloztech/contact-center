@@ -3,7 +3,8 @@ import hashlib
 import logging
 import uuid
 
-from psycopg2.errors import SerializationFailure
+from psycopg2.errors import InFailedSqlTransaction
+from psycopg2.extensions import TransactionRollbackError
 
 from odoo import _, api, fields, models
 from odoo.exceptions import AccessError, ValidationError
@@ -254,6 +255,10 @@ class ContactCenterMediaBinding(models.Model):
                 self._as_dto(),
                 succeeded=bool(succeeded),
             )
+        except (TransactionRollbackError, InFailedSqlTransaction):
+            # A database conflict is not a provider cleanup failure: the
+            # transaction is aborted and must be retried by the caller.
+            raise
         except Exception:  # pylint: disable=broad-except
             # Attachment state is canonical and must not be reverted merely because
             # a provider-private cleanup hook failed. Providers need a bounded cron
@@ -305,6 +310,21 @@ class ContactCenterMediaBinding(models.Model):
         return True
 
     def _job_download(self):
+        """Queue entry point: a database conflict anywhere retries for free."""
+
+        try:
+            return self._job_download_body()
+        except RetryableJobError:
+            raise
+        except TransactionRollbackError as error:
+            # Serialization/deadlock from the body, its handlers, the final UI
+            # notification or provider cleanup. The whole transaction is retried;
+            # it is not a provider attempt and never consumes the retry ceiling.
+            raise RetryableJobError(
+                str(error), seconds=None, ignore_retry=True
+            ) from error
+
+    def _job_download_body(self):
         self.ensure_one()
         if not queue_job_owns_record(self):
             return False
@@ -369,13 +389,11 @@ class ContactCenterMediaBinding(models.Model):
                 }
             )
             self._finalize_provider_locator(succeeded=True)
-        except SerializationFailure as error:
+        except (RetryableJobError, TransactionRollbackError, InFailedSqlTransaction):
             # The post-I/O row lock intentionally converts a concurrent delete
-            # into a transaction retry.  This is not a provider attempt and must
-            # never consume the media retry ceiling.
-            raise RetryableJobError(
-                str(error), seconds=None, ignore_retry=True
-            ) from error
+            # into a transaction retry (see _job_download). Never write failure
+            # state on an aborted transaction.
+            raise
         except ProviderPausedError as error:
             raise RetryableJobError(
                 str(error),

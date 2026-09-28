@@ -49,6 +49,15 @@ class ContactCenterConversationPreference(models.Model):
             "persisted and realtime invalidation events are still delivered."
         ),
     )
+    revision = fields.Integer(
+        default=0,
+        readonly=True,
+        copy=False,
+        help=(
+            "Advanced by the database on every change, so clients can order "
+            "preference snapshots that reach them out of order."
+        ),
+    )
 
     _sql_constraints = [
         (
@@ -87,6 +96,9 @@ class ContactCenterConversationPreference(models.Model):
         records_values = []
         for values in vals_list:
             values = dict(values)
+            if "revision" in values:
+                raise AccessError(_("The preference revision is managed internally."))
+            values["revision"] = 1
             requested_user_id = values.get("user_id") or self.env.user.id
             if type(requested_user_id) is not int:  # noqa: E721 - reject bool
                 raise ValidationError(_("The preference user is invalid."))
@@ -109,12 +121,23 @@ class ContactCenterConversationPreference(models.Model):
             raise ValidationError(_("Unsupported conversation preference field."))
         for preference in self:
             self._validate_personal_scope(preference.channel_id, preference.user_id)
-        return super().write(values)
+        result = super().write(values)
+        if self:
+            # Every change, by the service or a direct write, advances the
+            # order in the database; two writers of one row conflict.
+            self.flush_recordset(["pinned_at", "muted"])
+            self.env.cr.execute(
+                "UPDATE contact_center_conversation_preference "
+                "SET revision = revision + 1 WHERE id IN %s",
+                [tuple(self.ids)],
+            )
+            self.invalidate_recordset(["revision"])
+        return result
 
     def unlink(self):
-        for preference in self:
-            self._validate_personal_scope(preference.channel_id, preference.user_id)
-        return super().unlink()
+        # Deleting and recreating would restart the order; a cleared preference
+        # keeps its row. Rows only go with their conversation or user (cascade).
+        raise AccessError(_("Conversation preferences are cleared, not deleted."))
 
     @api.constrains("channel_id", "user_id")
     def _check_personal_scope(self):

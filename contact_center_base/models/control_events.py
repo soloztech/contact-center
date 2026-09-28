@@ -13,6 +13,9 @@ _CONTROL_CONTENT_TYPES = frozenset(
         "call.accept",
         "call.terminate",
         "identity.security.changed",
+        # Projected by the WhatsApp Cloud adapter; listed here so every reader of
+        # control cards (guards, attendance report) treats it the same way.
+        "whatsapp.system",
     }
 )
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")

@@ -146,3 +146,51 @@ class TestMetaAdOrigin(MetaCase):
         self.assertEqual(event.message.text, "Hello Can I get more info")
         self.assertEqual(event.attribution[0].creative["title"], "A" * 256)
         self.assertNotIn("thumbnail_ref", event.attribution[0].creative)
+
+    def test_ads_referral_without_ad_id_keeps_touchpoint_without_empty_card(self):
+        cases = (
+            ("without_ad_id", None, False),
+            ("numeric_ad_id", "120212345678900017", True),
+        )
+        for label, ad_id, presentable in cases:
+            with self.subTest(case=label):
+                raw = self._fixture()
+                messaging = raw["entry"][0]["messaging"][0]
+                messaging["message"]["mid"] = "m_synthetic_ads_referral_%s" % label
+                referral = messaging["message"]["referral"]
+                referral.pop("ads_context_data")
+                referral.pop("ad_id")
+                if ad_id:
+                    referral["ad_id"] = ad_id
+                delivery = self.create_delivery(raw)
+                with trap_jobs():
+                    delivery.sudo().with_context(
+                        meta_webhook_internal=META_WEBHOOK_INTERNAL_TOKEN
+                    )._fanout_once()
+                dispatch = delivery.dispatch_ids.ensure_one()
+                result = self.env["meta.webhook.dispatcher"]._dispatch_consumer(
+                    dispatch
+                )
+                inbox = self.env["contact.center.inbox.event"].browse(
+                    int(result["result_ref"].rsplit(":", 1)[1])
+                )
+                inbox.with_context(job_uuid=inbox.queue_job_uuid)._job_process()
+                inbox.invalidate_recordset(["state"])
+                self.assertEqual(inbox.state, "done")
+                point = (
+                    self.env["contact.center.attribution.touchpoint"]
+                    .sudo()
+                    .search([("inbox_event_id", "=", inbox.id)])
+                )
+                self.assertEqual(len(point), 1)
+                self.assertEqual(point.touchpoint_type, "paid_ad_click")
+                self.assertTrue(point.message_binding_id)
+                self.assertEqual(point._has_ad_identity(), presentable)
+                preview = (
+                    self.env["contact.center.attribution.preview"]
+                    .sudo()
+                    .search([("touchpoint_id", "=", point.id)])
+                )
+                self.assertEqual(len(preview), 1)
+                self.assertFalse(preview.title or preview.body)
+                self.assertEqual(preview._is_presentable(), presentable)
