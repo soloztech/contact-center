@@ -12,6 +12,8 @@ _QUOTE_BATCH_SIZE = 500
 
 
 class ContactCenterRetentionDependencies(models.AbstractModel):
+    # Dependency checks compose with the feature-specific retention extensions.
+    # pylint: disable=consider-merging-classes-inherited
     _inherit = "contact.center.retention"
 
     def _retention_prepare_dependencies(

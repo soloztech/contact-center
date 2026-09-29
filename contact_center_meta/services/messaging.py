@@ -67,7 +67,7 @@ def _referral_ad_origin(value):
     """Read explicit Messenger/Instagram CTM fields, never the customer's text.
 
     Optional wire fields are documented by RestFB's PostbackReferral.AdsContextData:
-    https://restfb.com/javadoc/src-html/com/restfb/types/webhook/messaging/PostbackReferral.AdsContextData.html
+    https://restfb.com/javadoc/src-html/com/restfb/types/webhook/messaging/PostbackReferral.AdsContextData.html  # noqa: B950
     This is not the WhatsApp Cloud referral contract. Its body/source_url fields
     are not inferred from ref, postback title, message text, or a signed CDN URL.
     """

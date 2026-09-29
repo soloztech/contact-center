@@ -7,6 +7,9 @@ copy, active-source modification or service restart is performed. The isolated
 database and staged source are retained for subsequent QUnit verification.
 """
 
+# This standalone CLI prints machine-readable results to stdout.
+# pylint: disable=print-used
+
 import argparse
 import importlib.util
 import json

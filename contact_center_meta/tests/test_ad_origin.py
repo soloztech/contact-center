@@ -1,7 +1,7 @@
 """Synthetic optional CTM fields from RestFB PostbackReferral.AdsContextData.
 
 The fixture is not a WhatsApp Cloud payload and contains no customer material:
-https://restfb.com/javadoc/src-html/com/restfb/types/webhook/messaging/PostbackReferral.AdsContextData.html
+https://restfb.com/javadoc/src-html/com/restfb/types/webhook/messaging/PostbackReferral.AdsContextData.html  # noqa: B950
 """
 
 import copy

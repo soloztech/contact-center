@@ -26,6 +26,9 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
+# This standalone CLI prints machine-readable results to stdout.
+# pylint: disable=print-used
+
 
 INFRA = Path("/home/lucaszotelli/infra-ai-ops")
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -167,7 +170,9 @@ def preflight(env):
     }
     program = """import importlib,json,sys
 result={'python':sys.version,'imports':{}}
-for name in ['psycopg2','lxml','gevent','requests','phonenumbers','PIL','sass','werkzeug','babel']:
+modules = ['psycopg2','lxml','gevent','requests','phonenumbers',
+           'PIL','sass','werkzeug','babel']
+for name in modules:
     try:
         module=importlib.import_module(name)
         result['imports'][name]={'ok':True,'version':getattr(module,'__version__',None)}

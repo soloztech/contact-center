@@ -16,8 +16,8 @@ audio files use the same pipeline for WuzAPI and Meta.
 4. In the inbox's **Transcrição de áudio** tab, select a shared provider and configure
    **Conversas diretas** and **Conversas em grupo** independently. Each accepts
    **Disabled**, **Manual**, or **Automatic**. A provider is required when either type
-   is enabled. The provider's URL, API key, model and other settings remain shared;
-   they are not duplicated per inbox or conversation type.
+   is enabled. The provider's URL, API key, model and other settings remain shared; they
+   are not duplicated per inbox or conversation type.
 5. Manual mode exposes **Transcrever** beneath eligible audio of that type. Automatic
    mode queues transcription when its incoming audio download completes. For example,
    direct conversations can transcribe automatically while groups remain disabled or
@@ -28,15 +28,15 @@ audio files use the same pipeline for WuzAPI and Meta.
 
 The existing `transcription_mode` field keeps its stored value and now applies to direct
 conversations. Integrations that already write this field continue to configure direct
-conversations. The new `transcription_group_mode` field defaults to `disabled`, including
-on existing inboxes during module upgrade. No migration copies the old automatic mode
-into groups or submits historical audio. Administrators must explicitly enable groups.
-Already completed group transcripts remain available under the existing conversation
-permissions; queued group requests are skipped while groups are disabled.
+conversations. The new `transcription_group_mode` field defaults to `disabled`,
+including on existing inboxes during module upgrade. No migration copies the old
+automatic mode into groups or submits historical audio. Administrators must explicitly
+enable groups. Already completed group transcripts remain available under the existing
+conversation permissions; queued group requests are skipped while groups are disabled.
 
 The authoritative conversation type comes from the message's channel binding. Types
-other than `direct` and `group`, including unknown values, are disabled. Request payloads
-and context values cannot select a different transcription scope.
+other than `direct` and `group`, including unknown values, are disabled. Request
+payloads and context values cannot select a different transcription scope.
 
 The API key field is masked and accessible only to administrators. Alternatively,
 specify an environment variable starting with `CC_TRANSCRIPTION_`; this takes precedence
@@ -102,8 +102,8 @@ Center.
   or the provider before execution skips an already queued request. Changing that type
   from automatic to manual also skips requests originally queued automatically; explicit
   manual requests remain eligible. Changing group mode does not change direct jobs, and
-  changing direct mode does not change group jobs. There is no automatic provider fallback
-  that could send audio to an unselected external service.
+  changing direct mode does not change group jobs. There is no automatic provider
+  fallback that could send audio to an unselected external service.
 - Changing a provider's endpoint, backend, key or key reference invalidates pending
   requests through a routing revision. A new credential is never combined with an old
   queued endpoint. Environment-variable value rotation should retain the same provider
