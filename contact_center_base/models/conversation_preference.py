@@ -135,6 +135,8 @@ class ContactCenterConversationPreference(models.Model):
         return result
 
     def unlink(self):
+        # Intentional deletion guard: calling super would reset revision history.
+        # pylint: disable=method-required-super
         # Deleting and recreating would restart the order; a cleared preference
         # keeps its row. Rows only go with their conversation or user (cascade).
         raise AccessError(_("Conversation preferences are cleared, not deleted."))

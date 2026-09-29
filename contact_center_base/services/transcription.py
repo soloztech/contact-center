@@ -287,7 +287,7 @@ def _parse_response(response, deadline):
         content.extend(chunk)
     try:
         payload = json.loads(content)
-    except (ValueError, UnicodeError, RecursionError):
+    except (ValueError, RecursionError):
         raise TranscriptionError("invalid_response") from None
     if not isinstance(payload, dict) or not isinstance(payload.get("text"), str):
         raise TranscriptionError("invalid_response")

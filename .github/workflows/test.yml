@@ -48,7 +48,7 @@ jobs:
     container: ${{ matrix.container }}
     name: ${{ matrix.name }}
     env:
-      PEER_REF: ${{ inputs.peer_ref || '69e589a35c40247e03206856a5d869686c714a59' }}
+      PEER_REF: ${{ inputs.peer_ref || '675632982f9f61d6c5150fed7766181c39203787' }}
     strategy:
       fail-fast: false
       matrix:

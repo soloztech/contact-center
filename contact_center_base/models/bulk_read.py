@@ -18,6 +18,8 @@ BULK_READ_LIMIT = 200
 
 
 class ContactCenterUiApiBulkRead(models.AbstractModel):
+    # Keep bulk operations separate from the ad-preview API extension.
+    # pylint: disable=consider-merging-classes-inherited
     _inherit = "contact.center.ui.api"
 
     @api.model

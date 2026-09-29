@@ -39,7 +39,8 @@ class ContactCenterTranscriptionProvider(models.Model):
         string="API Key",
         copy=False,
         groups="contact_center_base.group_contact_center_admin",
-        help="Private credential used only by the server. An environment variable takes precedence.",
+        help="Private credential used only by the server. "
+        "An environment variable takes precedence.",
     )
     api_key_env = fields.Char(
         string="API Key Environment Variable",

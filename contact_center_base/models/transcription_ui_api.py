@@ -3,6 +3,8 @@ from odoo.exceptions import ValidationError
 
 
 class ContactCenterUiApi(models.AbstractModel):
+    # Keep this feature in its own cooperative ORM extension.
+    # pylint: disable=consider-merging-classes-inherited
     """Audio transcription projection and queueing for the operational UI."""
 
     _inherit = "contact.center.ui.api"

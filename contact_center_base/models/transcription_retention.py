@@ -2,6 +2,8 @@ from odoo import models
 
 
 class ContactCenterRetention(models.AbstractModel):
+    # Keep this feature in its own cooperative ORM extension.
+    # pylint: disable=consider-merging-classes-inherited
     _inherit = "contact.center.retention"
 
     def _jobs(self, records, messages):
