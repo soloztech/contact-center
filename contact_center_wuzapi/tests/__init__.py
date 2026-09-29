@@ -3,6 +3,7 @@ from . import (
     test_adapter,
     test_direct_start,
     test_group_metadata,
+    test_ingress_concurrency,
     test_onboarding,
     test_onboarding_concurrency,
     test_retention_ingress,

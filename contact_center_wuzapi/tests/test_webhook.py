@@ -337,11 +337,11 @@ class TestWuzapiWebhook(HttpCase):
         attempts = []
         connection_id = self.connection.id
 
-        def fail_once(connection, adapter, headers, signed_body):
+        def fail_once(connection, adapter, headers, signed_body, **kwargs):
             attempts.append(signed_body)
             if len(attempts) == 1:
                 raise ConcurrentUpdate("synthetic ingress admission conflict")
-            return original_lock(connection, adapter, headers, signed_body)
+            return original_lock(connection, adapter, headers, signed_body, **kwargs)
 
         with mock.patch.object(
             webhook_controller, "_locked_ingress_response", new=fail_once
@@ -1156,7 +1156,7 @@ class TestWuzapiWebhook(HttpCase):
         original_lock = model_class._contact_center_lock_ingress_admission
         rotated = []
 
-        def rotate_then_lock(recordset):
+        def rotate_then_lock(recordset, **kwargs):
             if not rotated:
                 target = (
                     recordset.sudo()
@@ -1167,7 +1167,7 @@ class TestWuzapiWebhook(HttpCase):
                     {"wuzapi_hmac_secret": rotated_secret}
                 )
                 rotated.append(True)
-            return original_lock(recordset)
+            return original_lock(recordset, **kwargs)
 
         try:
             with mock.patch.object(
@@ -1203,7 +1203,7 @@ class TestWuzapiWebhook(HttpCase):
         original_lock = model_class._contact_center_lock_ingress_admission
         rotated = []
 
-        def promote_then_lock(recordset):
+        def promote_then_lock(recordset, **kwargs):
             if not rotated:
                 target = (
                     recordset.sudo()
@@ -1220,7 +1220,7 @@ class TestWuzapiWebhook(HttpCase):
                     }
                 )
                 rotated.append(True)
-            return original_lock(recordset)
+            return original_lock(recordset, **kwargs)
 
         try:
             with mock.patch.object(

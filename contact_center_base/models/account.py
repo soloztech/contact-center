@@ -2336,7 +2336,7 @@ class ContactCenterProviderConnection(models.Model):
         )
         return connections
 
-    def _contact_center_lock_ingress_admission(self):
+    def _contact_center_lock_ingress_admission(self, *, exclusive_account=False):
         """Fence webhook admission without mutating a hot account row.
 
         Normal callbacks are concurrent readers of the active route. ``FOR KEY
@@ -2344,6 +2344,12 @@ class ContactCenterProviderConnection(models.Model):
         and ordinary non-key health writes. Topology and secret writers explicitly
         take ``FOR UPDATE`` first, so they still serialize with this admission read.
         The lock order remains account then connection, matching those writers.
+
+        A caller that will need account ``FOR UPDATE`` later must request it
+        here, before locking the connection. Group retention does so: upgrading
+        after two callbacks hold shared locks deadlocks, as does upgrading while
+        an operational writer holds account SHARE and waits for the connection.
+        This only locks the account; it does not rewrite its revision.
 
         This deliberately differs from ``_contact_center_lock_topology``: that
         writer increments a revision to detect write skew under REPEATABLE READ.
@@ -2359,9 +2365,10 @@ class ContactCenterProviderConnection(models.Model):
         }
         account_ids = sorted(set(expected_account_by_connection.values()))
         connection_ids = sorted(expected_account_by_connection)
+        account_lock = "UPDATE" if exclusive_account else "KEY SHARE"
         self.env.cr.execute(
             "SELECT id FROM contact_center_account WHERE id = ANY(%s) "
-            "ORDER BY id FOR KEY SHARE",
+            "ORDER BY id FOR " + account_lock,
             [account_ids],
         )
         locked_account_ids = {row[0] for row in self.env.cr.fetchall()}

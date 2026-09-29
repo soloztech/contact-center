@@ -298,10 +298,14 @@ def _authenticate_connection_webhook(connection, adapter, headers, body):
     )
 
 
-def _locked_ingress_response(connection, adapter, headers, body):
+def _locked_ingress_response(
+    connection, adapter, headers, body, *, exclusive_account=False
+):
     """Return ``(response, block_reason)`` after serialized ingress admission."""
 
-    connection = connection._contact_center_lock_ingress_admission()
+    connection = connection._contact_center_lock_ingress_admission(
+        exclusive_account=exclusive_account
+    )
     if not connection:
         return _json_response({"error": "not_found"}, 404), ""
     connection.ensure_one()
@@ -536,8 +540,18 @@ def _capture_ad_origin_preview(
 
 
 def _conversation_ingress_response(connection, adapter, headers, body, envelope):
+    # Group retention takes account FOR UPDATE again here and during inbox
+    # create. Acquire that mode before the connection lock, never upgrade a
+    # shared account lock while another callback/writer can hold it too.
+    route = request.env["contact.center.retention"]._retention_route(
+        connection, envelope
+    )
     response, block_reason = _locked_ingress_response(
-        connection, adapter, headers, body
+        connection,
+        adapter,
+        headers,
+        body,
+        exclusive_account=bool(route and route.get("conversation_type") == "group"),
     )
     if response is None and request.env[
         "contact.center.conversation.ignore"
