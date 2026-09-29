@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<templates xml:space="preserve">
+    <t t-name="contact_center_sale.ConversationsDialog" owl="1">
+        <Dialog title="'Atendimentos'" size="'md'">
+            <div
+                class="cc-sale-conversations"
+                t-att-aria-busy="state.loading || state.opening"
+            >
+                <p
+                    class="text-muted"
+                >Conversas do cliente e dos contatos vinculados à empresa. O conteúdo depende do seu acesso à caixa.</p>
+                <div t-if="state.error" class="alert alert-warning" role="alert">
+                    <t t-esc="state.error" />
+                    <button
+                        class="btn btn-link cc-sale-retry"
+                        t-on-click="() => this.load(0)"
+                        t-att-disabled="state.loading || state.opening"
+                    >Tentar novamente</button>
+                </div>
+                <p t-if="state.loading" role="status">Carregando atendimentos…</p>
+                <t t-else="">
+                    <p><strong t-esc="state.total" /> conversa(s)</p>
+                    <div class="table-responsive" t-if="state.items.length">
+                        <table class="table table-hover">
+                            <thead><tr><th>Contato</th><th>Caixa</th><th
+                                    >Acesso</th></tr></thead>
+                            <tbody>
+                                <tr
+                                    t-foreach="state.items"
+                                    t-as="row"
+                                    t-key="row_index"
+                                >
+                                    <td class="align-middle"><t
+                                            t-esc="row.contact_name"
+                                        /></td>
+                                    <td class="align-middle"><t
+                                            t-esc="row.inbox_name"
+                                        /></td>
+                                    <td class="align-middle text-nowrap">
+                                        <button
+                                            t-if="row.can_open"
+                                            class="btn btn-primary btn-sm cc-sale-open"
+                                            t-on-click="() => this.open(row)"
+                                            t-att-disabled="state.opening || state.loading"
+                                        >Abrir conversa</button>
+                                        <span
+                                            t-else=""
+                                            class="text-muted cc-sale-restricted"
+                                        ><i class="fa fa-lock me-1" />Sem acesso</span>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <p
+                        t-elif="!state.error"
+                        class="cc-sale-empty"
+                    >Nenhum atendimento encontrado para este cliente.</p>
+                </t>
+                <div
+                    t-if="state.total &gt; state.limit || state.offset"
+                    class="d-flex align-items-center justify-content-between"
+                >
+                    <button
+                        class="btn btn-secondary cc-sale-previous"
+                        t-att-disabled="!state.offset || state.loading || state.opening"
+                        t-on-click="() => this.load(Math.max(0, state.offset - state.limit))"
+                    >Anterior</button>
+                    <span>Página <t
+                            t-esc="Math.floor(state.offset / state.limit) + 1"
+                        /></span>
+                    <button
+                        class="btn btn-secondary cc-sale-next"
+                        t-att-disabled="!state.has_more || state.loading || state.opening"
+                        t-on-click="() => this.load(state.offset + state.limit)"
+                    >Próxima</button>
+                </div>
+            </div>
+            <t t-set-slot="footer">
+                <button
+                    class="btn btn-secondary cc-sale-close"
+                    t-on-click="props.close"
+                >Fechar</button>
+            </t>
+        </Dialog>
+    </t>
+</templates>

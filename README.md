@@ -39,6 +39,7 @@ readiness for a new deployment. Current contracts live in the guides and addon R
 | `contact_center_meta`   | Messenger and Page-linked Instagram messaging through shared Meta foundations                              |
 | `contact_center_kanban` | Optional service cases, pipelines and CRM stage synchronization                                            |
 | `contact_center_crm`    | Customer opportunities, quotations, orders and invoices in the chat; usable without Kanban                 |
+| `contact_center_sale`   | Customer conversations from quotations/orders, with inbox permissions and native floating chat             |
 
 Base has no CRM or Kanban dependency. CRM depends on the UI and native CRM; Kanban
 extends CRM. Meta's technical foundations, `meta_api_base` and `meta_webhook_base`, are
