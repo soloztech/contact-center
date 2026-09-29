@@ -1,12 +1,7 @@
 /** @odoo-module **/
 
-import {Component, onWillDestroy, onWillStart, useState} from "@odoo/owl";
-import {Dropdown} from "@web/core/dropdown/dropdown";
-import {DropdownItem} from "@web/core/dropdown/dropdown_item";
 import {browser} from "@web/core/browser/browser";
 import {contactCenterNotifications} from "./contact_center_model.esm";
-import {registry} from "@web/core/registry";
-import {useService} from "@web/core/utils/hooks";
 
 export const SYSTRAY_SUMMARY_DEBOUNCE = 800;
 export const SYSTRAY_SAFETY_REFRESH = 5 * 60 * 1000;
@@ -25,15 +20,6 @@ const REFRESHING_EVENTS = new Set([
     "conversation_deleted",
     "conversation_preference_updated",
 ]);
-
-export function systrayInboxAction(preset = false) {
-    return {
-        type: "ir.actions.client",
-        tag: "contact_center_ui.inbox",
-        name: "Contact Center",
-        params: preset ? {preset} : {},
-    };
-}
 
 /**
  * Unread summary of the top bar, independent from the Central's store.
@@ -163,50 +149,3 @@ export class SystraySummary {
         return true;
     }
 }
-
-export class ContactCenterSystray extends Component {
-    setup() {
-        this.action = useService("action");
-        const orm = useService("orm");
-        const busService = useService("bus_service");
-        const user = useService("user");
-        this.state = useState({enabled: false, mine: 0, all: 0});
-        this.summary = new SystraySummary({
-            // A background refresh: no loading indicator, never blocks the UI.
-            call: () => orm.silent.call("contact.center.ui.api", "systray_summary", []),
-            userId: user.userId,
-            onChange: (value) => Object.assign(this.state, value),
-        });
-        const onNotification = (event) =>
-            this.summary.handleNotifications(event && event.detail);
-        const onFocus = () => this.summary.schedule();
-        onWillStart(() => {
-            // Never delay the web client: the counts arrive when ready.
-            this.summary.start();
-            busService.addEventListener("notification", onNotification);
-            browser.addEventListener("focus", onFocus);
-        });
-        onWillDestroy(() => {
-            busService.removeEventListener("notification", onNotification);
-            browser.removeEventListener("focus", onFocus);
-            this.summary.destroy();
-        });
-    }
-
-    open(preset) {
-        return this.action.doAction(systrayInboxAction(preset), {
-            clearBreadcrumbs: true,
-        });
-    }
-}
-
-ContactCenterSystray.template = "contact_center_ui.ContactCenterSystray";
-ContactCenterSystray.components = {Dropdown, DropdownItem};
-
-registry
-    .category("systray")
-    .add(
-        "contact_center_ui.ContactCenterSystray",
-        {Component: ContactCenterSystray},
-        {sequence: 25}
-    );

@@ -1572,6 +1572,18 @@ export class MessageComposer extends Component {
         if (event.defaultPrevented || document.querySelector(".o_dialog")) {
             return false;
         }
+        const root =
+            this.inputRef &&
+            this.inputRef.el &&
+            this.inputRef.el.closest(".cc-composer");
+        if (
+            root &&
+            (root.closest(".cc-chat-content") ||
+                document.querySelectorAll(".cc-composer").length > 1) &&
+            (!root.getClientRects().length || !root.contains(document.activeElement))
+        ) {
+            return false;
+        }
         const shortcut = composerShortcut(event);
         if (!shortcut || !this.conversation || this.switchHasBlockingWork) {
             return false;

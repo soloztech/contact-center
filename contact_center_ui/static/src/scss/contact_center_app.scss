@@ -1562,7 +1562,8 @@ html .o_web_client > .o_action_manager > .o_action.o_contact_center_ui {
         box-shadow: inset -1px 0 0 var(--cc-white);
     }
 
-    &.has-unread strong {
+    &.has-unread strong,
+    &.has-unread .cc-conversation-item__preview > span {
         font-weight: 750;
     }
 

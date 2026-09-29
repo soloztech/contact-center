@@ -11,17 +11,9 @@ import {
     createInboxDocumentContext,
 } from "@contact_center_ui/js/contact_center_store.esm";
 import {
-    ContactCenterSystray,
     SYSTRAY_SUMMARY_DEBOUNCE,
     SystraySummary,
-    systrayInboxAction,
 } from "@contact_center_ui/js/contact_center_systray.esm";
-import {click, getFixture, mount, patchWithCleanup} from "@web/../tests/helpers/utils";
-import {browser} from "@web/core/browser/browser";
-import {hotkeyService} from "@web/core/hotkeys/hotkey_service";
-import {makeTestEnv} from "@web/../tests/helpers/mock_env";
-import {registry} from "@web/core/registry";
-import {uiService} from "@web/core/ui/ui_service";
 
 const USER_ID = 7;
 
@@ -220,137 +212,6 @@ QUnit.module("contact_center_ui > systray", () => {
             assert.strictEqual(timer.pending.size, 0);
         }
     );
-
-    QUnit.test(
-        "the top-bar item renders the counts and opens each preset",
-        async (assert) => {
-            const timer = fakeTimer();
-            patchWithCleanup(browser, {
-                setTimeout: (callback, delay) => timer.setTimeout(callback, delay),
-                clearTimeout: (id) => timer.clearTimeout(id),
-            });
-            const bus = new EventTarget();
-            const summaries = [];
-            const actions = [];
-            const services = registry.category("services");
-            services.add("hotkey", hotkeyService, {force: true});
-            services.add("ui", uiService, {force: true});
-            services.add(
-                "orm",
-                {
-                    start: () => ({
-                        silent: {
-                            call: (model, method) => {
-                                summaries.push([model, method]);
-                                return Promise.resolve({
-                                    enabled: true,
-                                    mine_unread: 3,
-                                    all_unread: 8,
-                                });
-                            },
-                        },
-                    }),
-                },
-                {force: true}
-            );
-            services.add(
-                "action",
-                {
-                    start: () => ({
-                        doAction: (action, options) => actions.push([action, options]),
-                    }),
-                },
-                {force: true}
-            );
-            services.add("bus_service", {start: () => bus}, {force: true});
-            services.add("user", {start: () => ({userId: USER_ID})}, {force: true});
-            const env = await makeTestEnv();
-            const target = getFixture();
-            const systray = await mount(ContactCenterSystray, target, {env});
-            await settle();
-            assert.deepEqual(summaries, [["contact.center.ui.api", "systray_summary"]]);
-            assert.strictEqual(
-                target.querySelector(".o_contact_center_systray_counter").innerText,
-                "3",
-                "the badge shows the agent's own unread conversations"
-            );
-            await click(target, ".o_contact_center_systray .dropdown-toggle");
-            await click(target, ".o_contact_center_systray_mine");
-            await click(target, ".o_contact_center_systray .dropdown-toggle");
-            await click(target, ".o_contact_center_systray_all");
-            assert.deepEqual(
-                actions.map(([action, options]) => [action.params, options]),
-                [
-                    [{preset: "mine_unread"}, {clearBreadcrumbs: true}],
-                    [{preset: "all_unread"}, {clearBreadcrumbs: true}],
-                ]
-            );
-            // The bus and the window focus reach the summary...
-            bus.dispatchEvent(
-                new CustomEvent("notification", {
-                    detail: [notification("message_created")],
-                })
-            );
-            window.dispatchEvent(new Event("focus"));
-            assert.strictEqual(
-                [...timer.pending.values()].filter(
-                    (item) => item.delay === SYSTRAY_SUMMARY_DEBOUNCE
-                ).length,
-                1
-            );
-            // ...and nothing is left listening once the item goes away.
-            systray.__owl__.app.destroy();
-            assert.strictEqual(timer.pending.size, 0);
-            bus.dispatchEvent(
-                new CustomEvent("notification", {
-                    detail: [notification("message_created")],
-                })
-            );
-            window.dispatchEvent(new Event("focus"));
-            assert.strictEqual(timer.pending.size, 0);
-        }
-    );
-
-    QUnit.test("nothing renders for a user without the agent role", async (assert) => {
-        const services = registry.category("services");
-        services.add("hotkey", hotkeyService, {force: true});
-        services.add("ui", uiService, {force: true});
-        services.add(
-            "orm",
-            {
-                start: () => ({
-                    silent: {
-                        call: () =>
-                            Promise.resolve({schema_version: 1, enabled: false}),
-                    },
-                }),
-            },
-            {force: true}
-        );
-        services.add(
-            "action",
-            {start: () => ({doAction: () => undefined})},
-            {force: true}
-        );
-        services.add("bus_service", {start: () => new EventTarget()}, {force: true});
-        services.add("user", {start: () => ({userId: USER_ID})}, {force: true});
-        const env = await makeTestEnv();
-        const target = getFixture();
-        const systray = await mount(ContactCenterSystray, target, {env});
-        await settle();
-        assert.notOk(target.querySelector(".o_contact_center_systray"));
-        systray.__owl__.app.destroy();
-    });
-
-    QUnit.test("each item opens the Central with its preset", (assert) => {
-        assert.deepEqual(systrayInboxAction("mine_unread"), {
-            type: "ir.actions.client",
-            tag: "contact_center_ui.inbox",
-            name: "Contact Center",
-            params: {preset: "mine_unread"},
-        });
-        assert.deepEqual(systrayInboxAction(false).params, {});
-    });
 
     QUnit.test(
         "a preset opens the counted list, selects nothing and keeps the saved filters",

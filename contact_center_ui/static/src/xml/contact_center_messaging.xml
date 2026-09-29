@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<templates xml:space="preserve">
+    <t t-inherit="mail.MessagingMenu" t-inherit-mode="extension" owl="1">
+        <xpath
+            expr="//div[hasclass('o_MessagingMenu_dropdownMenuHeader')]/div[hasclass('flex-grow-1')]"
+            position="before"
+        >
+            <button
+                t-if="contactCenter.enabled"
+                type="button"
+                role="tab"
+                class="o_MessagingMenuTab btn btn-link cc-messaging-tab"
+                t-att-class="{'o-active fw-bolder': messagingMenu.activeTabId === 'contact_center', 'text-dark': messagingMenu.activeTabId !== 'contact_center'}"
+                t-att-aria-selected="messagingMenu.activeTabId === 'contact_center' ? 'true' : 'false'"
+                t-on-click="openContactCenterTab"
+            >Contact Center <span
+                    t-if="contactCenter.mine"
+                    class="badge rounded-pill bg-success"
+                    t-esc="contactCenter.mine"
+                /></button>
+        </xpath>
+        <xpath
+            expr="//t[@t-if='messagingMenu.notificationListView']"
+            position="attributes"
+        >
+            <attribute
+                name="t-if"
+            >messagingMenu.notificationListView and messagingMenu.activeTabId !== 'contact_center'</attribute>
+        </xpath>
+        <xpath
+            expr="//t[@t-if='messagingMenu.mobileMessagingNavbarView']"
+            position="before"
+        >
+            <ContactCenterMessagingList
+                t-if="contactCenter.enabled and messagingMenu.activeTabId === 'contact_center'"
+            />
+        </xpath>
+        <xpath expr="//a[hasclass('o_MessagingMenu_toggler')]" position="attributes">
+            <attribute
+                name="t-att-class"
+            >{'o-no-notification': !contactCenterCounter}</attribute>
+        </xpath>
+        <xpath expr="//t[@t-elif='messagingMenu.counter > 0']" position="attributes">
+            <attribute name="t-elif">contactCenterCounter > 0</attribute>
+        </xpath>
+        <xpath expr="//t[@t-esc='messagingMenu.counter']" position="attributes">
+            <attribute name="t-esc">contactCenterCounter</attribute>
+        </xpath>
+    </t>
+
+    <t t-name="contact_center_ui.MessagingList" owl="1">
+        <div
+            class="cc-messaging-list flex-grow-1 overflow-auto"
+            role="tabpanel"
+            aria-label="Contact Center"
+        >
+            <div t-if="state.phase === 'error'" class="p-3 text-center" role="alert">
+                <p>Não foi possível carregar suas conversas.</p>
+                <button
+                    type="button"
+                    class="btn btn-link"
+                    t-on-click="() => this.load()"
+                >Tentar novamente</button>
+            </div>
+            <div
+                t-elif="state.phase === 'ready' and !state.items.length"
+                class="p-4 text-muted text-center"
+            >
+                Nenhuma conversa atribuída a você.
+            </div>
+            <button
+                t-foreach="state.items"
+                t-as="conversation"
+                t-key="conversation.channel_id"
+                type="button"
+                class="cc-messaging-item d-flex align-items-center w-100 p-2 border-0 border-bottom text-start"
+                t-att-class="{'has-unread': conversation.unread_count > 0}"
+                t-att-data-channel-id="conversation.channel_id"
+                t-on-click="() => this.open(conversation)"
+            >
+                <DeferredImage
+                    t-if="avatar(conversation)"
+                    src="avatar(conversation)"
+                    className="'cc-messaging-avatar rounded-circle me-2'"
+                    alt="''"
+                    ariaHidden="true"
+                />
+                <span
+                    t-else=""
+                    class="cc-messaging-avatar rounded-circle me-2"
+                    aria-hidden="true"
+                    t-esc="initials(conversation)"
+                />
+                <span class="cc-messaging-item-text flex-grow-1 overflow-hidden">
+                    <span
+                        class="d-block text-truncate cc-messaging-name"
+                        t-esc="name(conversation)"
+                    />
+                    <small
+                        t-if="conversation.account"
+                        class="d-block text-muted text-truncate"
+                        t-esc="conversation.account.name"
+                    />
+                    <span
+                        class="d-block text-truncate cc-messaging-preview"
+                        t-esc="preview(conversation)"
+                    />
+                </span>
+                <span
+                    t-if="conversation.unread_count"
+                    class="badge rounded-pill bg-success ms-2"
+                    t-esc="conversation.unread_count"
+                />
+            </button>
+            <div
+                t-if="state.phase === 'loading'"
+                class="p-3 text-center text-muted"
+                role="status"
+            >Carregando conversas…</div>
+            <button
+                t-elif="state.more"
+                type="button"
+                class="btn btn-link w-100"
+                t-on-click="() => this.load(true)"
+            >Ver mais conversas</button>
+        </div>
+    </t>
+
+    <t t-inherit="mail.ChatWindow" t-inherit-mode="extension" owl="1">
+        <xpath expr="//div[hasclass('o_ChatWindow')]" position="attributes">
+            <attribute
+                name="t-att-data-contact-center-id"
+            >chatWindow.contactCenterChannelId || false</attribute>
+        </xpath>
+        <xpath expr="//div[hasclass('o_ChatWindow')]" position="attributes">
+            <attribute
+                name="t-att-style"
+            >chatWindow.componentStyle + (chatWindow.contactCenterChannelId and !chatWindow.isVisible ? '; display: none !important;' : '')</attribute>
+        </xpath>
+        <xpath expr="//ChatWindowHeader" position="after">
+            <ContactCenterChat
+                t-if="chatWindow.contactCenterChannelId"
+                chatWindow="chatWindow"
+            />
+        </xpath>
+    </t>
+
+    <t t-inherit="mail.ChatWindowManager" t-inherit-mode="extension" owl="1">
+        <xpath expr="//t[@t-as='chatWindow']" position="attributes">
+            <attribute
+                name="t-foreach"
+            >messaging.chatWindowManager.allOrderedVisible.concat(messaging.chatWindowManager.allOrderedHidden.filter(win => win.contactCenterChannelId))</attribute>
+        </xpath>
+    </t>
+
+    <t t-name="contact_center_ui.Chat" owl="1">
+        <section
+            class="o_contact_center_ui cc-chat-content cc-mobile-pane--conversation"
+            t-att-style="props.chatWindow.isFolded ? 'display: none;' : ''"
+            t-on-pointerdown="() => store.resumeSeen()"
+            t-on-keydown="() => store.resumeSeen()"
+            t-on-focusin="() => props.chatWindow.update({isFocused: true})"
+            aria-label="Conversa do Contact Center"
+        >
+            <div
+                t-if="ui.loading || store.state.phase === 'loading'"
+                class="p-3 text-center"
+                role="status"
+            >Carregando conversa…</div>
+            <t t-elif="conversation">
+                <div
+                    class="cc-chat-account text-muted px-2 py-1 border-bottom"
+                    t-if="conversation.account"
+                    t-esc="conversation.account.name"
+                />
+                <ConversationTimeline state="store.state" store="store" />
+                <MessageComposer
+                    t-if="canCompose"
+                    conversation="conversation"
+                    state="store.state"
+                    store="store"
+                />
+                <div
+                    t-else=""
+                    class="p-2 text-muted"
+                >Envio indisponível nesta conversa.</div>
+            </t>
+            <div t-else="" class="p-3 text-center" role="status">
+                <p>A conversa está indisponível.</p>
+                <button
+                    type="button"
+                    class="btn btn-link"
+                    t-on-click="retry"
+                >Tentar novamente</button>
+            </div>
+        </section>
+    </t>
+</templates>
