@@ -4,7 +4,7 @@
         <field name="name">contact.center.resolution.reason.tree</field>
         <field name="model">contact.center.resolution.reason</field>
         <field name="arch" type="xml">
-            <tree decoration-muted="not active">
+            <tree decoration-muted="not active" editable="bottom">
                 <field name="sequence" widget="handle" />
                 <field name="name" />
                 <field name="company_id" groups="base.group_multi_company" />

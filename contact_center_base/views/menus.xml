@@ -231,9 +231,10 @@
     <menuitem
         id="menu_contact_center_accounts"
         name="Inboxes"
-        parent="menu_contact_center_configuration"
+        parent="menu_contact_center_operations"
         action="action_contact_center_accounts"
-        sequence="10"
+        sequence="60"
+        groups="contact_center_base.group_contact_center_supervisor"
     />
     <menuitem
         id="menu_contact_center_connections"
@@ -245,9 +246,10 @@
     <menuitem
         id="menu_contact_center_teams"
         name="Teams"
-        parent="menu_contact_center_configuration"
+        parent="menu_contact_center_operations"
         action="action_contact_center_teams"
-        sequence="30"
+        sequence="65"
+        groups="contact_center_base.group_contact_center_supervisor"
     />
     <menuitem
         id="menu_contact_center_agents"

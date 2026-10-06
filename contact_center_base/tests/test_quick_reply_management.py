@@ -398,6 +398,8 @@ class TestContactCenterQuickReplyManagement(SavepointCase):
                     "identity_conflicts": supervisor_access,
                     "resolution_reasons": supervisor_access,
                     "tags": supervisor_access,
+                    "accounts": supervisor_access,
+                    "teams": supervisor_access,
                     "configuration": admin_access,
                     "technical": technical_access,
                 }
