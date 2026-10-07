@@ -214,6 +214,8 @@ class TestBusinessJourney(ConversationCrmCase):
                 }
             )
         self.company_lead.user_id = self.other
+        # Finish the privileged writer before assertion savepoints choose an actor.
+        self.env.flush_all()
         with self.assertRaises(AccessError):
             scope.copy({"lead_id": self.company_lead.id})
         with self.assertRaises(AccessError):
@@ -549,6 +551,8 @@ class TestBusinessJourney(ConversationCrmCase):
         with self.assertRaises(AccessError):
             lead.open_contact_center_journey_conversation(self.channel.id)
         self.lead.user_id = self.other
+        # Native properties must recompute before the lead becomes unreadable.
+        self.env.flush_all()
         with self.assertRaises(AccessError):
             lead.get_contact_center_journey()
         with self.assertRaises(AccessError):

@@ -289,7 +289,11 @@ class TestCrmIntake(ConversationCrmCase):
                 binding = self._new(phone=None)
                 self._message(binding, content_type="identity.security.changed")
                 self.assertFalse(binding.crm_intake_state)
-                self._message(binding, content_type=content)
+                self._message(
+                    binding,
+                    content_type=content,
+                    external_message_id="provider-control:" + uuid.uuid4().hex,
+                )
                 self.assertEqual(binding.crm_intake_state, "pending")
 
     def test_existing_conversation_is_excluded_even_with_new_message(self):
@@ -685,9 +689,12 @@ class TestCrmIntake(ConversationCrmCase):
     def test_old_id_watermark_excludes_even_when_dates_are_new(self):
         binding = self._new()
         self.account.crm_intake_enabled = False
-        self.account.crm_intake_enabled = True
+        # Pin policy time instead of writing create_date (ignored by native ORM).
+        policy_time = binding.create_date - datetime.timedelta(seconds=2)
+        with patch.object(fields.Datetime, "now", return_value=policy_time):
+            self.account.crm_intake_enabled = True
+        self.assertGreaterEqual(binding.create_date, self.account.crm_intake_enabled_at)
         self.assertLessEqual(binding.id, self.account.crm_intake_binding_watermark)
-        binding.write({"create_date": self.account.crm_intake_enabled_at})
         self._message(binding)
         self.assertFalse(binding.crm_intake_state)
 
