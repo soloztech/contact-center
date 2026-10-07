@@ -74,12 +74,10 @@ def content_vocabulary(tree, *, wuzapi=False, structured=False):
             }
         ):
             result.update(wuzapi_return_choices(node))
-        if (
-            structured
-            and isinstance(node, ast.Return)
-            and isinstance(node.value, ast.Tuple)
-        ):
-            result.update(dictionary_choices(node.value.elts[0], "type"))
+        if structured:
+            # Structured helpers also return bare dicts, not only tuples.
+            # Button sub-types never become message-binding content_type.
+            result.update(dictionary_choices(node, "type") - {"reply", "url", "phone"})
     return result
 
 

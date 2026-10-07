@@ -2,6 +2,8 @@ import datetime
 import uuid
 from unittest.mock import patch
 
+from psycopg2 import OperationalError
+
 from odoo import fields
 from odoo.exceptions import AccessError, ValidationError
 from odoo.tests import tagged
@@ -116,6 +118,7 @@ class TestCrmIntake(ConversationCrmCase):
         )
         self.assertTrue(lead.contact_center_intake_created)
         self.assertFalse(lead.partner_id)
+        self.assertFalse(lead.team_id)
         self.assertNotIn("Synthetic private", lead.description or "")
         link = lead._conversation_links()
         self.assertEqual(
@@ -661,3 +664,43 @@ class TestCrmIntake(ConversationCrmCase):
         self.assertFalse(self.account.crm_intake_enabled)
         with self.assertRaises(AccessError):
             self.account.with_user(supervisor).write({"crm_intake_enabled": True})
+
+    def test_manual_unlink_before_first_customer_reply_requires_review(self):
+        binding = self._new(partner=self.person)
+        self._message(binding, direction="outbound", origin="agent")
+        link = self.env["contact.center.crm.conversation.link"]._link(
+            binding.channel_id, self.lead, writer="manual"
+        )
+        old = fields.Datetime.now() - datetime.timedelta(seconds=2)
+        with patch.object(fields.Datetime, "now", return_value=old):
+            link._tombstone("manual")
+        self._message(binding)
+        self.assertEqual(binding.crm_intake_state, "pending")
+        self.assertLess(link.unlinked_at, binding.crm_intake_admitted_at)
+        self._run(binding)
+        self.assertEqual(binding.crm_intake_state, "review")
+        self.assertEqual(binding.crm_intake_reason, "manual_unlink")
+        self.assertFalse(self.lead._conversation_links())
+
+    def test_old_id_watermark_excludes_even_when_dates_are_new(self):
+        binding = self._new()
+        self.account.crm_intake_enabled = False
+        self.account.crm_intake_enabled = True
+        self.assertLessEqual(binding.id, self.account.crm_intake_binding_watermark)
+        binding.write({"create_date": self.account.crm_intake_enabled_at})
+        self._message(binding)
+        self.assertFalse(binding.crm_intake_state)
+
+    def test_group_binding_is_excluded_and_operational_failure_propagates(self):
+        binding = self._new(phone=None)
+        binding.write({"conversation_type": "group", "identity_id": False})
+        self._message(binding)
+        self.assertFalse(binding.crm_intake_state)
+        binding = self._new()
+        with patch.object(
+            type(binding),
+            "_crm_intake_admit",
+            side_effect=OperationalError("Synthetic transient ingress failure"),
+        ):
+            with self.assertRaises(OperationalError):
+                self._message(binding)

@@ -46,3 +46,44 @@ O corte começa no segundo seguinte à ativação, conservando a precisão das d
 provedor. Mensagens recebidas antes desse horário ficam fora da regra, inclusive
 webhooks antigos processados depois. Arquivar a caixa desliga a entrada e invalida jobs
 pendentes; desarquivar mantém a entrada desligada até nova ativação explícita.
+
+Sem equipe CRM configurada na caixa, os novos leads ficam explicitamente **sem equipe
+comercial**, mantendo o responsável da conversa ou executor. Configure a equipe da
+empresa na caixa quando quiser incluí-los automaticamente no funil de uma equipe.
+Remoção manual do vínculo também exige revisão se ocorreu antes da primeira resposta do
+cliente; a entrada não refaz essa associação.
+
+### Recuperar um agendamento que falhou
+
+Procurar no log
+`CRM intake admission deferred for channel binding ID (message binding ID; CLASSE)`. O
+primeiro ID é a conversa a selecionar, não o ID da mensagem. Um administrador Contact
+autorizado pode recuperar somente os IDs analisados via shell nativo sob os locks
+operacionais existentes (não usar UID1 como executor permanente nem varrer todo o
+histórico):
+
+```python
+# env é o ambiente do shell nativo; administrador deve ter grupo Contact Admin.
+# Substituir pelos IDs de channel bindings explicitamente conferidos no log.
+selected_ids = [123]
+assert 0 < len(selected_ids) <= 100
+bindings = env['contact.center.channel.binding'].browse(selected_ids).exists()
+assert len(bindings) == len(selected_ids)
+result = bindings.action_recover_crm_intake()
+env.cr.commit()
+```
+
+O método aplica autorização e elegibilidade novamente. Não confirma períodos nem associa
+manualmente um lead; apenas reagenda entradas elegíveis. Em produção, seguir o wrapper
+de deploy e registrar IDs/resultado sem corpo de mensagem.
+
+### Limite quando Kanban estiver instalado
+
+Com Kanban e casos ligados ao candidato, a orquestração nativa de permissões pode
+atualizar a revisão de acesso da caixa durante o reuso. Mensagens concorrentes da mesma
+caixa podem ter retry por serialização; não são descartadas. O timeout de 250 ms
+continua aplicado ao worker. Essa ampliação de contenção é um residual aceito para a
+composição opcional. Kanban não está instalado na produção desta entrega; o aplicador
+preserva o conjunto de módulos instalados. A prova de corrida com candidato ligado a
+caso fica como cobertura adicional futura; as oito corridas executadas nesta entrega não
+afirmam cobrir essa composição.

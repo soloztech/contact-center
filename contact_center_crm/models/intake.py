@@ -512,7 +512,6 @@ class ContactCenterChannelBinding(models.Model):
                     ("channel_id", "=", self.channel_id.id),
                     ("state", "=", "unlinked"),
                     ("unlinked_reason", "=", "manual"),
-                    ("unlinked_at", ">=", self.crm_intake_admitted_at),
                 ]
             )
         )
@@ -585,6 +584,14 @@ class ContactCenterMessageBinding(models.Model):
     def create(self, vals_list):
         messages = super().create(vals_list)
         for message in messages:
+            if message.direction != "inbound" or message.origin != "provider":
+                continue
+            binding = message.sudo().channel_binding_id
+            if not binding.account_id.crm_intake_enabled:
+                continue
+            # Host-ingress flush errors belong to the caller. Only optional
+            # CRM admission/queue work is isolated by the fail-open savepoint.
+            self.env.flush_all()
             try:
                 with self.env.cr.savepoint():
                     message.sudo().channel_binding_id._crm_intake_admit(message.sudo())
@@ -592,7 +599,9 @@ class ContactCenterMessageBinding(models.Model):
                 raise
             except Exception as error:  # Keep the already persisted message.
                 _logger.warning(
-                    "CRM intake admission deferred for binding %s (%s)",
+                    "CRM intake admission deferred for channel binding %s "
+                    "(message binding %s; %s)",
+                    binding.id,
                     message.id,
                     type(error).__name__,
                 )
