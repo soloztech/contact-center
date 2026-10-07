@@ -16,7 +16,11 @@ flowchart TD
     R --> E[Touchpoint Website único: aquisição original]
     I --> M[Mensagens e responsável atual]
     I --> T[Touchpoint: evidência de aquisição]
-    I --> C[Vínculo explícito com negócio: contexto]
+    I --> O{Caixa comercial com entrada automática habilitada?}
+    O -->|Conversa nova e mensagem humana| B[Reutiliza negócio aberto inequívoco ou cria lead]
+    B --> C[Vínculo com negócio: contexto]
+    O -->|Regra desligada ou revisão necessária| X[Associação humana]
+    X --> C
     C --> J[Jornada do lead]
     C --> D{Agente confirma período UTC}
     D -->|Não| N[Sem novo crédito comercial]
@@ -102,14 +106,18 @@ atribuições/estados respeita ACL e membership de supervisão; agentes sem essa
 permissões veem “histórico restrito”. A primeira data registrada indica cobertura, sem
 inferir responsáveis antigos ou autores de mensagens externas.
 
-## Próximas etapas
+## Entrada automática nas caixas comerciais
 
-A caixa Comercial foi escolhida para intake futuro. Esta entrega ainda não cria lead
-automaticamente ao receber WhatsApp. P2 já fornece a cadeia Website canônica; P3 cria ou
-reutiliza o negócio somente nas caixas comerciais após checar negócios existentes.
-Suporte e financeiro não recebem essa regra. Receita/ROAS exige P4: leitores financeiros
-opcionais ainda usam relações de documentos/eventos com CRM, sem aplicar este gate de
-aquisição.
+P3 permite habilitar a entrada automática por caixa WhatsApp. A primeira mensagem humana
+de uma conversa nova agenda um worker: ele reutiliza um único negócio aberto da mesma
+empresa, com contato ou telefone completo comprovado, ou cria um lead. Ambiguidade,
+negócio restrito e identidade insuficiente exigem revisão. A conversa permanece no
+Contact Center e o vínculo nasce como **contexto**, sem confirmar período nem atribuir
+campanha automaticamente. Veja [configuração e recuperação](crm-intake.md).
+
+Suporte e financeiro permanecem sem essa regra. Receita/ROAS exige P4: leitores
+financeiros opcionais ainda usam relações de documentos/eventos com CRM, sem aplicar
+este gate de aquisição.
 
 ## Validação e atualização
 

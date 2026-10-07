@@ -117,6 +117,7 @@ class ContactCenterCrmConversationLink(models.Model):
             ("unknown", "Legacy writer unknown"),
             ("manual", "Human"),
             ("automation", "Automation"),
+            ("intake", "Automatic intake"),
         ],
         default="unknown",
         required=True,
@@ -182,7 +183,7 @@ class ContactCenterCrmConversationLink(models.Model):
 
     @api.model
     def _link(self, channel, lead, origin="linked", *, writer):
-        if writer not in {"manual", "automation"}:
+        if writer not in {"manual", "automation", "intake"}:
             raise ValidationError(_("An explicit association writer is required."))
         channel.ensure_one()
         lead.ensure_one()

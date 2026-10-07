@@ -21,6 +21,12 @@
                 ><i class="fa fa-times" aria-hidden="true" /></button>
             </header>
             <div class="cc-contact-panel__scroll">
+                <p
+                    t-if="state.intake &amp;&amp; state.activeTab === 'opportunities'"
+                    class="cc-detail-section"
+                    role="status"
+                    t-esc="state.intake.label"
+                />
                 <section
                     class="cc-detail-section cc-crm-panel__customer"
                     t-if="state.partner"

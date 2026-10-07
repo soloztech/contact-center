@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="account_form_crm_intake" model="ir.ui.view">
+        <field name="name">contact.center.account.crm.intake</field>
+        <field name="model">contact.center.account</field>
+        <field
+            name="inherit_id"
+            ref="contact_center_base.view_contact_center_account_form"
+        />
+        <field name="arch" type="xml">
+            <xpath expr="//notebook" position="inside">
+                <page
+                    string="Entrada no CRM"
+                    groups="contact_center_base.group_contact_center_admin"
+                >
+                    <group>
+                        <field name="crm_intake_enabled" />
+                        <field name="crm_intake_user_id" />
+                        <field name="crm_intake_team_id" />
+                        <field name="crm_intake_enabled_at" />
+                    </group>
+                    <p
+                    >Novas conversas diretas nesta caixa criam ou reutilizam um lead. Casos ambíguos exigem associação manual. A conversa permanece no Contact Center e o período comercial precisa ser confirmado na Jornada.</p>
+                    <p
+                    >Leads criados por esta entrada ficam excluídos das automações nativas e de Marketing e do enriquecimento IAP. Não há ativação automática posterior dessas automações.</p>
+                </page>
+            </xpath>
+        </field>
+    </record>
+</odoo>

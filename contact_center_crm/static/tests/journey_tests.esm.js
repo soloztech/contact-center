@@ -107,6 +107,12 @@ async function setup(options = {}) {
     return {...result, calls};
 }
 QUnit.module("contact_center_crm > journey", () => {
+    QUnit.test("intake writer is explicit and never confirms scope", async (assert) => {
+        await setup({items: [{...row(91), writer: "intake"}]});
+        assert.ok(document.body.textContent.includes("Entrada automática"));
+        assert.ok(document.body.textContent.includes("Contexto sem crédito"));
+        assert.notOk(document.body.textContent.includes("Legado indeterminado"));
+    });
     QUnit.test(
         "empty business and customer context remain independently visible",
         async (assert) => {

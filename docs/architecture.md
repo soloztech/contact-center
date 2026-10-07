@@ -119,7 +119,11 @@ As pontes opcionais do Marketing Center consomem essas evidências e os vínculo
 catálogo Meta e resolução correspondente. A associação automática de campanha externa a
 UTMs nativas e a consulta GCLID → `click_view` → campanha ainda não são fluxos
 implementados do produto. Veja o
-[contrato entre projetos](https://github.com/soloztech/marketing-center/blob/16.0/docs/crm-intake-and-attribution.md).
+[atribuição nativa](https://github.com/soloztech/marketing-center/blob/16.0/docs/native-campaign-attribution.md).
+
+A [entrada automática no CRM](crm-intake.md) pertence a `contact_center_crm`, é
+desabilitada por padrão e exige ativação por caixa comercial. Criação ou reutilização de
+negócio não confirma período comercial nem unifica identidades.
 
 ## Conteúdo, retenção e extensões
 

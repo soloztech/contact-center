@@ -240,6 +240,9 @@ class TestBusinessJourney(ConversationCrmCase):
                 hidden_account.id,
             ),
         )
+        # Finish the privileged fixture before the limited actor triggers native
+        # onchange flushes; pending property recomputes belong to its writer.
+        self.env.flush_all()
         for model_name, field, allowed_id, hidden_id in cases:
             with self.subTest(model=model_name):
                 model = self.env[model_name].with_user(self.agent)

@@ -74,7 +74,7 @@ class ContactCenterUiApi(models.AbstractModel):
             domains.append([("partner_id.commercial_partner_id", "=", company.id)])
         return expression.OR(domains)
 
-    def _crm_phone_domain(self, channel):
+    def _crm_phone_numbers(self, channel):
         """Exact registered phone aliases only; never match a suffix or LID."""
         binding = self._binding_for_channel(channel)
         numbers = set()
@@ -94,6 +94,10 @@ class ContactCenterUiApi(models.AbstractModel):
                     numbers.add(normalize_start_phone(value))
                 except ValueError:
                     continue
+        return numbers
+
+    def _crm_phone_domain(self, channel):
+        numbers = self._crm_phone_numbers(channel)
         if not numbers:
             return [("id", "=", 0)]
         return [
@@ -235,6 +239,12 @@ class ContactCenterUiApi(models.AbstractModel):
                 channel, company
             ),
         }
+        binding = self._binding_for_channel(channel)
+        result["intake"] = (
+            binding._crm_intake_projection()
+            if available and tab == "opportunities" and binding
+            else False
+        )
         if not available or (not partner and tab != "opportunities"):
             return result
         # The conversation authorizes access and identifies the customer only.

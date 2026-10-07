@@ -113,6 +113,59 @@ QUnit.module("contact_center_crm > customer records", (hooks) => {
     });
 
     QUnit.test(
+        "intake is optional, finite and clears on tab change or denial",
+        async (assert) => {
+            const intake = {state: "review", label: "Escolha o negócio manualmente."};
+            assert.notOk(normalizeCustomerPage(page(), 404, "opportunities").intake);
+            assert.deepEqual(
+                normalizeCustomerPage(page([], {intake}), 404, "opportunities").intake,
+                intake
+            );
+            assert.notOk(
+                normalizeCustomerPage(
+                    page([], {intake: {...intake, state: "private"}}),
+                    404,
+                    "opportunities"
+                ).intake
+            );
+            const model = modelFor(async (_method, args) =>
+                responseFor(args[1], [], {intake})
+            );
+            await model.load();
+            assert.deepEqual(model.state.intake, intake);
+            await model.selectTab("quotations");
+            assert.notOk(model.state.intake);
+            await model.selectTab("opportunities");
+            assert.ok(model.state.intake);
+            model.failLoad({data: {name: "odoo.exceptions.AccessError"}}, false);
+            assert.notOk(model.state.intake);
+        }
+    );
+    QUnit.test(
+        "intake banner is escaped and belongs only to opportunities",
+        async (assert) => {
+            const intake = {
+                state: "pending",
+                label: "Entrada <script>private</script> aguardando",
+            };
+            const store = modelFor(async (_method, args) =>
+                responseFor(args[1], [], {intake})
+            ).store;
+            const target = document.createElement("div");
+            getFixture().appendChild(target);
+            await mount(CrmPanel, target, {
+                env: {services: {action: {doAction: () => Promise.resolve()}}},
+                props: {store, channelId: 404, onClose: () => false},
+            });
+            await nextTick();
+            assert.ok(target.textContent.includes(intake.label));
+            assert.notOk(target.querySelector("script"));
+            await click(target, "#cc-crm-tab-quotations");
+            await nextTick();
+            assert.notOk(target.textContent.includes(intake.label));
+        }
+    );
+    QUnit.test(
         "document links are scoped to the projected sale and channel",
         (assert) => {
             const result = normalizeCustomerPage(

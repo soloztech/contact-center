@@ -130,6 +130,16 @@ function normalizeTabs(values) {
     });
 }
 
+function normalizeIntake(value, available) {
+    const states = ["pending", "created", "reused", "review", "policy_changed"];
+    return available &&
+        record(value) &&
+        states.includes(value.state) &&
+        typeof value.label === "string"
+        ? {state: value.state, label: value.label}
+        : false;
+}
+
 export function normalizeCustomerPage(payload, channelId, tabId) {
     validateEnvelope(payload);
     const tab = CUSTOMER_TABS.find((entry) => entry.id === tabId);
@@ -159,6 +169,7 @@ export function normalizeCustomerPage(payload, channelId, tabId) {
     }
     return {
         tabs,
+        intake: normalizeIntake(payload.intake, available && tabId === "opportunities"),
         partner,
         company: reference(payload.commercial_partner),
         items,
@@ -244,6 +255,7 @@ export class CrmPanelModel {
             pages: Object.fromEntries(
                 CUSTOMER_TABS.map((tab) => [tab.id, emptyPage()])
             ),
+            intake: false,
             partner: false,
             company: false,
             operationError: "",
@@ -287,6 +299,7 @@ export class CrmPanelModel {
         }
         this.request += 1;
         this.state.activeTab = tabId;
+        this.state.intake = false;
         this.state.operationError = "";
         this.state.operationStatus = "";
         this.state.pages[tabId] = emptyPage(this.page.query);
@@ -299,6 +312,7 @@ export class CrmPanelModel {
 
     applyPage(projection, {append, offset, query}) {
         this.state.tabs = projection.tabs;
+        this.state.intake = projection.intake;
         this.state.partner = projection.partner;
         this.state.company = projection.company;
         this.state.canCreateQuotation = projection.canCreateQuotation;
@@ -315,6 +329,7 @@ export class CrmPanelModel {
     }
 
     failLoad(error, append) {
+        this.state.intake = false;
         if (error && error.data && error.data.name === "odoo.exceptions.AccessError") {
             this.state.partner = false;
             this.state.company = false;
@@ -330,6 +345,7 @@ export class CrmPanelModel {
     }
 
     restartForCustomer(query) {
+        this.state.intake = false;
         this.state.partner = false;
         this.state.company = false;
         this.state.operationError = "";
