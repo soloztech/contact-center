@@ -1,5 +1,8 @@
 """Post-commit CRM admission; inbox projection must never depend on CRM success."""
 
+# Keep intake provenance and admission together, separate from the CRM bridge.
+# pylint: disable=consider-merging-classes-inherited
+
 import logging
 
 from psycopg2 import OperationalError
