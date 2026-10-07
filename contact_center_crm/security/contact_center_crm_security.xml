@@ -5,4 +5,14 @@
         <field name="model_id" ref="model_contact_center_crm_conversation_link" />
         <field name="domain_force">[('company_id', 'in', company_ids)]</field>
     </record>
+    <record id="rule_crm_scope_owner" model="ir.rule">
+        <field name="name">Business period assistants by creator</field>
+        <field name="model_id" ref="model_contact_center_crm_scope" />
+        <field name="domain_force">[('create_uid', '=', user.id)]</field>
+    </record>
+    <record id="rule_crm_start_owner" model="ir.rule">
+        <field name="name">CRM conversation assistants by creator</field>
+        <field name="model_id" ref="model_contact_center_crm_start" />
+        <field name="domain_force">[('create_uid', '=', user.id)]</field>
+    </record>
 </odoo>

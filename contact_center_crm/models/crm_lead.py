@@ -34,7 +34,7 @@ class CrmLead(models.Model):
                     value = False
                 lead["contact_center_%s_normalized" % source] = value
 
-    def _contact_center_start_and_link(self, account, phone=None):
+    def _contact_center_start_and_link(self, account, phone=None, *, writer):
         """Open/reuse an authorized conversation; never send or create a partner.
 
         Shared entry point for the manual wizard and optional automation addons.
@@ -76,7 +76,9 @@ class CrmLead(models.Model):
         with self.env.cr.savepoint():
             result = api_model.start_conversation(account.id, "+" + normalized)
             channel = api_model._crm_channel(result["channel_id"], mutate=True)
-            self.env["contact.center.crm.conversation.link"]._link(channel, self)
+            self.env["contact.center.crm.conversation.link"]._link(
+                channel, self, writer=writer
+            )
             # _link locks and reauthorizes the lead after provider I/O. Recheck
             # the selected address under that lock before committing the graph.
             self.invalidate_recordset(

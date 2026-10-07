@@ -31,7 +31,7 @@
                                     t-key="row_index"
                                 >
                                     <td class="align-middle"><t
-                                            t-esc="row.contact_name"
+                                            t-esc="row.contact_name || 'Conversa restrita'"
                                         /></td>
                                     <td class="align-middle"><t
                                             t-esc="row.inbox_name"

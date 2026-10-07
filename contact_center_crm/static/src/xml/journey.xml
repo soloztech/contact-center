@@ -1,0 +1,293 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<templates xml:space="preserve">
+    <t t-name="contact_center_crm.JourneyDialog" owl="1">
+        <Dialog title="'Jornada do negócio'" size="'lg'">
+            <div class="cc-crm-journey mw-100 text-break">
+                <p class="text-muted">
+                    O período confirmado define as origens deste negócio. Conversas do
+                    cliente em outras caixas são contexto. As mensagens continuam no
+                    Contact Center.
+                </p>
+                <div
+                    t-if="state.error"
+                    role="alert"
+                    class="alert alert-warning"
+                    t-esc="state.error"
+                />
+                <section
+                    t-foreach="['linked', 'context']"
+                    t-as="area"
+                    t-key="area"
+                    class="mb-4"
+                    t-att-data-area="area"
+                >
+                    <t t-set="page" t-value="state[area]" />
+                    <h5
+                        t-esc="area === 'linked' ? 'Conversas do negócio' : 'Outras conversas do cliente'"
+                    />
+                    <p t-if="page.loading" role="status">Carregando…</p>
+                    <p t-elif="page.status === 'unavailable'" class="text-muted">
+                        Preencha empresa e cliente no lead para consultar este contexto.
+                    </p>
+                    <div t-elif="page.error" role="alert">
+                        <t t-esc="page.error" />
+                        <button
+                            class="btn btn-link"
+                            t-on-click="() => this.load(area, page.offset)"
+                        >
+                            Tentar novamente
+                        </button>
+                    </div>
+                    <p t-elif="!page.items.length" class="cc-journey-empty">
+                        Nenhuma conversa encontrada.
+                    </p>
+                    <t t-foreach="page.items" t-as="row" t-key="row_index">
+                        <div
+                            t-if="!row.can_open"
+                            class="border rounded p-3 my-2 cc-journey-restricted"
+                        >
+                            <i class="fa fa-lock" />
+                            Existe uma conversa com acesso restrito.
+                        </div>
+                        <article
+                            t-else=""
+                            class="border rounded p-3 my-2 cc-journey-row"
+                        >
+                            <div class="d-flex justify-content-between">
+                                <strong t-esc="row.inbox_name" />
+                                <span>
+                                    <t t-esc="this.conversationState(row.state)" />
+                                    ·
+                                    <t t-esc="row.responsible || 'Sem responsável'" />
+                                </span>
+                            </div>
+                            <p class="my-2">
+                                <t t-esc="this.scope(row.scope)" />
+                                <t t-if="row.writer">
+                                    · Associação:
+                                    <t
+                                        t-esc="row.writer === 'automation' ? 'Automation' : row.writer === 'manual' ? 'Humana' : 'Legado indeterminado'"
+                                    />
+                                </t>
+                            </p>
+                            <p t-if="row.scope === 'confirmed'">
+                                De
+                                <t t-esc="this.date(row.scope_start)" />
+                                até
+                                <t t-esc="this.date(row.scope_end, 'Em aberto')" />
+                                (fim exclusivo)
+                            </p>
+                            <p
+                                t-if="row.origins.status === 'scope_review'"
+                                class="text-warning"
+                            >
+                                Origens aguardam revisão do período ou
+                                convergência. Origens órfãs exigem decisão do
+                                administrador Marketing nos campos UTM ou reversão
+                                permitida.
+                            </p>
+                            <p
+                                t-elif="row.origins.status === 'restricted'"
+                                class="text-muted"
+                            >
+                                Origens com acesso restrito.
+                            </p>
+                            <ul t-if="this.visibleOrigins(row, area).length">
+                                <li
+                                    t-foreach="this.visibleOrigins(row, area)"
+                                    t-as="origin"
+                                    t-key="origin_index"
+                                >
+                                    <t t-if="origin.type === 'website_whatsapp'">
+                                        <strong
+                                        >Site → WhatsApp · Referência do clique <t
+                                                t-esc="origin.reference"
+                                            /></strong>
+                                        <p
+                                            t-esc="this.websiteAssociation(origin.match_state)"
+                                        />
+                                        <p
+                                            t-if="origin.visitor_state === 'removed_or_unavailable'"
+                                            class="small text-muted"
+                                        >Vínculo com o visitante removido ou indisponível.</p>
+                                        <p
+                                            t-if="origin.privacy === 'privacy_unavailable'"
+                                        >Apagado por privacidade ou prazo encerrado.</p>
+                                        <t t-else="">
+                                            <p
+                                                t-esc="this.websiteCampaign(origin.campaign)"
+                                            />
+                                            <p
+                                                t-if="origin.campaign.evidence === 'url_and_local_catalog'"
+                                                class="small text-muted"
+                                            >ID da URL resolvido no catálogo local; anúncio exato não comprovado.</p>
+                                            <p>Visita: <t
+                                                    t-esc="this.date(origin.visit_at)"
+                                                /> · Aquisição: <t
+                                                    t-esc="this.date(origin.acquisition_at)"
+                                                /> · Clique: <t
+                                                    t-esc="this.date(origin.clicked_at)"
+                                                /> · Mensagem: <t
+                                                    t-esc="this.date(origin.message_at)"
+                                                /></p>
+                                            <p>Referência da campanha: <t
+                                                    t-esc="this.provenance(origin.provenance)"
+                                                /></p>
+                                            <p
+                                                t-if="!origin.acquisition_at || origin.at !== origin.acquisition_at"
+                                            >Horário da aquisição não comprovado; a ocorrência usa o horário do clique.</p>
+                                            <p
+                                                t-if="origin.landing_url"
+                                            >Página de aquisição: <t
+                                                    t-esc="origin.landing_url"
+                                                /></p>
+                                <p t-else="">Página de aquisição: Não identificada.</p>
+                                            <p
+                                                t-if="origin.page_url"
+                                            >Página do clique: <t
+                                                    t-esc="origin.page_url"
+                                                /></p>
+                                            <p
+                                                t-esc="this.websiteStatus(origin.scope)"
+                                            />
+                                            <p
+                                                t-if="origin.privacy === 'legacy'"
+                                            >Captura anterior: sem projeção histórica automática.</p>
+                                            <p
+                                                t-elif="origin.privacy === 'decision_changed'"
+                                            >Decisão de consentimento revogada ou substituída.</p>
+                                            <p
+                                                t-elif="origin.privacy !== 'ready'"
+                                            >Captura indisponível para nova atribuição.</p>
+                                        </t>
+                                        <button
+                                            class="btn btn-link btn-sm"
+                                            t-att-disabled="state.opening"
+                                            t-on-click="() => this.evidence(origin)"
+                                        >Ver evidência da associação</button>
+                                    </t>
+                                    <t t-else=""><t
+                                            t-esc="this.origin(origin.type)"
+                                        /> · <t t-esc="this.date(origin.at)" /></t>
+                                </li>
+                            </ul>
+                            <p
+                                t-if="row.origins.marketing_restricted"
+                                class="text-muted"
+                            >Outras origens Marketing exigem permissão adicional.</p>
+                            <button
+                                t-if="area === 'linked' &amp;&amp; row.origins.website_has_more"
+                                class="btn btn-link btn-sm cc-journey-more-origins"
+                                t-att-disabled="state.opening"
+                                t-on-click="() => this.moreOrigins(row)"
+                            >Há mais origens do site. Ver todas.</button>
+                            <button
+                                class="btn btn-primary btn-sm me-2 cc-journey-open"
+                                t-att-disabled="state.opening"
+                                t-on-click="() => this.open(row)"
+                            >
+                                Abrir conversa
+                            </button>
+                            <button
+                                t-if="area === 'linked'"
+                                class="btn btn-outline-primary btn-sm me-2 cc-journey-confirm"
+                                t-att-disabled="state.opening"
+                                t-on-click="() => this.confirm(row)"
+                            >
+                                Revisar período
+                            </button>
+                            <button
+                                class="btn btn-link btn-sm cc-journey-history"
+                                t-att-disabled="state.opening"
+                                t-on-click="() => this.history(row)"
+                            >
+                                Histórico de atendimento
+                            </button>
+                            <t t-if="state.histories[row.channel_id]">
+                                <t
+                                    t-set="history"
+                                    t-value="state.histories[row.channel_id]"
+                                />
+                                <p
+                                    t-if="history.status === 'restricted'"
+                                    class="text-muted"
+                                >
+                                    Histórico restrito às permissões de supervisão.
+                                </p>
+                                <p t-elif="history.loading">Carregando histórico…</p>
+                                <p t-elif="history.error" t-esc="history.error" />
+                                <div t-else="" class="mt-2 small">
+                                    <p t-if="history.coverage_from">
+                                        Cobertura desde
+                                        <t t-esc="this.date(history.coverage_from)" />
+                                        (
+                                        <t t-esc="this.event(history.coverage_kind)" />
+                                        ). Responsáveis anteriores não são inferidos.
+                                    </p>
+                                    <p t-else="">Sem eventos registrados.</p>
+                                    <p
+                                        t-foreach="history.items"
+                                        t-as="event"
+                                        t-key="event.sequence"
+                                    >
+                                        <t t-esc="this.date(event.at)" />
+                                        ·
+                                        <t t-esc="this.event(event.event)" />
+                                        ·
+                                        <t
+                                            t-esc="event.responsible || 'Sem responsável'"
+                                        />
+                                        ·
+                                        <t t-esc="event.actor || 'Automático'" />
+                                    </p>
+                                    <button
+                                        t-if="history.offset"
+                                        class="btn btn-link btn-sm"
+                                        t-on-click="() => this.history(row, Math.max(0, history.offset - 20))"
+                                    >
+                                        Anterior
+                                    </button>
+                                    <button
+                                        t-if="history.has_more"
+                                        class="btn btn-link btn-sm"
+                                        t-on-click="() => this.history(row, history.offset + 20)"
+                                    >
+                                        Próximos eventos
+                                    </button>
+                                </div>
+                            </t>
+                        </article>
+                    </t>
+                    <div
+                        class="d-flex justify-content-between"
+                        t-if="page.offset || page.has_more"
+                    >
+                        <button
+                            class="btn btn-secondary btn-sm"
+                            t-att-disabled="!page.offset || page.loading || state.opening"
+                            t-on-click="() => this.load(area, Math.max(0, page.offset - page.limit))"
+                        >
+                            Anterior
+                        </button>
+                        <span>
+                            Página
+                            <t t-esc="Math.floor(page.offset / page.limit) + 1" />
+                        </span>
+                        <button
+                            class="btn btn-secondary btn-sm cc-journey-next"
+                            t-att-disabled="!page.has_more || page.loading || state.opening"
+                            t-on-click="() => this.load(area, page.offset + page.limit)"
+                        >
+                            Próxima
+                        </button>
+                    </div>
+                </section>
+            </div>
+            <t t-set-slot="footer">
+                <button class="btn btn-secondary" t-on-click="props.close">
+                    Fechar
+                </button>
+            </t>
+        </Dialog>
+    </t>
+</templates>

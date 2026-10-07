@@ -54,7 +54,7 @@ class TestLeadConversationStart(ConversationCrmCase):
         return (
             (lead or self.prospect)
             .with_user(user or self.agent)
-            ._contact_center_start_and_link(self.account, phone=phone)
+            ._contact_center_start_and_link(self.account, phone=phone, writer="manual")
         )
 
     def test_start_and_repeat_reuse_link_without_partner_or_message(self):
@@ -147,13 +147,17 @@ class TestLeadConversationStart(ConversationCrmCase):
     def test_different_company_rejected_even_with_both_companies_allowed(self):
         other = self.env["res.company"].create({"name": "Different lead company"})
         self.agent.company_ids |= other
-        self.prospect.write({"company_id": other.id, "user_id": False})
-        lead = self.prospect.with_user(self.agent).with_context(
+        # Create the foreign lead in its final company: installed Marketing anchors
+        # immutable evidence at creation and correctly forbids moving it later.
+        foreign = self.prospect.copy(
+            {"company_id": other.id, "user_id": False, "team_id": False}
+        )
+        lead = foreign.with_user(self.agent).with_context(
             allowed_company_ids=[self.env.company.id, other.id]
         )
         with patch.object(DirectStartTestAdapter, "resolve_direct_address") as lookup:
             with self.assertRaises(ValidationError):
-                lead._contact_center_start_and_link(self.account)
+                lead._contact_center_start_and_link(self.account, writer="manual")
         lookup.assert_not_called()
 
     def test_phone_candidates_obey_crm_record_rules(self):

@@ -20,12 +20,15 @@ QUnit.testDone(({module, name, failed}) => {
 });
 
 const envelope = (data) => ({schema_version: SUPPORTED_SCHEMA_VERSION, ...data});
-const row = (id = 91, allowed = true) => ({
-    channel_id: allowed ? id : false,
-    contact_name: "Bruno",
-    inbox_name: allowed ? "Comercial" : "Alice",
-    can_open: allowed,
-});
+const row = (id = 91, allowed = true) =>
+    allowed
+        ? {
+              channel_id: allowed ? id : false,
+              contact_name: "Bruno",
+              inbox_name: allowed ? "Comercial" : "Alice",
+              can_open: true,
+          }
+        : {can_open: false, restricted: true};
 const conversation = (id = 91) => ({
     channel_id: id,
     name: "Bruno",

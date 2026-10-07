@@ -443,11 +443,13 @@ no user menu or user-facing ACL: bridge services are its only writers and reader
 <div class="contents local topic" id="contents">
 <ul class="simple">
 <li><a class="reference internal" href="#usage" id="toc-entry-1">Usage</a></li>
-<li><a class="reference internal" href="#bug-tracker" id="toc-entry-2">Bug Tracker</a></li>
-<li><a class="reference internal" href="#credits" id="toc-entry-3">Credits</a><ul>
-<li><a class="reference internal" href="#authors" id="toc-entry-4">Authors</a></li>
-<li><a class="reference internal" href="#contributors" id="toc-entry-5">Contributors</a></li>
-<li><a class="reference internal" href="#maintainers" id="toc-entry-6">Maintainers</a></li>
+<li><a class="reference internal" href="#explicit-crm-actions" id="toc-entry-2">Explicit CRM actions</a></li>
+<li><a class="reference internal" href="#stage-and-access-diagnosis" id="toc-entry-3">Stage and access diagnosis</a></li>
+<li><a class="reference internal" href="#bug-tracker" id="toc-entry-4">Bug Tracker</a></li>
+<li><a class="reference internal" href="#credits" id="toc-entry-5">Credits</a><ul>
+<li><a class="reference internal" href="#authors" id="toc-entry-6">Authors</a></li>
+<li><a class="reference internal" href="#contributors" id="toc-entry-7">Contributors</a></li>
+<li><a class="reference internal" href="#maintainers" id="toc-entry-8">Maintainers</a></li>
 </ul>
 </li>
 </ul>
@@ -461,8 +463,47 @@ the same pipeline independently.</p>
 <p>The Kanban is available from <em>Contact Center &gt; Atendimentos</em>. Pipeline
 configuration is available to Contact Center administrators.</p>
 </div>
+<div class="section" id="explicit-crm-actions">
+<h1><a class="toc-backref" href="#toc-entry-2">Explicit CRM actions</a></h1>
+<p>This addon depends on <tt class="docutils literal">contact_center_crm</tt> and is optional for the inbox and
+customer panel. Before using a case’s CRM actions, configure an active pipeline
+binding to a CRM sales team and map the case’s stages to effective CRM stages.
+If a roster binding exists, it must reference the same sales team. Mapping-inventory
+suggestions require an administrator’s explicit acceptance.</p>
+<ul class="simple">
+<li><strong>Create CRM lead</strong> calls <tt class="docutils literal">action_create_crm_lead</tt> with type <tt class="docutils literal">lead</tt>.</li>
+<li><strong>Create CRM opportunity</strong> calls <tt class="docutils literal">action_create_crm_opportunity</tt> with type
+<tt class="docutils literal">opportunity</tt>. These explicit choices do not use Marketing Center’s <tt class="docutils literal">native</tt>
+route policy.</li>
+<li>Both creation actions require an active, unlinked case and CRM permissions. They
+set the inbox company, mapped sales team/stage, no salesperson, and an already
+linked direct-contact identity when available. They do not create a contact or
+infer one from an ad referral.</li>
+<li><strong>Link CRM lead</strong> associates an existing permitted record after checking the
+company, sales team and mapped stage. It creates both the conversation association
+and the case projection without creating another lead.</li>
+<li>Removing a case’s link preserves the conversation association and keeps unlink
+evidence. Removing the conversation association retires its matching active case
+projections. Neither operation deletes the CRM record.</li>
+</ul>
+<p>Creating a default service case is not CRM lead creation. A customer message,
+<tt class="docutils literal">fbads</tt> hint or origin card does not invoke the case’s commercial actions.</p>
+</div>
+<div class="section" id="stage-and-access-diagnosis">
+<h1><a class="toc-backref" href="#toc-entry-3">Stage and access diagnosis</a></h1>
+<p>For a blocked create/link, check case activity, an existing active link, native CRM
+rights, company, pipeline binding and stage mapping. For a blocked transition, check
+that the destination maps to the linked lead’s CRM team. A permitted mapped case
+transition writes the native CRM stage; native CRM changes project back to linked
+cases. Do not repair a mapping error by writing directly to link or stage ledgers.</p>
+<p>Roster binding and pipeline binding have separate lifecycles. Disabling roster
+synchronization does not remove commercial links or stop their stage projection.
+Inspect managed-role provenance before changing grants.</p>
+<p>Catalog matching and CRM evidence association are separate from these actions. See the
+<a class="reference external" href="https://github.com/soloztech/contact-center/blob/16.0/docs/crm-and-attribution.md">CRM and attribution guide (Portuguese)</a>.</p>
+</div>
 <div class="section" id="bug-tracker">
-<h1><a class="toc-backref" href="#toc-entry-2">Bug Tracker</a></h1>
+<h1><a class="toc-backref" href="#toc-entry-4">Bug Tracker</a></h1>
 <p>Bugs are tracked on <a class="reference external" href="https://github.com/soloztech/contact-center/issues">GitHub Issues</a>.
 In case of trouble, please check there if your issue has already been reported.
 If you spotted it first, help us to smash it by providing a detailed and welcomed
@@ -470,21 +511,21 @@ If you spotted it first, help us to smash it by providing a detailed and welcome
 <p>Do not contact contributors directly about support or help with technical issues.</p>
 </div>
 <div class="section" id="credits">
-<h1><a class="toc-backref" href="#toc-entry-3">Credits</a></h1>
+<h1><a class="toc-backref" href="#toc-entry-5">Credits</a></h1>
 <div class="section" id="authors">
-<h2><a class="toc-backref" href="#toc-entry-4">Authors</a></h2>
+<h2><a class="toc-backref" href="#toc-entry-6">Authors</a></h2>
 <ul class="simple">
 <li>Soloz Technologies</li>
 </ul>
 </div>
 <div class="section" id="contributors">
-<h2><a class="toc-backref" href="#toc-entry-5">Contributors</a></h2>
+<h2><a class="toc-backref" href="#toc-entry-7">Contributors</a></h2>
 <ul class="simple">
 <li>Soloz Technologies</li>
 </ul>
 </div>
 <div class="section" id="maintainers">
-<h2><a class="toc-backref" href="#toc-entry-6">Maintainers</a></h2>
+<h2><a class="toc-backref" href="#toc-entry-8">Maintainers</a></h2>
 <p>This module is part of the <a class="reference external" href="https://github.com/soloztech/contact-center/tree/16.0/contact_center_kanban">soloztech/contact-center</a> project on GitHub.</p>
 <p>You are welcome to contribute.</p>
 </div>

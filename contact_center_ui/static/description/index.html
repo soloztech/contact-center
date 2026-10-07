@@ -1,0 +1,594 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<meta name="generator" content="Docutils: https://docutils.sourceforge.io/" />
+<title>Contact Center UI</title>
+<style type="text/css">
+
+/*
+:Author: David Goodger (goodger@python.org)
+:Id: $Id: html4css1.css 9511 2024-01-13 09:50:07Z milde $
+:Copyright: This stylesheet has been placed in the public domain.
+
+Default cascading style sheet for the HTML output of Docutils.
+Despite the name, some widely supported CSS2 features are used.
+
+See https://docutils.sourceforge.io/docs/howto/html-stylesheets.html for how to
+customize this style sheet.
+*/
+
+/* used to remove borders from tables and images */
+.borderless, table.borderless td, table.borderless th {
+  border: 0 }
+
+table.borderless td, table.borderless th {
+  /* Override padding for "table.docutils td" with "! important".
+     The right padding separates the table cells. */
+  padding: 0 0.5em 0 0 ! important }
+
+.first {
+  /* Override more specific margin styles with "! important". */
+  margin-top: 0 ! important }
+
+.last, .with-subtitle {
+  margin-bottom: 0 ! important }
+
+.hidden {
+  display: none }
+
+.subscript {
+  vertical-align: sub;
+  font-size: smaller }
+
+.superscript {
+  vertical-align: super;
+  font-size: smaller }
+
+a.toc-backref {
+  text-decoration: none ;
+  color: black }
+
+blockquote.epigraph {
+  margin: 2em 5em ; }
+
+dl.docutils dd {
+  margin-bottom: 0.5em }
+
+object[type="image/svg+xml"], object[type="application/x-shockwave-flash"] {
+  overflow: hidden;
+}
+
+/* Uncomment (and remove this text!) to get bold-faced definition list terms
+dl.docutils dt {
+  font-weight: bold }
+*/
+
+div.abstract {
+  margin: 2em 5em }
+
+div.abstract p.topic-title {
+  font-weight: bold ;
+  text-align: center }
+
+div.admonition, div.attention, div.caution, div.danger, div.error,
+div.hint, div.important, div.note, div.tip, div.warning {
+  margin: 2em ;
+  border: medium outset ;
+  padding: 1em }
+
+div.admonition p.admonition-title, div.hint p.admonition-title,
+div.important p.admonition-title, div.note p.admonition-title,
+div.tip p.admonition-title {
+  font-weight: bold ;
+  font-family: sans-serif }
+
+div.attention p.admonition-title, div.caution p.admonition-title,
+div.danger p.admonition-title, div.error p.admonition-title,
+div.warning p.admonition-title, .code .error {
+  color: red ;
+  font-weight: bold ;
+  font-family: sans-serif }
+
+/* Uncomment (and remove this text!) to get reduced vertical space in
+   compound paragraphs.
+div.compound .compound-first, div.compound .compound-middle {
+  margin-bottom: 0.5em }
+
+div.compound .compound-last, div.compound .compound-middle {
+  margin-top: 0.5em }
+*/
+
+div.dedication {
+  margin: 2em 5em ;
+  text-align: center ;
+  font-style: italic }
+
+div.dedication p.topic-title {
+  font-weight: bold ;
+  font-style: normal }
+
+div.figure {
+  margin-left: 2em ;
+  margin-right: 2em }
+
+div.footer, div.header {
+  clear: both;
+  font-size: smaller }
+
+div.line-block {
+  display: block ;
+  margin-top: 1em ;
+  margin-bottom: 1em }
+
+div.line-block div.line-block {
+  margin-top: 0 ;
+  margin-bottom: 0 ;
+  margin-left: 1.5em }
+
+div.sidebar {
+  margin: 0 0 0.5em 1em ;
+  border: medium outset ;
+  padding: 1em ;
+  background-color: #ffffee ;
+  width: 40% ;
+  float: right ;
+  clear: right }
+
+div.sidebar p.rubric {
+  font-family: sans-serif ;
+  font-size: medium }
+
+div.system-messages {
+  margin: 5em }
+
+div.system-messages h1 {
+  color: red }
+
+div.system-message {
+  border: medium outset ;
+  padding: 1em }
+
+div.system-message p.system-message-title {
+  color: red ;
+  font-weight: bold }
+
+div.topic {
+  margin: 2em }
+
+h1.section-subtitle, h2.section-subtitle, h3.section-subtitle,
+h4.section-subtitle, h5.section-subtitle, h6.section-subtitle {
+  margin-top: 0.4em }
+
+h1.title {
+  text-align: center }
+
+h2.subtitle {
+  text-align: center }
+
+hr.docutils {
+  width: 75% }
+
+img.align-left, .figure.align-left, object.align-left, table.align-left {
+  clear: left ;
+  float: left ;
+  margin-right: 1em }
+
+img.align-right, .figure.align-right, object.align-right, table.align-right {
+  clear: right ;
+  float: right ;
+  margin-left: 1em }
+
+img.align-center, .figure.align-center, object.align-center {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+table.align-center {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.align-left {
+  text-align: left }
+
+.align-center {
+  clear: both ;
+  text-align: center }
+
+.align-right {
+  text-align: right }
+
+/* reset inner alignment in figures */
+div.align-right {
+  text-align: inherit }
+
+/* div.align-center * { */
+/*   text-align: left } */
+
+.align-top    {
+  vertical-align: top }
+
+.align-middle {
+  vertical-align: middle }
+
+.align-bottom {
+  vertical-align: bottom }
+
+ol.simple, ul.simple {
+  margin-bottom: 1em }
+
+ol.arabic {
+  list-style: decimal }
+
+ol.loweralpha {
+  list-style: lower-alpha }
+
+ol.upperalpha {
+  list-style: upper-alpha }
+
+ol.lowerroman {
+  list-style: lower-roman }
+
+ol.upperroman {
+  list-style: upper-roman }
+
+p.attribution {
+  text-align: right ;
+  margin-left: 50% }
+
+p.caption {
+  font-style: italic }
+
+p.credits {
+  font-style: italic ;
+  font-size: smaller }
+
+p.label {
+  white-space: nowrap }
+
+p.rubric {
+  font-weight: bold ;
+  font-size: larger ;
+  color: maroon ;
+  text-align: center }
+
+p.sidebar-title {
+  font-family: sans-serif ;
+  font-weight: bold ;
+  font-size: larger }
+
+p.sidebar-subtitle {
+  font-family: sans-serif ;
+  font-weight: bold }
+
+p.topic-title {
+  font-weight: bold }
+
+pre.address {
+  margin-bottom: 0 ;
+  margin-top: 0 ;
+  font: inherit }
+
+pre.literal-block, pre.doctest-block, pre.math, pre.code {
+  margin-left: 2em ;
+  margin-right: 2em }
+
+pre.code .ln { color: gray; } /* line numbers */
+pre.code, code { background-color: #eeeeee }
+pre.code .comment, code .comment { color: #5C6576 }
+pre.code .keyword, code .keyword { color: #3B0D06; font-weight: bold }
+pre.code .literal.string, code .literal.string { color: #0C5404 }
+pre.code .name.builtin, code .name.builtin { color: #352B84 }
+pre.code .deleted, code .deleted { background-color: #DEB0A1}
+pre.code .inserted, code .inserted { background-color: #A3D289}
+
+span.classifier {
+  font-family: sans-serif ;
+  font-style: oblique }
+
+span.classifier-delimiter {
+  font-family: sans-serif ;
+  font-weight: bold }
+
+span.interpreted {
+  font-family: sans-serif }
+
+span.option {
+  white-space: nowrap }
+
+span.pre {
+  white-space: pre }
+
+span.problematic, pre.problematic {
+  color: red }
+
+span.section-subtitle {
+  /* font-size relative to parent (h1..h6 element) */
+  font-size: 80% }
+
+table.citation {
+  border-left: solid 1px gray;
+  margin-left: 1px }
+
+table.docinfo {
+  margin: 2em 4em }
+
+table.docutils {
+  margin-top: 0.5em ;
+  margin-bottom: 0.5em }
+
+table.footnote {
+  border-left: solid 1px black;
+  margin-left: 1px }
+
+table.docutils td, table.docutils th,
+table.docinfo td, table.docinfo th {
+  padding-left: 0.5em ;
+  padding-right: 0.5em ;
+  vertical-align: top }
+
+table.docutils th.field-name, table.docinfo th.docinfo-name {
+  font-weight: bold ;
+  text-align: left ;
+  white-space: nowrap ;
+  padding-left: 0 }
+
+/* "booktabs" style (no vertical lines) */
+table.docutils.booktabs {
+  border: 0px;
+  border-top: 2px solid;
+  border-bottom: 2px solid;
+  border-collapse: collapse;
+}
+table.docutils.booktabs * {
+  border: 0px;
+}
+table.docutils.booktabs th {
+  border-bottom: thin solid;
+  text-align: left;
+}
+
+h1 tt.docutils, h2 tt.docutils, h3 tt.docutils,
+h4 tt.docutils, h5 tt.docutils, h6 tt.docutils {
+  font-size: 100% }
+
+ul.auto-toc {
+  list-style-type: none }
+
+</style>
+</head>
+<body>
+<div class="document" id="contact-center-ui">
+<h1 class="title">Contact Center UI</h1>
+
+<!-- !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!! This file is generated by oca-gen-addon-readme !!
+!! changes will be overwritten.                   !!
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!! source digest: sha256:04bfe8e4eb446041adee284a527cd9a93e8793da08448e141c13cd2db3121c6c
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! -->
+<p><a class="reference external image-reference" href="https://odoo-community.org/page/development-status"><img alt="Beta" src="https://img.shields.io/badge/maturity-Beta-yellow.png" /></a> <a class="reference external image-reference" href="http://www.gnu.org/licenses/agpl-3.0-standalone.html"><img alt="License: AGPL-3" src="https://img.shields.io/badge/license-AGPL--3-blue.png" /></a> <a class="reference external image-reference" href="https://github.com/soloztech/contact-center/tree/16.0/contact_center_ui"><img alt="soloztech/contact-center" src="https://img.shields.io/badge/github-soloztech%2Fcontact--center-lightgray.png?logo=github" /></a></p>
+<p>Standalone Odoo 16 Owl client action for omnichannel Contact Center agents.</p>
+<div class="section" id="features">
+<h1>Features</h1>
+<p>The inbox provides:</p>
+<ul class="simple">
+<li>conversation search plus account, state, and server-side responsibility filters;</li>
+<li>grouped-by-inbox and flat conversation views with global totals and pagination;</li>
+<li>the logical inbox name as the primary route metadata on every conversation card and
+in the selected-conversation header;</li>
+<li>a persisted compact desktop density with collapsible filters, while mobile keeps its
+responsive full-width layout;</li>
+<li>per-user, per-database preferences in <tt class="docutils literal">localStorage</tt> (filters without the search
+text, grouped or flat view, collapsed inboxes, side panel and details pane), checked
+against the current bootstrap on every load and ignored when stale or malformed;</li>
+<li>returning to the inbox within the same page restores the open conversation, the
+search text and the list position from web-client memory, after the server authorizes
+the conversation again; a reload, a new tab or a duplicated tab starts without a
+selected conversation;</li>
+<li>no conversation opens by itself: without a remembered selection none is selected, a
+selection that leaves the list is cleared instead of replaced, and a restored
+conversation is marked as seen only after the agent interacts with it;</li>
+<li>a top-bar item for agents with the number of unread conversations assigned to them;
+its menu opens “My unread” or “All unread” (unread conversations the agent did not
+mute, counted exactly as the list opens them) or the inbox, and refreshes on
+messages, reads, muting and deletion, on window focus and every five minutes;</li>
+<li>a “Sem silenciadas” filter that hides the conversations the agent muted;</li>
+<li>“Marcar todas como lidas” for the conversations of the current list (up to 200 per
+action, the open one excluded): the agent’s read pointers advance only up to the newest
+message present when the action was prepared, never over a message that arrived
+afterwards, and the customer receives no read receipt; the list then reloads from its
+first page (rows loaded beyond 200 are paged in again);</li>
+<li>for supervisors, <em>Relatórios › Atendimento</em>: per inbox, responsible at the start or
+channel, the episodes, answers, server-side median and 90th percentile of the first
+and of the following responses, pending and closed-without-response episodes,
+transfers, reopenings and inbound/outbound volume of direct conversations
+(outbound: agent and automation messages with confirmed delivery, and phone
+replies), filtered by period, inbox, responsible and channel (archived inboxes and
+former, archived or deleted responsibles with history the supervisor may read
+remain selectable); every number states
+its coverage (known responsible, time basis, history start, phone replies not
+placed); the history starts at its publication and a period is partial only when
+a conversation in scope predates it, and a missing measurement reads “sem dados”,
+never zero; a rejected reload
+clears the numbers, and “Ver episódios” opens, as a list or pivot, the episodes of
+the report on screen;</li>
+<li>localized, color-coded conversation states and compact connection-health details;</li>
+<li>paged conversation and message timelines with unread pointers;</li>
+<li>provider, platform, origin, reply, delivery, and dispatch context;</li>
+<li>a text and media composer with up to ten files, individual previews, removal,
+reply mode, and one idempotent request identifier per message;</li>
+<li>a single caption on the first compatible file, or one separate text message;
+partial batches retain only unconfirmed operations within the open session;</li>
+<li>capability-gated buttons, lists, contacts and location forms, plus readable
+received selections and shared-content cards;</li>
+<li>consecutive-message grouping without hiding the run boundaries;</li>
+<li>an internal image/video/PDF viewer, audio player with playback-speed control, and
+safe direct download for other documents;</li>
+<li>deferred image loading with reserved layout space and a two-request concurrency cap;</li>
+<li>keyboard-, touch-, and screen-reader-accessible reply, reaction, edit, delete, and
+media actions, including focus restoration when the viewer closes;</li>
+<li><tt class="docutils literal">open</tt>, <tt class="docutils literal">resolved</tt>, and <tt class="docutils literal">archived</tt> operational states, with contextual
+<em>Resolve</em>, <em>Reopen</em>, <em>Archive</em>, and <em>Unarchive</em> actions; a new inbound message
+reopens a resolved conversation, while an archived conversation remains archived;</li>
+<li>a read-only inbox team plus responsible-user, claim, and tag actions;</li>
+<li>guest/contact details and all observed external aliases;</li>
+<li>person-first contact search, creation, linking, and unlinking, followed by safe
+search or creation of the person’s principal company;</li>
+<li>an explicit supervisor-only alternative for a centralized company number, visually
+distinct from the normal personal-contact flow;</li>
+<li>direct opening of the linked person or company in the native Contacts form;</li>
+<li>inbound group badges, read-only state, safe group names, private avatars, aggregate
+participant/admin counts, own role, and metadata freshness;</li>
+<li>Contact Center-specific bus synchronization;</li>
+<li>realtime refreshes that preserve the complete conversation tail already loaded by
+the operator, including lists larger than the 200-row refresh batch;</li>
+<li>out-of-focus attention without customer names or message bodies in browser
+notifications;</li>
+<li>one text draft per conversation in <tt class="docutils literal">sessionStorage</tt>, with stale asynchronous
+responses discarded when the operator changes conversation;</li>
+<li>scoped native quick replies, immutable internal notes, native follow-up activities,
+and provider-neutral scheduled messages;</li>
+<li>readable desktop typography with bottom-anchored short conversations; and</li>
+<li>responsive desktop and mobile navigation.</li>
+</ul>
+</div>
+<div class="section" id="architecture-boundary">
+<h1>Architecture boundary</h1>
+<pre class="literal-block">
+Provider adapter -&gt; DTO -&gt; Contact Center application API -&gt; Contact Center UI
+</pre>
+<p>The browser calls only the versioned local API and authenticated media routes from
+<tt class="docutils literal">contact_center_base</tt>. It never calls WuzAPI, WAHA, Evolution, Meta, Telegram, or
+another provider directly. Sending creates the canonical <tt class="docutils literal">mail.message</tt>, message
+binding, consumed media, and durable outbox in one transaction; OCA <tt class="docutils literal">queue_job</tt>
+dispatches the command after commit.</p>
+<p>The addon does not import or patch private Discuss or Live Chat JavaScript. Odoo 16
+<tt class="docutils literal">mail.channel</tt> and <tt class="docutils literal">mail.message</tt> remain the canonical records behind the local
+versioned API, which keeps the UI portable to later Odoo versions.</p>
+</div>
+<div class="section" id="local-api-v1">
+<h1>Local API v1</h1>
+<p>The client consumes these authenticated operations:</p>
+<ul class="simple">
+<li><tt class="docutils literal">bootstrap</tt> and <tt class="docutils literal">list_conversations</tt>;</li>
+<li><tt class="docutils literal">get_conversation</tt> and <tt class="docutils literal">get_timeline</tt>;</li>
+<li><tt class="docutils literal">mark_fetched</tt> and <tt class="docutils literal">mark_seen</tt>;</li>
+<li><tt class="docutils literal">update_conversation</tt> and <tt class="docutils literal">claim_conversation</tt>;</li>
+<li><tt class="docutils literal">search_quick_replies</tt> for the selected conversation only;</li>
+<li><tt class="docutils literal">post_internal_note</tt>;</li>
+<li><tt class="docutils literal">schedule_followup</tt> and <tt class="docutils literal">complete_followup</tt>;</li>
+<li><tt class="docutils literal">schedule_message</tt> and <tt class="docutils literal">cancel_scheduled_message</tt>;</li>
+<li><tt class="docutils literal">search_partners</tt>, <tt class="docutils literal">link_partner</tt>, <tt class="docutils literal">create_and_link_partner</tt>, and
+<tt class="docutils literal">unlink_partner</tt>;</li>
+<li><tt class="docutils literal">search_partner_companies</tt>, <tt class="docutils literal">link_partner_company</tt>, and
+<tt class="docutils literal">create_and_link_partner_company</tt>;</li>
+<li><tt class="docutils literal">search_central_companies</tt>, <tt class="docutils literal">link_central_company</tt>, and
+<tt class="docutils literal">create_and_link_central_company</tt>; and</li>
+<li><tt class="docutils literal">send_message</tt>, <tt class="docutils literal">react_message</tt>, <tt class="docutils literal">edit_message</tt>, and <tt class="docutils literal">delete_message</tt>.</li>
+</ul>
+<p><tt class="docutils literal">send_message</tt> accepts text and/or one opaque media reference, or a validated
+<tt class="docutils literal">structured_content</tt> card. The multi-file composer admits independent commands;
+it does not promise a native provider album. A definite rejection permits correction;
+an ambiguous result preserves the original request identifier until confirmation.
+Pending files and cards survive conversation changes in the open interface, but
+are not restored after reloading the browser. Files are uploaded to
+the authenticated <tt class="docutils literal">/contact_center/media/upload</tt> route, and ready attachments are
+served by <tt class="docutils literal"><span class="pre">/contact_center/media/&lt;id&gt;/content</span></tt> only after ACL and record-rule checks;
+operational users are scoped by native membership.</p>
+<p>Company search, creation, and linking are supervisor-only.  In the normal path the
+identity remains linked to a personal contact and the company uses Odoo’s native
+<tt class="docutils literal">res.partner.parent_id</tt> commercial relation, which also synchronizes the person’s
+commercial address and fiscal fields.  Reparenting and unlinking a company remain in
+the Contacts application.</p>
+<p>The direct-company path is intentionally separate and must be chosen explicitly for a
+central service number that represents the company rather than one fixed person.  It
+links <tt class="docutils literal">identity.partner_id</tt> to an <tt class="docutils literal">is_company</tt> partner without rewriting the
+original guest or historical authorship.  The protected <tt class="docutils literal">partner_link_kind</tt> keeps
+that classification stable if someone later changes the partner type in Contacts;
+the panel visibly flags such drift for review.  Downstream CRM, sales, invoicing and
+financial projections should use <tt class="docutils literal">commercial_partner_id</tt>.  Clicking a linked name in
+the profile opens that native partner record.</p>
+<p>All responses contain <tt class="docutils literal">schema_version = 1</tt>. Unsupported versions fail closed. UI
+request UUIDs make a repeated send return the original message/outbox instead of
+creating a duplicate.</p>
+<p>For <tt class="docutils literal">conversation_type = group</tt>, conversation responses include only aggregate group
+metadata: safe display name, local authenticated avatar URL, complete
+participant/admin counts, own role, metadata state and last synchronization time. The
+browser never receives the technical roster, PN/LID aliases, raw group JID, provider
+revision, remote avatar URL or provider credentials. Metadata does not change the
+read-only capabilities established for inbound groups.</p>
+</div>
+<div class="section" id="installation">
+<h1>Installation</h1>
+<p>Install OCA <tt class="docutils literal">queue_job</tt>, <tt class="docutils literal">contact_center_base</tt>, at least one provider addon, and
+then <strong>Contact Center UI</strong>. The addon depends directly on Odoo <tt class="docutils literal">web</tt> and registers its
+client action in <tt class="docutils literal">web.assets_backend</tt>.</p>
+</div>
+<div class="section" id="current-limits">
+<h1>Current limits</h1>
+<p>The current MVP supports individual text, image, audio, video, and document messages,
+with one attachment per outbound message, plus reply, reaction, edit, and delete when
+the provider advertises the corresponding capability. Group metadata is displayed only
+as safe aggregates; group sends and mutations additionally require explicit inbox and
+adapter capability opt-in. Group membership management, campaign broadcasts,
+automated journeys, and history import remain outside the pilot.</p>
+</div>
+<div class="section" id="crm-extensions-and-origin-cards">
+<h1>CRM extensions and origin cards</h1>
+<p>The UI depends on <tt class="docutils literal">contact_center_base</tt> and native <tt class="docutils literal">web</tt>. Customer documents
+are supplied by the optional <tt class="docutils literal">contact_center_crm</tt> extension; service cases and
+CRM stage actions belong to <tt class="docutils literal">contact_center_kanban</tt>. Neither opening a conversation
+nor displaying an origin card creates a lead or links a commercial record.</p>
+<p>The handshake panel lists records of the linked contact and commercial customer.
+That customer view is different from an explicit conversation-to-opportunity link.
+Ad origin cards display available evidence and creative context; their presence does
+not establish qualification, campaign resolution or a native UTM assignment.</p>
+<p><strong>Table of contents</strong></p>
+</div>
+<div class="section" id="usage">
+<h1>Usage</h1>
+<p>Open the Contact Center inbox, select an authorized account and conversation,
+and verify the linked contact before consulting customer records. Use the handshake
+button when <tt class="docutils literal">contact_center_crm</tt> is installed. The availability of each tab also
+depends on the corresponding native module and the user’s document permissions.</p>
+<p>When a panel or action is missing, check the installed extension, account access,
+linked contact and native document rights before changing configuration. For delayed
+messages or missing origin evidence, inspect Base’s Message Flow and attribution
+records; the browser does not execute provider calls or resolve campaigns.</p>
+<p>The <a class="reference external" href="https://github.com/soloztech/contact-center/blob/16.0/docs/crm-and-attribution.md">operator guide (Portuguese)</a> explains the
+conversation, commercial action and evidence lifecycles.</p>
+</div>
+<div class="section" id="bug-tracker">
+<h1>Bug Tracker</h1>
+<p>Bugs are tracked on <a class="reference external" href="https://github.com/soloztech/contact-center/issues">GitHub Issues</a>.
+In case of trouble, please check there if your issue has already been reported.
+If you spotted it first, help us to smash it by providing a detailed and welcomed
+<a class="reference external" href="https://github.com/soloztech/contact-center/issues/new?body=module:%20contact_center_ui%0Aversion:%2016.0%0A%0A**Steps%20to%20reproduce**%0A-%20...%0A%0A**Current%20behavior**%0A%0A**Expected%20behavior**">feedback</a>.</p>
+<p>Do not contact contributors directly about support or help with technical issues.</p>
+</div>
+<div class="section" id="credits">
+<h1>Credits</h1>
+<div class="section" id="authors">
+<h2>Authors</h2>
+<ul class="simple">
+<li>Soloz Technologies</li>
+</ul>
+</div>
+<div class="section" id="contributors">
+<h2>Contributors</h2>
+<ul class="simple">
+<li>Soloz Technologies</li>
+</ul>
+</div>
+<div class="section" id="maintainers">
+<h2>Maintainers</h2>
+<p>This module is part of the <a class="reference external" href="https://github.com/soloztech/contact-center/tree/16.0/contact_center_ui">soloztech/contact-center</a> project on GitHub.</p>
+<p>You are welcome to contribute.</p>
+</div>
+</div>
+</div>
+</body>
+</html>

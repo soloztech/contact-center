@@ -1737,3 +1737,23 @@ class TestContactCenterCrm(SavepointCase):
         self.assertEqual(case.stage_revision, 1)
         self.assertTrue(initial.active)
         self.assertTrue(progressed.active)
+
+    def test_business_period_revision_preserves_case_link_but_unlink_retires_it(self):
+        case = self._default_case(
+            self._create_channel(self.team_account, "Scoped business case")
+        )
+        case.with_user(self.user_a).action_transition(self.stage_a.id)
+        case.with_user(self.user_a).action_create_crm_lead()
+        case.invalidate_recordset()
+        lead = case.crm_lead_id
+        bridge = case.sudo().crm_link_ids.filtered(lambda row: row.state == "active")
+        row = lead._conversation_links()
+        confirmed = (
+            row.with_env(self.env)
+            .with_user(self.user_a)
+            ._confirm_scope("2026-09-01 00:00:00")
+        )
+        self.assertTrue(bridge.filtered(lambda row: row.state == "active"))
+        confirmed._tombstone()
+        bridge.invalidate_recordset()
+        self.assertTrue(all(row.state == "unlinked" for row in bridge))

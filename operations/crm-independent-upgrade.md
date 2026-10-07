@@ -1,3 +1,17 @@
+# Upgrade do CRM com escopo comercial
+
+**O backfill de extração abaixo é histórico e está bloqueado antes de qualquer escrita
+quando o ledger contém `scope_state`.** Revogar case assertions e recriar somente
+contextos apagaria crédito antigo. Bases pendentes de extração exigem plano específico e
+backup verificado; não executar o procedimento histórico nem bypassar o guard.
+`contact_center.case` permanece pendente de revisão no classificador.
+
+Para bases já extraídas, atualizar os módulos coordenados. Vínculos existentes recebem
+`legacy`/`unknown`, sem vigência inventada. As novas ligações são contexto; a Jornada
+permite confirmação explícita. Ver [contrato e diagrama](../docs/crm-journey.md).
+
+---
+
 # Independent conversation CRM: prerelease upgrade
 
 `contact_center_crm` depends on `contact_center_ui` and native `crm`. It links
@@ -7,10 +21,12 @@ roster authority. Marketing consumes the conversation association and installs w
 Kanban. Removing a case link preserves the conversation link; removing the conversation
 link also removes the corresponding optional case links.
 
-The two repository revisions form one release candidate. The old Marketing CRM consumer
-imports models that moved to Kanban, so its source must be staged together with Contact
-Center, and `marketing_center_contact_center_crm` must be upgraded when already
-installed. Use full peer commit SHAs in coordinated CI.
+The two repository revisions form one release candidate. The historical consumer
+`marketing_center_contact_center_crm` imports models that moved to Kanban. On a
+pre-extraction base the script marks that old consumer for upgrade. The current consumer
+is `marketing_center_contact_center`; the operator must explicitly include it in the
+coordinated module upgrade when installed. Stage both repositories together and use full
+peer commit SHAs in coordinated CI.
 
 For an existing prerelease database, keep Odoo, its queue workers and the database
 manager stopped throughout the following steps. Take and verify a paired database,
@@ -22,9 +38,11 @@ filestore and source backup first. Fresh installs need no migration.
    `kanban_extraction.py` to the comma-separated script list. The CRM script hands off
    47 declared XML IDs, nine models, their fields, selections, constraints and relation
    ownership. Existing business record IDs and rows are preserved. An incomplete or
-   conflicting inventory aborts the upgrade. The installed Marketing consumer is marked
-   for upgrade in the same registry load. The same transaction sets the technical
-   parameter `contact_center_crm.conversation_extraction_state` to `pending`.
+   conflicting inventory aborts the upgrade. The script marks the historical
+   `marketing_center_contact_center_crm` consumer for upgrade in the same registry load;
+   it does not mark the current `marketing_center_contact_center` consumer. The same
+   transaction sets the technical parameter
+   `contact_center_crm.conversation_extraction_state` to `pending`.
 2. Load the complete new registry in an offline Odoo shell, with
    `ODOO_QUEUE_JOB_CHANNELS=root:0`, and execute:
 

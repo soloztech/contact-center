@@ -16,7 +16,18 @@ _LEGACY_JOB_METHODS = (
 )
 
 
+def _assert_legacy_registry(env):
+    if "contact.center.crm.conversation.link" not in env.registry:
+        raise RuntimeError("The independent CRM registry must load before backfill")
+    if "scope_state" in env["contact.center.crm.conversation.link"]._fields:
+        raise RuntimeError(
+            "Historical extraction is blocked on the scoped CRM ledger; "
+            "plan an explicit attribution migration."
+        )
+
+
 def _retire_legacy_jobs(env):
+    _assert_legacy_registry(env)
     if "queue.job" not in env.registry:
         return 0
     jobs = (
@@ -46,6 +57,7 @@ def _retire_legacy_jobs(env):
 
 
 def _backfill_links(env):
+    _assert_legacy_registry(env)
     if "contact.center.crm.case.link" not in env.registry:
         return 0
     links = env["contact.center.crm.conversation.link"].sudo()
@@ -76,6 +88,9 @@ def _backfill_links(env):
                 ],
                 limit=1,
             )
+            # Only the old, unscoped registry may reach this call. A future
+            # scoped extraction must explicitly preserve legacy/unknown facts;
+            # _link creates new context associations and cannot migrate them.
             canonical = scoped._link(old.channel_id, old.lead_id, origin=old.origin)
             if not existing:
                 canonical._service().write(
@@ -90,6 +105,7 @@ def _backfill_links(env):
 
 
 def _replace_marketing_authority(env):
+    _assert_legacy_registry(env)
     if "marketing.contact.center.crm.service" not in env.registry:
         return {"revoked_assertions": 0, "reconciled_pairs": 0}
     assertions = env["marketing.attribution.crm.link"].sudo()
@@ -163,8 +179,7 @@ def _replace_marketing_authority(env):
 
 def migrate(env):
     """Backfill links and replace derived authority without changing source ledgers."""
-    if "contact.center.crm.conversation.link" not in env.registry:
-        raise RuntimeError("The independent CRM registry must load before backfill")
+    _assert_legacy_registry(env)
     with env.cr.savepoint():
         retired_jobs = _retire_legacy_jobs(env)
         created_links = _backfill_links(env)

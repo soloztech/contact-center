@@ -100,12 +100,46 @@ class ContactCenterCrmConversationLink(models.Model):
     linked_by_id = fields.Many2one(
         "res.users", default=lambda self: self.env.user, required=True, readonly=True
     )
+    scope_state = fields.Selection(
+        [
+            ("legacy", "Legacy: review required"),
+            ("context", "Customer context"),
+            ("confirmed", "Confirmed business period"),
+            ("review", "Scope needs review"),
+        ],
+        default="legacy",
+        required=True,
+        readonly=True,
+        index=True,
+    )
+    writer = fields.Selection(
+        [
+            ("unknown", "Legacy writer unknown"),
+            ("manual", "Human"),
+            ("automation", "Automation"),
+        ],
+        default="unknown",
+        required=True,
+        readonly=True,
+    )
+    scope_start = fields.Datetime(readonly=True)
+    scope_end = fields.Datetime(readonly=True)
+    scope_policy_version = fields.Integer(default=1, readonly=True, required=True)
+    scope_actor_id = fields.Many2one("res.users", readonly=True, ondelete="set null")
+    scope_decided_at = fields.Datetime(readonly=True)
     unlinked_at = fields.Datetime(readonly=True)
     unlinked_by_id = fields.Many2one("res.users", readonly=True)
     unlinked_reason = fields.Char(readonly=True)
     lead_record_id_snapshot = fields.Integer(readonly=True)
 
     _sql_constraints = [
+        (
+            "scope_window",
+            "CHECK((scope_state = 'confirmed' AND scope_start IS NOT NULL "
+            "AND (scope_end IS NULL OR scope_end > scope_start)) OR "
+            "(scope_state != 'confirmed' AND scope_start IS NULL AND scope_end IS NULL))",
+            "A confirmed business needs a valid period; other scopes have no period.",
+        ),
         (
             "lifecycle",
             "CHECK((state = 'active' AND lead_id IS NOT NULL) OR "
@@ -147,7 +181,9 @@ class ContactCenterCrmConversationLink(models.Model):
         )
 
     @api.model
-    def _link(self, channel, lead, origin="linked"):
+    def _link(self, channel, lead, origin="linked", *, writer):
+        if writer not in {"manual", "automation"}:
+            raise ValidationError(_("An explicit association writer is required."))
         channel.ensure_one()
         lead.ensure_one()
         channel.check_access_rights("read")
@@ -187,6 +223,8 @@ class ContactCenterCrmConversationLink(models.Model):
                 "channel_id": channel.id,
                 "lead_id": lead.id,
                 "origin": origin,
+                "writer": writer,
+                "scope_state": "context",
                 "lead_record_id_snapshot": lead.id,
                 "linked_by_id": self.env.uid,
             }
@@ -226,11 +264,97 @@ class ContactCenterCrmConversationLink(models.Model):
                 "unlinked_reason": reason,
             }
         )
+        links.flush_recordset(["state", "lead_id"])
         leads.invalidate_recordset(["contact_center_conversation_count"])
         return True
 
+    def _scope_contains(self, occurred_at):
+        self.ensure_one()
+        when = fields.Datetime.to_datetime(occurred_at)
+        return bool(
+            self.state == "active"
+            and self.scope_state == "confirmed"
+            and when
+            and self.scope_start <= when
+            and (not self.scope_end or when < self.scope_end)
+        )
+
+    def _successor_values(self, lead, scope_state, **values):
+        self.ensure_one()
+        return dict(
+            channel_id=self.channel_id.id,
+            lead_id=lead.id,
+            lead_record_id_snapshot=lead.id,
+            scope_state=scope_state,
+            writer=self.writer,
+            origin=self.origin,
+            linked_at=self.linked_at,
+            linked_by_id=self.linked_by_id.id,
+            scope_actor_id=self.env.uid,
+            scope_decided_at=fields.Datetime.now(),
+            **values,
+        )
+
+    def _confirm_scope(self, start, end=False):
+        """Explicit decision; never callable through generic ledger CRUD/RPC."""
+        self.ensure_one()
+        row = self.sudo().exists()
+        if not row or row.state != "active":
+            raise ValidationError(_("The association is no longer active."))
+        lead = self.env["crm.lead"].browse(row.lead_id.id)
+        lead.check_access_rights("read")
+        lead.check_access_rule("read")
+        api_model = self.env["contact.center.ui.api"]
+        channel = api_model._crm_channel(row.channel_id.id, mutate=True)
+        lead._contact_center_lock_conversation_graph(
+            channel_ids=channel.ids, touch_leads=True, touch_channels=True
+        )
+        row.invalidate_recordset()
+        lead.invalidate_recordset()
+        lead.check_access_rule("read")
+        api_model._crm_channel(channel.id, mutate=True)
+        if row.state != "active" or row.lead_id != lead:
+            raise ValidationError(_("The association changed. Reload the journey."))
+        if not lead.company_id or lead.company_id != row.company_id:
+            raise ValidationError(
+                _("Set the business company before confirming its period.")
+            )
+        start, end = fields.Datetime.to_datetime(start), (
+            fields.Datetime.to_datetime(end) or False
+        )
+        if not start or (end and end <= start):
+            raise ValidationError(_("Choose a start and an end strictly after it."))
+        if row.scope_state == "confirmed" and (row.scope_start, row.scope_end) == (
+            start,
+            end,
+        ):
+            return row
+        domain = [
+            ("channel_id", "=", channel.id),
+            ("state", "=", "active"),
+            ("scope_state", "=", "confirmed"),
+            ("lead_id", "!=", lead.id),
+            "|",
+            ("scope_end", "=", False),
+            ("scope_end", ">", start),
+        ]
+        if end:
+            domain.append(("scope_start", "<", end))
+        if self.sudo().search_count(domain):
+            raise ValidationError(
+                _(
+                    "This period overlaps another business. "
+                    "Ask an authorized CRM manager to review it."
+                )
+            )
+        values = row._successor_values(
+            lead, "confirmed", scope_start=start, scope_end=end
+        )
+        row._tombstone("scope_revised")
+        return self._service().create(values)
+
     def _transfer_to_lead(self, lead):
-        """Preserve associations during native CRM merge; collapse duplicates."""
+        """Keep unambiguous context; retain disputed windows in retired rows."""
         leads = self.mapped("lead_id") | lead
         for link in self.sorted("id"):
             if lead.company_id and lead.company_id != link.company_id:
@@ -246,8 +370,18 @@ class ContactCenterCrmConversationLink(models.Model):
                 ],
                 limit=1,
             )
-            if duplicate:
+
+            def signature(row):
+                return row.scope_state, row.scope_start, row.scope_end
+
+            if duplicate and signature(duplicate) == signature(link):
                 link._tombstone("merged")
+            elif duplicate or link.scope_state == "confirmed":
+                # Keep the survivor's own association provenance when both
+                # businesses already referred to this conversation.
+                values = (duplicate or link)._successor_values(lead, "review")
+                (link | duplicate)._tombstone("merged")
+                self._service().create(values)
             else:
                 link._service().write(
                     {"lead_id": lead.id, "lead_record_id_snapshot": lead.id}

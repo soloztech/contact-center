@@ -257,7 +257,9 @@ class TestConversationCrm(ConversationCrmCase):
         with self.assertRaises(AccessError):
             self.api.link_crm_opportunity(self.channel.id, lead.id)
         with self.assertRaises(ValidationError):
-            self.env["contact.center.crm.conversation.link"]._link(self.channel, lead)
+            self.env["contact.center.crm.conversation.link"]._link(
+                self.channel, lead, writer="manual"
+            )
 
     def test_company_change_cannot_break_existing_links(self):
         self.api.link_crm_opportunity(self.channel.id, self.lead.id)

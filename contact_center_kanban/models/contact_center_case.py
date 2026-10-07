@@ -869,7 +869,7 @@ class ContactCenterCase(models.Model):
             }
         )
         case.env["contact.center.crm.conversation.link"]._link(
-            case.channel_id, lead, origin="created"
+            case.channel_id, lead, origin="created", writer="manual"
         )
         link = (
             case.env["contact.center.crm.case.link"]
@@ -918,7 +918,9 @@ class ContactCenterCase(models.Model):
             raise ValidationError(
                 _("The selected lead stage is not mapped to this pipeline.")
             )
-        case.env["contact.center.crm.conversation.link"]._link(case.channel_id, lead)
+        case.env["contact.center.crm.conversation.link"]._link(
+            case.channel_id, lead, writer="manual"
+        )
         link = (
             case.env["contact.center.crm.case.link"]
             .with_context(contact_center_crm_link_service=CRM_CASE_LINK_SERVICE_TOKEN)

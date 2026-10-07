@@ -123,13 +123,12 @@ class TestSaleConversations(TransactionCase):
                     "can_open": True,
                 },
                 {
-                    "channel_id": False,
-                    "contact_name": "Bruno",
-                    "inbox_name": "Alice",
                     "can_open": False,
+                    "restricted": True,
                 },
             ],
         )
+        self.assertNotIn("Alice", json.dumps(payload))
         self.assertNotIn("SECRET", json.dumps(payload))
         self.assertNotIn("99999", json.dumps(payload))
         api_model = self.env["contact.center.ui.api"].with_user(self.agent)
@@ -161,7 +160,7 @@ class TestSaleConversations(TransactionCase):
         payload = self.sale.get_contact_center_conversations()
         self.assertEqual(payload["total"], 5)
         self.assertEqual(
-            {row["contact_name"] for row in payload["items"]},
+            {row["contact_name"] for row in payload["items"] if row["can_open"]},
             {"Bruno", "Colega", "Contato secundário", "Empresa Y"},
         )
         self.assertEqual(secondary_person.commercial_partner_id, secondary_person)
@@ -203,7 +202,7 @@ class TestSaleConversations(TransactionCase):
         self.assertEqual(self.sale.contact_center_conversation_count, 1)
         row = self.sale.get_contact_center_conversations()["items"][0]
         self.assertFalse(row["can_open"])
-        self.assertFalse(row["channel_id"])
+        self.assertEqual(row, {"can_open": False, "restricted": True})
 
     def test_resolved_archived_states_and_inactive_inbox_remain_visible(self):
         for state in ("resolved", "archived"):
@@ -277,7 +276,9 @@ class TestSaleConversations(TransactionCase):
             }
         )
         rows = self.sale.get_contact_center_conversations()["items"]
-        self.assertEqual([row["contact_name"] for row in rows], ["Contato", "Contato"])
+        self.assertEqual(
+            [row["contact_name"] for row in rows if row["can_open"]], ["Contato"]
+        )
 
     def test_order_company_bounds_projection_with_two_active_companies(self):
         foreign = self.env["res.company"].create({"name": "Other operational company"})
@@ -338,8 +339,8 @@ class TestSaleConversations(TransactionCase):
         self.assertTrue(first["has_more"])
         self.assertFalse(second["has_more"])
         self.assertEqual(
-            [first["items"][0]["inbox_name"], second["items"][0]["inbox_name"]],
-            ["Comercial", "Alice"],
+            [first["items"][0]["inbox_name"], second["items"][0]],
+            ["Comercial", {"can_open": False, "restricted": True}],
         )
         self.assertEqual(
             self.sale.get_contact_center_conversations(limit=999)["limit"], 100

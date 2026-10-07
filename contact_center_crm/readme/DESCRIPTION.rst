@@ -12,7 +12,7 @@ create associations or change marketing attribution.
 The **Conversar** action on a CRM record reuses the existing Contact Center
 conversation admission API and links the result. It does not send messages,
 create a partner or change the lead's type or stage. Optional automation addons
-can reuse ``crm.lead._contact_center_start_and_link(account, phone=None)``, which
+can reuse ``crm.lead._contact_center_start_and_link(account, phone=None, *, writer)``, which
 returns an authorized ``mail.channel`` record. Message dispatch remains separate.
 
 This addon requires the chat UI and native CRM. It does not install Kanban,
@@ -42,3 +42,6 @@ installed bridges.
 External-campaign mapping to native CRM UTM fields and GCLID enrichment belong
 to Marketing Center. This module does not perform those lookups while opening
 or linking a conversation.
+
+The Journey separates customer context from confirmed business periods.
+Automation passes writer="automation" and never confirms a period implicitly.

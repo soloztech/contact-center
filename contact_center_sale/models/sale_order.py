@@ -97,6 +97,9 @@ class SaleOrder(models.Model):
                 can_open = True
             except (AccessError, MissingError, ValidationError):
                 can_open = False
+            if not can_open:
+                items.append({"can_open": False, "restricted": True})
+                continue
             # Explicit checks are essential: Odoo shares its field cache across
             # sudo/user environments. Never fall back to a provider/phone name.
             partner = self.env["res.partner"].browse(binding.identity_id.partner_id.id)

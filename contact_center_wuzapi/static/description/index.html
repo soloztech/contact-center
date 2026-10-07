@@ -390,26 +390,21 @@ with <tt class="docutils literal">GET <span class="pre">/group/info?groupJID=...
 roles and PN/LID aliases without creating Odoo people or channel memberships. Avatar
 bytes are bounded to 2 MiB and returned to the core for private local persistence;
 provider/CDN URLs are not exposed to the UI.</p>
+<div class="section" id="acquisition-evidence-is-separate-from-crm-intake">
+<h1>Acquisition evidence is separate from CRM intake</h1>
+<p>The addon depends on <tt class="docutils literal">contact_center_base</tt> and has no CRM dependency. WhatsApp
+<tt class="docutils literal">externalAdReply</tt>, entry-point and UTM observations are normalized into Base’s
+attribution DTOs. An isolated <tt class="docutils literal">conversionSource</tt> marker (for example <tt class="docutils literal">FB_Ads</tt>)
+is not acquisition evidence: WhatsApp repeats it on established conversations without
+any ad identity, so it creates no touchpoint. It is kept only beside real evidence.</p>
+<p>A supported ad referral with an identifier, or an explicit CTWA entry point, can
+carry stronger provider evidence. Identifiers such as an ad source and a CTWA click
+ID retain distinct roles. Even stronger evidence does not create a lead. Commercial
+actions and optional Marketing Center attribution have their own policies.</p>
 <p><strong>Table of contents</strong></p>
-<div class="contents local topic" id="contents">
-<ul class="simple">
-<li><a class="reference internal" href="#configuration" id="toc-entry-1">Configuration</a></li>
-<li><a class="reference internal" href="#webhook-request-limit" id="toc-entry-2">Webhook request limit</a></li>
-<li><a class="reference internal" href="#group-metadata-subscriptions" id="toc-entry-3">Group metadata subscriptions</a></li>
-<li><a class="reference internal" href="#known-issues-roadmap" id="toc-entry-4">Known issues / Roadmap</a></li>
-<li><a class="reference internal" href="#implemented-baseline" id="toc-entry-5">Implemented baseline</a></li>
-<li><a class="reference internal" href="#next-increments" id="toc-entry-6">Next increments</a></li>
-<li><a class="reference internal" href="#bug-tracker" id="toc-entry-7">Bug Tracker</a></li>
-<li><a class="reference internal" href="#credits" id="toc-entry-8">Credits</a><ul>
-<li><a class="reference internal" href="#authors" id="toc-entry-9">Authors</a></li>
-<li><a class="reference internal" href="#contributors" id="toc-entry-10">Contributors</a></li>
-<li><a class="reference internal" href="#maintainers" id="toc-entry-11">Maintainers</a></li>
-</ul>
-</li>
-</ul>
 </div>
 <div class="section" id="configuration">
-<h1><a class="toc-backref" href="#toc-entry-1">Configuration</a></h1>
+<h1>Configuration</h1>
 <p>Create a WhatsApp account under <em>Contact Center &gt; Configuration &gt; Accounts</em>. Then open
 <em>Contact Center &gt; Configuration &gt; Provider Connections</em>, create a connection and select
 <tt class="docutils literal">WuzAPI</tt> in the <em>Provider</em> field. The provider selector is owned by the generic
@@ -423,7 +418,7 @@ provider addons must extend the same form with their own conditional tab.</p>
 credentials. Do not copy real credentials into fixtures, logs, DTOs or bus events.</p>
 </div>
 <div class="section" id="webhook-request-limit">
-<h1><a class="toc-backref" href="#toc-entry-2">Webhook request limit</a></h1>
+<h1>Webhook request limit</h1>
 <p>The addon accepts at most 1 MiB per webhook. On the validated Odoo 16/Werkzeug stack,
 JSON bodies reach the controller as a bounded stream, including requests without a
 <tt class="docutils literal"><span class="pre">Content-Length</span></tt> header. If a reverse proxy or WSGI middleware is configured to
@@ -431,7 +426,7 @@ buffer request bodies before Odoo, configure the same 1 MiB limit on that earlie
 layer: a controller cannot undo memory already allocated upstream.</p>
 </div>
 <div class="section" id="group-metadata-subscriptions">
-<h1><a class="toc-backref" href="#toc-entry-3">Group metadata subscriptions</a></h1>
+<h1>Group metadata subscriptions</h1>
 <p>For inbound, read-only group metadata, include <tt class="docutils literal">GroupInfo</tt>, <tt class="docutils literal">JoinedGroup</tt> and
 <tt class="docutils literal">Picture</tt> in the WuzAPI webhook subscriptions alongside the existing message and
 lifecycle events. They are hints only: after the signed webhook commits, an idempotent
@@ -444,11 +439,27 @@ complete snapshot TTL is six hours; partial results retry after 15 minutes. Avat
 downloads are limited to 2 MiB and never expose the provider token or remote URL to the
 browser.</p>
 </div>
+<div class="section" id="message-and-origin-diagnosis">
+<h1>Message and origin diagnosis</h1>
+<ol class="arabic simple">
+<li>Check the account’s primary connection, authenticated webhook admission and inbox
+event/job before interpreting a missing message as a provider failure.</li>
+<li>Check current verified identity and health before outbound operations. Preserve
+the original request and provider references when investigating uncertain sends.</li>
+<li>For origin evidence, inspect the normalized touchpoint and its identifiers. An
+<tt class="docutils literal">fbads</tt> hint without a usable identifier can legitimately remain unresolved.</li>
+<li>Check attribution visibility separately from evidence capture. A hidden or absent
+card is not a reason to create a lead or assign a guessed campaign.</li>
+</ol>
+<p>The <a class="reference external" href="https://github.com/soloztech/contact-center/blob/16.0/docs/crm-and-attribution.md">CRM and attribution guide (Portuguese)</a> describes
+explicit commercial actions. Cross-project matching is documented in
+<a class="reference external" href="https://github.com/soloztech/marketing-center/blob/16.0/docs/crm-intake-and-attribution.md">Marketing Center</a>.</p>
+</div>
 <div class="section" id="known-issues-roadmap">
-<h1><a class="toc-backref" href="#toc-entry-4">Known issues / Roadmap</a></h1>
+<h1>Known issues / Roadmap</h1>
 </div>
 <div class="section" id="implemented-baseline">
-<h1><a class="toc-backref" href="#toc-entry-5">Implemented baseline</a></h1>
+<h1>Implemented baseline</h1>
 <ul class="simple">
 <li>Strict HMAC webhook authentication and bounded envelope persistence.</li>
 <li>WuzAPI payload normalization into provider-neutral DTOs and pinned command transport.</li>
@@ -469,7 +480,7 @@ album-send endpoint; coordination envelopes do not create empty human messages.<
 </ul>
 </div>
 <div class="section" id="next-increments">
-<h1><a class="toc-backref" href="#toc-entry-6">Next increments</a></h1>
+<h1>Next increments</h1>
 <ul class="simple">
 <li>Keep group participant management outside the pilot until it has a provider-neutral
 contract, explicit authorization rules and real fixtures.</li>
@@ -481,7 +492,7 @@ SERVIDOR05 technical laboratory phase.</li>
 </ul>
 </div>
 <div class="section" id="bug-tracker">
-<h1><a class="toc-backref" href="#toc-entry-7">Bug Tracker</a></h1>
+<h1>Bug Tracker</h1>
 <p>Bugs are tracked on <a class="reference external" href="https://github.com/soloztech/contact-center/issues">GitHub Issues</a>.
 In case of trouble, please check there if your issue has already been reported.
 If you spotted it first, help us to smash it by providing a detailed and welcomed
@@ -489,21 +500,21 @@ If you spotted it first, help us to smash it by providing a detailed and welcome
 <p>Do not contact contributors directly about support or help with technical issues.</p>
 </div>
 <div class="section" id="credits">
-<h1><a class="toc-backref" href="#toc-entry-8">Credits</a></h1>
+<h1>Credits</h1>
 <div class="section" id="authors">
-<h2><a class="toc-backref" href="#toc-entry-9">Authors</a></h2>
+<h2>Authors</h2>
 <ul class="simple">
 <li>Soloz Technologies</li>
 </ul>
 </div>
 <div class="section" id="contributors">
-<h2><a class="toc-backref" href="#toc-entry-10">Contributors</a></h2>
+<h2>Contributors</h2>
 <ul class="simple">
 <li>Soloz Technologies</li>
 </ul>
 </div>
 <div class="section" id="maintainers">
-<h2><a class="toc-backref" href="#toc-entry-11">Maintainers</a></h2>
+<h2>Maintainers</h2>
 <p>This module is part of the <a class="reference external" href="https://github.com/soloztech/contact-center/tree/16.0/contact_center_wuzapi">soloztech/contact-center</a> project on GitHub.</p>
 <p>You are welcome to contribute.</p>
 </div>

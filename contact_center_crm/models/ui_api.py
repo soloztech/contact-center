@@ -457,7 +457,9 @@ class ContactCenterUiApi(models.AbstractModel):
             raise ValidationError(
                 _("Choose a lead or opportunity for this customer or exact phone.")
             )
-        self.env["contact.center.crm.conversation.link"]._link(channel, lead)
+        self.env["contact.center.crm.conversation.link"]._link(
+            channel, lead, writer="manual"
+        )
         return {
             "schema_version": SCHEMA_VERSION,
             "channel_id": channel.id,

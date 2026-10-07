@@ -148,3 +148,6 @@ Guias de operação preservados:
 As instruções de publicação em `AGENTS.md` prevalecem sobre versões, datas e tags
 citadas em procedimentos antigos. Uma mudança exige identificar sua origem e escopo; a
 presença de um runbook não autoriza executar seus comandos.
+
+A jornada comercial, escopo por negócio e diagrama de tracking estão em
+[crm-journey.md](crm-journey.md).

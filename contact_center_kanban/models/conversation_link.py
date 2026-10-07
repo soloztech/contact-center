@@ -10,7 +10,7 @@ class ContactCenterCrmConversationLink(models.Model):
         # A native merge moves the case projections to its survivor before
         # collapsing duplicate conversation links.  That collapse is not an
         # operator request to disconnect the survivor from its cases.
-        if reason != "merged":
+        if reason not in {"merged", "scope_revised"}:
             CaseLink = self.env["contact.center.crm.case.link"].sudo()
             for link in self:
                 CaseLink.search(
