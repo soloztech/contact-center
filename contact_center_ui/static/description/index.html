@@ -546,6 +546,24 @@ nor displaying an origin card creates a lead or links a commercial record.</p>
 That customer view is different from an explicit conversation-to-opportunity link.
 Ad origin cards display available evidence and creative context; their presence does
 not establish qualification, campaign resolution or a native UTM assignment.</p>
+</div>
+<div class="section" id="selective-metadata-refresh">
+<h1>Selective metadata refresh</h1>
+<p>Versioned <tt class="docutils literal">conversation_updated</tt> scope hints distinguish direct identity avatars
+and group metadata. Old clients and unknown/mixed hints retain full reconciliation.
+An avatar batch reads only the loaded conversations (at most 100) through
+<tt class="docutils literal">get_conversation_avatars</tt> and patches only <tt class="docutils literal">identity.avatar_url</tt>. The server
+checks agent role, channel membership, active companies and record rules before
+returning authenticated local URLs. It does not count unread messages, load history,
+fetch provider data or schedule jobs. Off-page events are discarded only on a
+settled list; in-flight pages and direct-link detail reads preserve their events.
+Concurrent names, aliases, message changes or uncertain snapshots use full refresh.</p>
+<p>The top-bar unread summary ignores only known avatar/group-metadata scopes. The
+native Contact Center menu ignores connection-health and delivery events, which
+change no field it renders. Its avatars and other semantic changes still refresh
+the list. Group metadata keeps full list/detail/timeline reconciliation because
+names, roster and mutation permissions may change. Existing 30-second list repair,
+five-minute summary repair, hidden-tab pause, reconnect and deadline handling remain.</p>
 <p><strong>Table of contents</strong></p>
 </div>
 <div class="section" id="usage">

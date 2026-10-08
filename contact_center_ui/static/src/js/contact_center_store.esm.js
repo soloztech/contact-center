@@ -7,6 +7,7 @@ import {
     conversationPreference,
     conversationStateMeta,
     conversationUiPolicy,
+    conversationUpdateScope,
     filterConversationsByResponsibility,
     isRenderableConversation,
     isResponsibilityScope,
@@ -1378,6 +1379,12 @@ export class ContactCenterStore {
         this.visibilityDocument = visibilityDocument;
         this.focusTarget = focusTarget;
         this.syncListPending = false;
+        this.syncFullRequested = false;
+        this.syncFullActive = false;
+        this.syncAvatarActive = false;
+        this.syncAvatarChannels = new Set();
+        this.conversationDetailReadsInFlight = 0;
+        this.lastFullSynchronizationStarted = -Infinity;
         this.syncActiveWaiters = [];
         this.syncCycleStopped = false;
         this.syncCycleFailed = false;
@@ -1392,6 +1399,7 @@ export class ContactCenterStore {
             timer: realtimeTimer,
             onDeadline: () => {
                 this.syncCycleStopped = true;
+                this.syncFullRequested = true;
                 this.syncRefresh.noteDeadline();
             },
         });
@@ -1466,9 +1474,9 @@ export class ContactCenterStore {
         this.onRefreshFocus = () => {
             if (
                 !this.visibilityDocument.hidden &&
-                (this.syncRefresh.pending ||
+                (this.hasScheduledListSynchronization() ||
                     this.state.realtime !== "online" ||
-                    this.syncRefresh.now() - this.syncRefresh.lastStarted >=
+                    this.syncRefresh.now() - this.lastFullSynchronizationStarted >=
                         CONSISTENCY_SYNCHRONIZATION_INTERVAL)
             ) {
                 this.scheduleSynchronization(true, true);
@@ -1849,7 +1857,12 @@ export class ContactCenterStore {
         }
         if (
             automatic &&
-            !["list_conversations", "get_conversation", "get_timeline"].includes(method)
+            ![
+                "list_conversations",
+                "get_conversation",
+                "get_timeline",
+                "get_conversation_avatars",
+            ].includes(method)
         ) {
             throw new TypeError(
                 "Automatic refresh is restricted to conversation reads."
@@ -1866,11 +1879,39 @@ export class ContactCenterStore {
                 ? this.orm.silent
                 : this.orm;
         const request = orm.call(API_MODEL, method, args, kwargs);
-        return health
+        const result = health
             ? this.healthReads.read(request)
             : automatic
             ? this.syncReads.read(request)
             : request;
+        if (method !== "get_conversation") {
+            return result;
+        }
+        this.conversationDetailReadsInFlight += 1;
+        if (
+            !(automatic && this.syncFullActive) &&
+            (this.syncAvatarActive || this.syncAvatarChannels.size)
+        ) {
+            this.scheduleSynchronization(false);
+        }
+        let finished = false;
+        const finish = () => {
+            if (!finished) {
+                finished = true;
+                this.conversationDetailReadsInFlight -= 1;
+            }
+        };
+        const tracked = Promise.resolve(result).finally(finish);
+        if (result && typeof result.abort === "function") {
+            tracked.abort = (...options) => {
+                const outcome = result.abort(...options);
+                // Native abort({reject: false}) deliberately leaves the promise
+                // unsettled; it no longer owns a detail snapshot.
+                finish();
+                return outcome;
+            };
+        }
+        return tracked;
     }
 
     get syncTimer() {
@@ -1879,7 +1920,9 @@ export class ContactCenterStore {
 
     hasScheduledListSynchronization() {
         return (
-            this.syncRefresh.pending || this.syncTimer !== null || this.syncListPending
+            this.syncListPending ||
+            (this.syncFullRequested &&
+                (this.syncRefresh.pending || this.syncTimer !== null))
         );
     }
 
@@ -1958,6 +2001,7 @@ export class ContactCenterStore {
         }
         this.syncRefresh.destroy();
         this.syncReads.destroy();
+        this.syncAvatarChannels.clear();
         this.healthRefresh.destroy();
         this.healthReads.destroy();
         this.releaseSynchronizationWaiters(true);
@@ -2270,7 +2314,8 @@ export class ContactCenterStore {
         }
         // A queued cycle owns new waiters even if an older list is in flight.
         const waiters =
-            this.syncRefresh.pending || this.syncTimer !== null
+            this.syncFullRequested &&
+            (this.syncRefresh.pending || this.syncTimer !== null)
                 ? this.syncWaiters
                 : this.syncActiveWaiters;
         return new Promise((resolve) => waiters.push(resolve));
@@ -7213,6 +7258,10 @@ export class ContactCenterStore {
         if (!SYNCHRONIZING_EVENTS.has(payload.event_type)) {
             return;
         }
+        if (conversationUpdateScope(payload) === "identity_avatar") {
+            this.scheduleAvatarSynchronization(payload.channel_id);
+            return;
+        }
         this.hideMutedElsewhere(payload);
         const refreshTimeline =
             payload.channel_id === this.state.selectedChannelId &&
@@ -7300,12 +7349,157 @@ export class ContactCenterStore {
         if (this.destroyed) {
             return false;
         }
+        this.syncFullRequested = true;
         this.syncReconnect = this.syncReconnect || reconnect;
         this.syncTimeline = this.syncTimeline || refreshTimeline;
         return this.syncRefresh.schedule({urgent});
     }
 
+    scheduleAvatarSynchronization(channelId) {
+        if (this.destroyed) {
+            return false;
+        }
+        const quiescent =
+            !this.listLoadsInFlight &&
+            !this.conversationDetailReadsInFlight &&
+            !this.syncFullActive &&
+            !this.syncFullRequested &&
+            this.state.listPhase === "ready" &&
+            this.listWindowFilterRevision === this.filterRevision;
+        if (quiescent && !this.loadedConversation(channelId)) {
+            return false;
+        }
+        this.syncAvatarChannels.add(channelId);
+        if (this.syncAvatarChannels.size > 100) {
+            this.syncAvatarChannels.clear();
+            return this.scheduleSynchronization(false);
+        }
+        return this.syncRefresh.schedule();
+    }
+
+    async refreshConversationAvatars(channelIds) {
+        // An older list/detail answer must never overwrite an accepted patch.
+        if (
+            this.listLoadsInFlight ||
+            this.conversationDetailReadsInFlight ||
+            this.state.listPhase !== "ready" ||
+            this.listWindowFilterRevision !== this.filterRevision
+        ) {
+            this.scheduleSynchronization(false);
+            return false;
+        }
+        const rows = new Map(
+            channelIds
+                .map((id) => [id, this.loadedConversation(id)])
+                .filter(([, row]) => row)
+        );
+        if (!rows.size) {
+            return true;
+        }
+        const request = this.listRequest;
+        const revision = this.filterRevision;
+        const generations = new Map(
+            [...rows.keys()].map((id) => [id, this.conversationGeneration(id)])
+        );
+        try {
+            const payload = await this.call(
+                "get_conversation_avatars",
+                [[...rows.keys()]],
+                {},
+                {silent: true, automatic: true}
+            );
+            validateEnvelope(payload);
+            if (this.destroyed) {
+                return false;
+            }
+            const items = new Map();
+            if (!Array.isArray(payload.items) || payload.items.length !== rows.size) {
+                throw new TypeError("A projeção de fotos está incompleta.");
+            }
+            for (const item of payload.items) {
+                const row = item && rows.get(item.channel_id);
+                if (
+                    !row ||
+                    items.has(item.channel_id) ||
+                    !row.identity ||
+                    !Number.isSafeInteger(item.identity_id) ||
+                    item.identity_id <= 0 ||
+                    item.identity_id !== row.identity.id ||
+                    (item.avatar_url !== false &&
+                        (typeof item.avatar_url !== "string" ||
+                            !new RegExp(
+                                `^/contact_center/conversation/${item.channel_id}/avatar\\?v=[a-f0-9]{0,12}$`
+                            ).test(item.avatar_url)))
+                ) {
+                    throw new TypeError("A projeção de fotos é inválida.");
+                }
+                items.set(item.channel_id, item);
+            }
+            if (
+                this.syncFullRequested ||
+                this.listLoadsInFlight ||
+                this.conversationDetailReadsInFlight ||
+                request !== this.listRequest ||
+                revision !== this.filterRevision ||
+                [...rows].some(
+                    ([id, row]) =>
+                        row !== this.loadedConversation(id) ||
+                        generations.get(id) !== this.conversationGeneration(id)
+                )
+            ) {
+                this.scheduleSynchronization(false);
+                return false;
+            }
+            this.state.conversations = this.state.conversations.map((row) => {
+                const item = items.get(row.channel_id);
+                return item
+                    ? {
+                          ...row,
+                          identity: {...row.identity, avatar_url: item.avatar_url},
+                      }
+                    : row;
+            });
+            return true;
+        } catch (_error) {
+            if (!this.destroyed) {
+                this.syncCycleFailed = true;
+                this.scheduleSynchronization(false);
+            }
+            return false;
+        }
+    }
+
     async runSynchronization() {
+        const avatarOnly =
+            this.syncAvatarChannels.size &&
+            !this.syncFullRequested &&
+            !this.syncReconnect &&
+            !this.syncTimeline;
+        const ids = [...this.syncAvatarChannels];
+        this.syncAvatarChannels.clear();
+        this.syncCycleStopped = false;
+        this.syncCycleFailed = false;
+        if (avatarOnly) {
+            this.syncAvatarActive = true;
+            try {
+                return await this.refreshConversationAvatars(ids);
+            } finally {
+                this.syncAvatarActive = false;
+            }
+        }
+        this.syncFullRequested = false;
+        this.syncFullActive = true;
+        this.lastFullSynchronizationStarted = this.syncRefresh.now();
+        try {
+            return await this.runFullSynchronization();
+        } finally {
+            this.syncFullActive = false;
+            this.syncFullRequested =
+                this.syncFullRequested || this.syncCycleStopped || this.syncCycleFailed;
+        }
+    }
+
+    async runFullSynchronization() {
         const reconnect = this.syncReconnect;
         const timeline = this.syncTimeline;
         this.syncReconnect = false;
@@ -7342,6 +7536,7 @@ export class ContactCenterStore {
         if (deferred() && !this.destroyed) {
             this.syncReconnect = this.syncReconnect || reconnect;
             this.syncTimeline = this.syncTimeline || timeline;
+            this.syncFullRequested = true;
             this.syncRefresh.schedule();
             return false;
         }

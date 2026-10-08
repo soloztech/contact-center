@@ -1423,7 +1423,12 @@ class ContactCenterGroupProfile(models.Model):
             self.env["contact.center.application"]._notify_ui(
                 profile.channel_id,
                 "conversation_updated",
-                {"channel_id": profile.channel_id.id},
+                {
+                    "channel_id": profile.channel_id.id,
+                    "update_scope_version": 1,
+                    "update_scope": "group_metadata",
+                    "changed_fields": ["group_metadata"],
+                },
             )
         return True
 

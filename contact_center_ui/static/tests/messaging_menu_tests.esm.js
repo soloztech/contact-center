@@ -220,6 +220,54 @@ function previewFixture() {
 
 QUnit.module("contact_center_ui > native messaging", () => {
     QUnit.test(
+        "mounted menu ignores health and delivery but preserves semantic invalidations",
+        async (assert) => {
+            const fixture = previewFixture();
+            const {click, env} = await setup();
+            await click(".o_MessagingMenu_toggler");
+            await click(".cc-messaging-tab");
+            assert.strictEqual(fixture.requests.length, 1);
+            fixture.requests[0].respond();
+            await fixture.timer.advance(0);
+            const emit = (event_type, values = {}) =>
+                env.services.bus_service.trigger("notification", [
+                    {
+                        type: CONTACT_CENTER_NOTIFICATION_TYPE,
+                        payload: envelope({event_type, channel_id: 91, ...values}),
+                    },
+                ]);
+            emit("connection_health_updated", {connection_id: 1});
+            emit("delivery_updated", {message_id: 902, state: "read"});
+            emit("delivery_updated", {refresh: true});
+            await fixture.timer.advance(2500);
+            assert.strictEqual(
+                fixture.requests.length,
+                1,
+                "no list RPC for non-rendered fields"
+            );
+            for (const type of [
+                "message_created",
+                "conversation_updated",
+                "future_semantic_event",
+            ]) {
+                emit(type);
+                await fixture.timer.advance(2200);
+                assert.strictEqual(
+                    fixture.requests.length,
+                    2 +
+                        [
+                            "message_created",
+                            "conversation_updated",
+                            "future_semantic_event",
+                        ].indexOf(type)
+                );
+                fixture.requests[fixture.requests.length - 1].respond();
+                await fixture.timer.advance(0);
+            }
+        }
+    );
+
+    QUnit.test(
         "native menu contains the personal tab, with no separate shortcut",
         async (assert) => {
             const {click, calls} = await setup();

@@ -176,7 +176,14 @@ export class ContactCenterMessagingList extends Component {
         });
         const schedule = () => this.refresh.schedule();
         const onNotification = (event) => {
-            if (contactCenterNotifications(event.detail).length) {
+            if (
+                contactCenterNotifications(event.detail).some(
+                    (payload) =>
+                        !["connection_health_updated", "delivery_updated"].includes(
+                            payload.event_type
+                        )
+                )
+            ) {
                 schedule();
             }
         };

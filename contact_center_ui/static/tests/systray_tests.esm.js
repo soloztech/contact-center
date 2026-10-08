@@ -288,4 +288,63 @@ QUnit.module("contact_center_ui > systray", () => {
             store.destroy();
         }
     );
+    QUnit.test(
+        "known metadata skips recount while name, legacy and mixed messages still refresh",
+        async (assert) => {
+            const {summary, timer, calls} = summaryFixture();
+            for (const scope of ["identity_avatar", "group_metadata"]) {
+                assert.notOk(
+                    summary.handleNotifications([
+                        notification("conversation_updated", {
+                            update_scope_version: 1,
+                            update_scope: scope,
+                            changed_fields: [scope],
+                        }),
+                    ])
+                );
+            }
+            await settle();
+            assert.strictEqual(calls.length, 0);
+            for (const values of [
+                {},
+                {changed_fields: ["identity_name"]},
+                {
+                    update_scope_version: 2,
+                    update_scope: "identity_avatar",
+                    changed_fields: ["identity_avatar"],
+                },
+                {
+                    update_scope_version: 1,
+                    update_scope: "identity_avatar",
+                    changed_fields: ["identity_avatar", "identity_aliases"],
+                },
+            ]) {
+                assert.ok(
+                    summary.handleNotifications([
+                        notification("conversation_updated", values),
+                    ])
+                );
+                timer.flush();
+                await settle();
+            }
+            assert.strictEqual(calls.length, 4);
+            for (const scope of ["identity_avatar", "group_metadata"]) {
+                const before = calls.length;
+                assert.ok(
+                    summary.handleNotifications([
+                        notification("conversation_updated", {
+                            update_scope_version: 1,
+                            update_scope: scope,
+                            changed_fields: [scope],
+                        }),
+                        notification("message_created"),
+                    ])
+                );
+                timer.flush();
+                await settle();
+                assert.strictEqual(calls.length, before + 1);
+            }
+            summary.destroy();
+        }
+    );
 });

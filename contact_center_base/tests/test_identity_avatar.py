@@ -1,10 +1,13 @@
 import base64
+import datetime
 import uuid
+from contextlib import ExitStack
 from unittest.mock import patch
 
 from psycopg2 import OperationalError
 
 from odoo import fields
+from odoo.exceptions import AccessError, ValidationError
 from odoo.tests.common import SavepointCase
 
 from odoo.addons.queue_job.tests.common import trap_jobs
@@ -694,3 +697,248 @@ class TestContactCenterIdentityAvatar(SavepointCase):
             self.assertTrue(self._run_job(binding))
         binding.identity_id.invalidate_recordset()
         self.assertEqual(binding.identity_id.name, "Degraded Read Name")
+
+    def test_selective_avatar_projection_is_batched_and_does_not_compute_unread(self):
+        first = self._create_direct_binding()
+        self.remote_jid = "15550002222@s.whatsapp.net"
+        second = self._create_direct_binding()
+        ready = AvatarResult(
+            state="ready",
+            content=b"\xff\xd8\xff\xe0avatar-projection",
+            mime_type="image/jpeg",
+            file_name="profile.jpg",
+        )
+        self.assertTrue(self._sync(first, ready))
+        ui = self.env["contact.center.ui.api"].with_user(self.agent)
+        expected = ui.get_conversation(first.channel_id.id)["item"]["identity"][
+            "avatar_url"
+        ]
+        self.env["mail.channel.member"].invalidate_model(["message_unread_counter"])
+        channel_type = type(self.env["mail.channel"])
+        binding_type = type(first)
+        with ExitStack() as stack:
+            for method in (
+                "_serialize_conversation",
+                "_conversation_list_prefetch",
+                "_first_unread_message_id",
+                "_authorized_channel",
+            ):
+                stack.enter_context(
+                    patch.object(type(ui), method, side_effect=AssertionError(method))
+                )
+            stack.enter_context(
+                patch.object(
+                    type(self.env["mail.channel.member"]),
+                    "_compute_message_unread",
+                    side_effect=AssertionError("unread computation"),
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    channel_type, "search_count", side_effect=AssertionError("count")
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    IdentityAvatarTestAdapter,
+                    "fetch_identity_profile",
+                    side_effect=AssertionError("provider I/O"),
+                )
+            )
+            channels = stack.enter_context(
+                patch.object(
+                    channel_type,
+                    "search",
+                    autospec=True,
+                    side_effect=channel_type.search,
+                )
+            )
+            bindings = stack.enter_context(
+                patch.object(
+                    binding_type,
+                    "search",
+                    autospec=True,
+                    side_effect=binding_type.search,
+                )
+            )
+            result = ui.get_conversation_avatars(
+                [
+                    first.channel_id.id,
+                    second.channel_id.id,
+                    first.channel_id.id,
+                    2147483647,
+                ]
+            )
+        self.assertEqual(channels.call_count, 1)
+        self.assertEqual(bindings.call_count, 1)
+        self.assertEqual(result["schema_version"], 1)
+        by_channel = {item["channel_id"]: item for item in result["items"]}
+        self.assertEqual(
+            by_channel[first.channel_id.id],
+            {
+                "channel_id": first.channel_id.id,
+                "identity_id": first.identity_id.id,
+                "avatar_url": expected,
+            },
+        )
+        self.assertEqual(by_channel[second.channel_id.id]["avatar_url"], False)
+        self.assertEqual(len(by_channel), 2)
+        first._apply_identity_avatar(AvatarResult(state="absent"), 1, 1)
+        self.assertFalse(
+            ui.get_conversation_avatars([first.channel_id.id])["items"][0]["avatar_url"]
+        )
+
+    def test_selective_avatar_projection_validates_bounded_integer_ids(self):
+        ui = self.env["contact.center.ui.api"].with_user(self.agent)
+        self.assertEqual(ui.get_conversation_avatars([])["items"], [])
+        for invalid in (
+            None,
+            False,
+            "1",
+            {},
+            (1,),
+            [True],
+            [0],
+            [-1],
+            ["1"],
+            list(range(1, 102)),
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(ValidationError):
+                ui.get_conversation_avatars(invalid)
+
+    def test_selective_avatar_projection_requires_agent_and_membership(self):
+        binding = self._create_direct_binding()
+        outsider = (
+            self.env["res.users"]
+            .with_context(no_reset_password=True)
+            .create(
+                {
+                    "name": "Avatar outsider",
+                    "login": "avatar-outsider-%s" % uuid.uuid4(),
+                    "company_id": self.env.company.id,
+                    "company_ids": [(6, 0, self.env.company.ids)],
+                    "groups_id": [(6, 0, self.env.ref("base.group_user").ids)],
+                }
+            )
+        )
+        ui = self.env["contact.center.ui.api"].with_user(outsider)
+        with self.assertRaises(AccessError):
+            ui.get_conversation_avatars([binding.channel_id.id])
+        outsider.write(
+            {
+                "groups_id": [
+                    (
+                        4,
+                        self.env.ref(
+                            "contact_center_base.group_contact_center_agent"
+                        ).id,
+                    )
+                ]
+            }
+        )
+        self.assertEqual(
+            ui.get_conversation_avatars([binding.channel_id.id, 2147483647])["items"],
+            [],
+        )
+
+    def test_selective_avatar_projection_honors_company_and_channel_record_rules(self):
+        binding = self._create_direct_binding()
+        ui = self.env["contact.center.ui.api"].with_user(self.agent)
+        self.assertEqual(
+            len(ui.get_conversation_avatars([binding.channel_id.id])["items"]), 1
+        )
+        other_company = self.env["res.company"].create({"name": "Avatar other company"})
+        self.agent.write({"company_ids": [(4, other_company.id)]})
+        self.assertEqual(
+            ui.with_context(
+                allowed_company_ids=other_company.ids
+            ).get_conversation_avatars([binding.channel_id.id])["items"],
+            [],
+        )
+        self.env["ir.rule"].create(
+            {
+                "name": "Deny avatar fixture channel",
+                "model_id": self.env.ref("mail.model_mail_channel").id,
+                "domain_force": "[('id', '!=', %s)]" % binding.channel_id.id,
+            }
+        )
+        self.assertEqual(
+            ui.get_conversation_avatars([binding.channel_id.id])["items"], []
+        )
+
+    def test_avatar_scope_does_not_suppress_effective_name_event(self):
+        binding = self._create_direct_binding()
+        profile = IdentityProfileResult(
+            display_name="New profile label", avatar=AvatarResult(state="absent")
+        )
+        with patch.object(
+            IdentityAvatarTestAdapter, "fetch_identity_profile", return_value=profile
+        ), patch.object(
+            type(self.env["contact.center.application"]), "_notify_ui"
+        ) as notify:
+            self.assertTrue(self._run_job(binding))
+        events = [(call.args[1], call.args[2]) for call in notify.call_args_list]
+        self.assertIn(
+            ("conversation_updated", {"changed_fields": ["identity_name"]}), events
+        )
+        scopes = [payload for _event, payload in events if payload.get("update_scope")]
+        self.assertEqual(len(scopes), 1)
+        self.assertEqual(scopes[0]["update_scope"], "identity_avatar")
+        self.assertEqual(scopes[0]["update_scope_version"], 1)
+        self.assertEqual(scopes[0]["changed_fields"], ["identity_avatar"])
+
+    def test_avatar_hint_announces_new_alias_but_not_timestamp_only_observations(self):
+        binding = self._create_direct_binding()
+        hint = self._event(
+            event_type="identity.avatar.changed", message=False
+        ).to_dict()
+        hint["actor"]["addresses"].append(
+            {
+                "namespace": "whatsapp.pn",
+                "value": "15550003333@s.whatsapp.net",
+                "value_normalized": "15550003333@s.whatsapp.net",
+                "role": "alternate",
+                "source_field": "fixture.Phone",
+                "confidence": "protocol",
+            }
+        )
+        application = self.env["contact.center.application"].with_context(
+            contact_center_skip_enqueue=True
+        )
+        with patch.object(type(application), "_notify_ui") as notify:
+            application._process_event(self.connection, EventDTO.from_dict(hint))
+            self.assertEqual(notify.call_count, 1)
+            self.assertEqual(notify.call_args.args[1], "conversation_updated")
+            self.assertEqual(
+                notify.call_args.args[2], {"changed_fields": ["identity_aliases"]}
+            )
+            actor_values = {
+                address["value_normalized"] for address in hint["actor"]["addresses"]
+            }
+            channel_values = {
+                address["value_normalized"]
+                for address in hint["conversation"]["addresses"]
+            }
+            aliases = [
+                binding.identity_id.alias_ids.filtered(
+                    lambda alias: alias.value_normalized in actor_values
+                ),
+                binding.alias_ids.filtered(
+                    lambda alias: alias.value_normalized in channel_values
+                ),
+            ]
+            stale_seen_at = fields.Datetime.now() - datetime.timedelta(minutes=10)
+            for records in aliases:
+                self.assertTrue(records)
+                records.write({"last_seen_at": stale_seen_at})
+            notify.reset_mock()
+            application._process_event(self.connection, EventDTO.from_dict(hint))
+            notify.assert_not_called()
+            for records in aliases:
+                for alias in records:
+                    self.assertGreater(alias.last_seen_at, stale_seen_at)
+        self.assertTrue(
+            binding.identity_id.alias_ids.filtered(
+                lambda alias: alias.value_normalized == "15550003333@s.whatsapp.net"
+            )
+        )

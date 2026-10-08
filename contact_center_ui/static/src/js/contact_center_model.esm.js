@@ -1833,6 +1833,25 @@ export function connectionFleetMeta(value) {
     };
 }
 
+/** Recognize only the explicit, versioned metadata contract; legacy is full. */
+export function conversationUpdateScope(payload) {
+    if (
+        !isPlainObject(payload) ||
+        payload.schema_version !== SUPPORTED_SCHEMA_VERSION ||
+        payload.event_type !== "conversation_updated" ||
+        !Number.isSafeInteger(payload.channel_id) ||
+        payload.channel_id <= 0 ||
+        payload.update_scope_version !== 1 ||
+        !["identity_avatar", "group_metadata"].includes(payload.update_scope) ||
+        !Array.isArray(payload.changed_fields) ||
+        payload.changed_fields.length !== 1 ||
+        payload.changed_fields[0] !== payload.update_scope
+    ) {
+        return false;
+    }
+    return payload.update_scope;
+}
+
 export function contactCenterNotifications(detail) {
     if (!Array.isArray(detail)) {
         return [];

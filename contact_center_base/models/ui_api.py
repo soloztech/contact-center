@@ -1003,10 +1003,6 @@ class ContactCenterUiApi(models.AbstractModel):
             company_management_allowed = self._partner_company_management_allowed(
                 identity, partner
             )
-        # The caller has already authorized the channel/member scope. Technical
-        # avatar fields are admin-only at ORM level, so read only this projection
-        # with sudo and expose no attachment ID or provider detail.
-        avatar_binding = binding.sudo() if binding else binding
         return {
             "id": identity.id,
             "name": (partner.name or identity.name) if partner else identity.name,
@@ -1063,18 +1059,7 @@ class ContactCenterUiApi(models.AbstractModel):
                 else False
             ),
             "suggested_phone": self._suggested_phone(identity, binding=binding),
-            "avatar_url": (
-                "/contact_center/conversation/%s/avatar?v=%s"
-                % (
-                    avatar_binding.channel_id.id,
-                    (avatar_binding.direct_avatar_sha256 or "")[:12],
-                )
-                if avatar_binding
-                and avatar_binding.conversation_type == "direct"
-                and avatar_binding.identity_id == identity
-                and avatar_binding.direct_avatar_attachment_id
-                else False
-            ),
+            "avatar_url": self._identity_avatar_url(binding, identity),
             "aliases": [
                 {
                     "id": alias.id,
@@ -2287,6 +2272,64 @@ class ContactCenterUiApi(models.AbstractModel):
             "total": (
                 self.env["mail.channel"].search_count(domain) if not cursor else False
             ),
+        }
+
+    @api.model
+    def _identity_avatar_url(self, binding, identity):
+        """Project private avatar fields only after the caller authorized scope."""
+
+        avatar_binding = binding.sudo() if binding else binding
+        return (
+            "/contact_center/conversation/%s/avatar?v=%s"
+            % (
+                avatar_binding.channel_id.id,
+                (avatar_binding.direct_avatar_sha256 or "")[:12],
+            )
+            if avatar_binding
+            and avatar_binding.conversation_type == "direct"
+            and avatar_binding.identity_id == identity
+            and avatar_binding.direct_avatar_attachment_id
+            else False
+        )
+
+    @api.model
+    def get_conversation_avatars(self, channel_ids):
+        """Return a bounded, member-scoped avatar projection without unread I/O."""
+
+        self._application()._check_agent()
+        if (
+            not isinstance(channel_ids, list)
+            or len(channel_ids) > 100
+            or any(type(value) is not int or value <= 0 for value in channel_ids)
+        ):
+            raise ValidationError(_("Expected at most 100 positive conversation IDs."))
+        ids = list(dict.fromkeys(channel_ids))
+        if not ids:
+            return {"schema_version": SCHEMA_VERSION, "items": []}
+        channels = self.env["mail.channel"].search(
+            expression.AND([self._conversation_list_domain({}), [("id", "in", ids)]])
+        )
+        bindings = self.env["contact.center.channel.binding"].search(
+            [
+                ("channel_id", "in", channels.ids),
+                ("active", "=", True),
+                ("merged_into_id", "=", False),
+                ("conversation_type", "=", "direct"),
+                ("identity_id", "!=", False),
+            ]
+        )
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "items": [
+                {
+                    "channel_id": binding.channel_id.id,
+                    "identity_id": binding.identity_id.id,
+                    "avatar_url": self._identity_avatar_url(
+                        binding, binding.identity_id
+                    ),
+                }
+                for binding in bindings
+            ],
         }
 
     @api.model

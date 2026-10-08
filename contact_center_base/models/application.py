@@ -899,10 +899,20 @@ class ContactCenterApplication(models.AbstractModel):
                 _("An identity avatar hint resolved to a non-direct conversation.")
             )
         self._lock_inbound_projection_binding(binding, connection.account_id)
-        self._enrich_channel_aliases(binding, event.conversation.addresses)
-        self._enrich_identity_aliases(
+        channel_aliases_changed = self._enrich_channel_aliases(
+            binding, event.conversation.addresses
+        )
+        identity_aliases_changed = self._enrich_identity_aliases(
             connection.account_id, binding.identity_id, event.actor.addresses
         )
+        if channel_aliases_changed or identity_aliases_changed:
+            # A picture hint can also teach us a searchable phone/alias. Keep
+            # that semantic invalidation separate from the later avatar job.
+            self._notify_ui(
+                binding.channel_id,
+                "conversation_updated",
+                {"changed_fields": ["identity_aliases"]},
+            )
         binding._request_identity_avatar_sync(connection, force=True)
         return binding
 
@@ -2382,6 +2392,7 @@ class ContactCenterApplication(models.AbstractModel):
 
     def _enrich_identity_aliases(self, account, identity, addresses):
         alias_model = self.env["contact.center.identity.alias"].sudo()
+        changed = False
         observed_at = fields.Datetime.to_datetime(fields.Datetime.now())
         for address in addresses:
             alias = alias_model.search(
@@ -2411,6 +2422,10 @@ class ContactCenterApplication(models.AbstractModel):
                     promote_resolution_scope=True,
                 )
                 if updates:
+                    changed = changed or bool(
+                        {"value_raw", "value_normalized", "role", "confidence"}
+                        & updates.keys()
+                    )
                     alias.write(updates)
                 continue
             self._advance_inbound_projection_revision(account)
@@ -2425,6 +2440,7 @@ class ContactCenterApplication(models.AbstractModel):
                 in dict(alias_model._fields["confidence"].selection)
                 else "observed"
             )
+            changed = True
             alias_model.create(
                 {
                     "identity_id": identity.id,
@@ -2438,6 +2454,7 @@ class ContactCenterApplication(models.AbstractModel):
                     "resolution_scope": address.resolution_scope,
                 }
             )
+        return changed
 
     def _resolve_channel(self, account, identity, event=None, *, conversation_ref=None):
         # Outbound-first preparation has no inbound event or customer message.
@@ -2526,6 +2543,7 @@ class ContactCenterApplication(models.AbstractModel):
 
     def _enrich_channel_aliases(self, binding, addresses):
         alias_model = self.env["contact.center.channel.alias"].sudo()
+        changed = False
         observed_at = fields.Datetime.to_datetime(fields.Datetime.now())
         for address in addresses:
             alias = alias_model.search(
@@ -2563,6 +2581,10 @@ class ContactCenterApplication(models.AbstractModel):
                     )
                 updates = self._alias_observation_updates(alias, address, observed_at)
                 if updates:
+                    changed = changed or bool(
+                        {"value_raw", "value_normalized", "role", "confidence"}
+                        & updates.keys()
+                    )
                     alias.write(updates)
                 continue
             self._advance_inbound_projection_revision(binding.account_id)
@@ -2577,6 +2599,7 @@ class ContactCenterApplication(models.AbstractModel):
                 in dict(alias_model._fields["confidence"].selection)
                 else "observed"
             )
+            changed = True
             alias_model.create(
                 {
                     "channel_binding_id": binding.id,
@@ -2589,6 +2612,7 @@ class ContactCenterApplication(models.AbstractModel):
                     "confidence": confidence,
                 }
             )
+        return changed
 
     def _create_media_bindings(self, message_binding, media_values, state="pending"):
         media_model = self.env["contact.center.media.binding"].sudo()

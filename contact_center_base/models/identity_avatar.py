@@ -725,7 +725,12 @@ class ContactCenterChannelBinding(models.Model):
             self.env["contact.center.application"]._notify_ui(
                 binding.channel_id,
                 "conversation_updated",
-                {"channel_id": binding.channel_id.id},
+                {
+                    "channel_id": binding.channel_id.id,
+                    "update_scope_version": 1,
+                    "update_scope": "identity_avatar",
+                    "changed_fields": ["identity_avatar"],
+                },
             )
         return True
 

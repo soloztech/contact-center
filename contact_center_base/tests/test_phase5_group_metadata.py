@@ -1628,3 +1628,36 @@ class TestContactCenterGroupMetadata(SavepointCase):
         ).unlink()
 
         self.assertFalse(attachment.exists())
+
+    def test_group_metadata_notification_has_explicit_scope(self):
+        _binding, profile = self._create_group()
+        with patch.object(
+            type(self.env["contact.center.application"]), "_notify_ui"
+        ) as notify:
+            profile._notify_updated()
+            notify.assert_called_once_with(
+                profile.channel_id,
+                "conversation_updated",
+                {
+                    "channel_id": profile.channel_id.id,
+                    "update_scope_version": 1,
+                    "update_scope": "group_metadata",
+                    "changed_fields": ["group_metadata"],
+                },
+            )
+            notify.reset_mock()
+            self.env["contact.center.application"].with_context(
+                contact_center_skip_enqueue=True
+            )._process_event(self.connection, self._event())
+            messages = [
+                call
+                for call in notify.call_args_list
+                if call.args[1] == "message_created"
+            ]
+            self.assertEqual(len(messages), 1)
+            self.assertEqual(messages[0].args[0], profile.channel_id)
+            payload = messages[0].args[2]
+            self.assertTrue(payload["message_id"])
+            self.assertEqual(payload["direction"], "inbound")
+            self.assertNotIn("update_scope", payload)
+            self.assertNotIn("update_scope_version", payload)

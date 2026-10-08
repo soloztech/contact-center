@@ -4,10 +4,14 @@ import {
     AutomaticReadOwner,
     CoalescedRefresh,
 } from "@contact_center_ui/js/contact_center_refresh.esm";
-import {CONNECTION_HEALTH_EVENT_TYPE} from "@contact_center_ui/js/contact_center_model.esm";
 import {ContactCenterStore} from "@contact_center_ui/js/contact_center_store.esm";
 
-import {EventBus} from "@odoo/owl";
+import {EventBus, reactive} from "@odoo/owl";
+import {
+    CONNECTION_HEALTH_EVENT_TYPE,
+    CONTACT_CENTER_NOTIFICATION_TYPE,
+    conversationUpdateScope,
+} from "@contact_center_ui/js/contact_center_model.esm";
 import {browser} from "@web/core/browser/browser";
 import {jsonrpc} from "@web/core/network/rpc_service";
 import {ormService} from "@web/core/orm_service";
@@ -74,11 +78,12 @@ function deferred() {
         },
     };
 }
-function storeFixture(timer = clock()) {
+function storeFixture(timer = clock(), stateFactory = undefined) {
     const visible = new EventTarget();
     visible.hidden = false;
     const store = new ContactCenterStore({
         orm: {},
+        stateFactory,
         busService: new EventTarget(),
         notification: false,
         realtimeTimer: timer,
@@ -779,7 +784,7 @@ QUnit.module("contact_center_ui > automatic refresh", () => {
             let lists = 0,
                 health = 0;
             store.state.realtime = "online";
-            store.syncRefresh.lastStarted = 0;
+            store.lastFullSynchronizationStarted = 0;
             store.refreshLoadedConversations = async () => {
                 lists++;
                 return true;
@@ -908,6 +913,547 @@ QUnit.module("contact_center_ui > automatic refresh", () => {
             await settle();
             store.destroy();
             assert.strictEqual(timer.tasks.size, 0);
+        }
+    );
+});
+
+function avatarRow(id) {
+    return {
+        channel_id: id,
+        name: `Customer ${id}`,
+        state: "open",
+        conversation_type: "direct",
+        unread_count: 4,
+        last_activity_at: "2026-10-08 12:00:00",
+        last_message: {message_id: id, body_text: "Keep preview"},
+        identity: {id: id * 10, name: "Keep name", avatar_url: false},
+    };
+}
+function avatarEvent(id = 10, values = {}) {
+    return {
+        type: CONTACT_CENTER_NOTIFICATION_TYPE,
+        payload: {
+            schema_version: 1,
+            event_type: "conversation_updated",
+            channel_id: id,
+            update_scope_version: 1,
+            update_scope: "identity_avatar",
+            changed_fields: ["identity_avatar"],
+            ...values,
+        },
+    };
+}
+function avatarFixture(stateFactory = undefined) {
+    const fixture = storeFixture(clock(), stateFactory);
+    const {store} = fixture;
+    store.state.conversations = [avatarRow(10), avatarRow(20)];
+    store.state.listPhase = "ready";
+    store.listWindowFilterRevision = store.filterRevision;
+    store.state.realtime = "online";
+    const calls = [];
+    const read = (method, args) => {
+        if (method === "get_conversation_avatars") {
+            return {
+                schema_version: 1,
+                items: args[0].map((id) => ({
+                    channel_id: id,
+                    identity_id: id * 10,
+                    avatar_url: `/contact_center/conversation/${id}/avatar?v=abcdef123456`,
+                })),
+            };
+        }
+        const freshRow = (row) => ({
+            ...row,
+            identity: {
+                ...row.identity,
+                avatar_url: `/contact_center/conversation/${row.channel_id}/avatar?v=abcdef123456`,
+            },
+        });
+        if (method === "list_conversations") {
+            return {
+                schema_version: 1,
+                items: store.state.conversations.map(freshRow),
+                total: 2,
+                has_more: false,
+            };
+        }
+        if (method === "get_conversation") {
+            return {
+                schema_version: 1,
+                item: freshRow(store.loadedConversation(args[0]) || avatarRow(args[0])),
+            };
+        }
+        if (method === "get_timeline") {
+            return {schema_version: 1, channel_id: args[0], items: [], has_more: false};
+        }
+        throw new Error(`Unexpected read: ${method}`);
+    };
+    const call = (_model, method, args, kwargs) => {
+        calls.push({method, args, kwargs});
+        return Promise.resolve(read(method, args));
+    };
+    store.orm = {
+        call: () => {
+            throw new Error("Automatic read must be silent");
+        },
+        silent: {call},
+    };
+    const notify = (id = 10, values = {}) =>
+        store.onNotification({detail: [avatarEvent(id, values)]});
+    return {...fixture, calls, read, notify};
+}
+
+QUnit.module("contact_center_ui > selective avatar refresh", () => {
+    QUnit.test(
+        "only the exact versioned scope can skip full reconciliation",
+        (assert) => {
+            const valid = avatarEvent().payload;
+            assert.strictEqual(conversationUpdateScope(valid), "identity_avatar");
+            assert.strictEqual(
+                conversationUpdateScope({
+                    ...valid,
+                    update_scope: "group_metadata",
+                    changed_fields: ["group_metadata"],
+                }),
+                "group_metadata"
+            );
+            for (const values of [
+                {update_scope_version: undefined},
+                {update_scope_version: 2},
+                {update_scope: "future"},
+                {changed_fields: []},
+                {changed_fields: ["identity_avatar", "identity_name"]},
+                {changed_fields: ["identity_name"]},
+                {event_type: "message_created"},
+                {channel_id: 0},
+                {schema_version: 2},
+            ]) {
+                assert.strictEqual(
+                    conversationUpdateScope({...valid, ...values}),
+                    false
+                );
+            }
+        }
+    );
+
+    QUnit.test(
+        "a burst patches two loaded avatars in one real silent RPC, including selection",
+        async (assert) => {
+            for (const factory of [undefined, reactive]) {
+                const {store, timer, calls, notify} = avatarFixture(factory);
+                store.state.selectedChannelId = 10;
+                store.state.timelineChannelId = 10;
+                const preview = store.loadedConversation(10).last_message;
+                const cursor = {segment: "activity", channel_id: 20};
+                store.state.nextConversationCursor = cursor;
+                for (let i = 0; i < 40; i++) {
+                    notify(i % 2 ? 10 : 20);
+                }
+                assert.notOk(
+                    store.hasScheduledListSynchronization(),
+                    "avatar work is not list work"
+                );
+                assert.strictEqual(
+                    await store.waitForScheduledSynchronization(),
+                    false
+                );
+                await timer.advance(120);
+                assert.deepEqual(
+                    calls.map((call) => call.method),
+                    ["get_conversation_avatars"]
+                );
+                assert.deepEqual(new Set(calls[0].args[0]), new Set([10, 20]));
+                assert.ok(
+                    store
+                        .loadedConversation(10)
+                        .identity.avatar_url.endsWith("abcdef123456")
+                );
+                assert.strictEqual(
+                    store.loadedConversation(10).identity.name,
+                    "Keep name"
+                );
+                assert.strictEqual(store.loadedConversation(10).unread_count, 4);
+                assert.strictEqual(store.loadedConversation(10).last_message, preview);
+                assert.deepEqual(store.state.nextConversationCursor, cursor);
+                assert.deepEqual(
+                    store.state.conversations.map((row) => row.channel_id),
+                    [10, 20]
+                );
+                assert.strictEqual(store.lastFullSynchronizationStarted, -Infinity);
+                store.destroy();
+                assert.strictEqual(timer.tasks.size, 0);
+            }
+        }
+    );
+
+    QUnit.test(
+        "legacy, name and mixed events win over the avatar batch",
+        async (assert) => {
+            for (const values of [
+                {update_scope_version: undefined},
+                {changed_fields: ["identity_name"]},
+                {changed_fields: ["identity_avatar", "identity_name"]},
+                {event_type: "message_created"},
+                {update_scope: "group_metadata", changed_fields: ["group_metadata"]},
+            ]) {
+                const {store, timer, calls, notify} = avatarFixture();
+                store.state.selectedChannelId = 10;
+                store.state.timelineChannelId = 10;
+                notify();
+                notify(10, values);
+                await timer.advance(120);
+                assert.ok(calls.some((call) => call.method === "list_conversations"));
+                assert.ok(calls.some((call) => call.method === "get_timeline"));
+                assert.notOk(
+                    calls.some((call) => call.method === "get_conversation_avatars")
+                );
+                store.destroy();
+            }
+        }
+    );
+
+    QUnit.test("only quiescent off-page events are dropped", async (assert) => {
+        const {store, timer, calls, notify} = avatarFixture();
+        notify(30);
+        await timer.advance(120);
+        assert.deepEqual(calls, []);
+        for (const kind of ["automatic", "more", "detail"]) {
+            const pending = deferred();
+            const oldCall = store.orm.silent.call;
+            store.orm.call = store.orm.silent.call = (_model, method, args, kwargs) => {
+                if (
+                    method ===
+                    (kind === "detail" ? "get_conversation" : "list_conversations")
+                ) {
+                    return pending.promise;
+                }
+                return oldCall(_model, method, args, kwargs);
+            };
+            const row = avatarRow(30);
+            let work = null;
+            if (kind === "automatic") {
+                store.scheduleSynchronization(false);
+                await timer.advance(120);
+            } else if (kind === "more") {
+                work = store.loadConversations({reset: false});
+            } else {
+                work = store.openInitialConversation(30);
+            }
+            notify(30);
+            assert.ok(
+                store.syncAvatarChannels.has(30),
+                `${kind}: event retained before row appears`
+            );
+            pending.resolve(
+                kind === "detail"
+                    ? {schema_version: 1, item: row}
+                    : {schema_version: 1, items: [row], has_more: false, total: 1}
+            );
+            await settle();
+            if (work) {
+                await work;
+            }
+            store.orm.call = store.orm.silent.call = oldCall;
+            await timer.advance(2200);
+            assert.ok(
+                store.loadedConversation(30).identity.avatar_url,
+                `${kind}: late row gets fresh photo`
+            );
+            store.state.conversations = [avatarRow(10), avatarRow(20)];
+            store.state.selectedChannelId = false;
+            store.state.timelineChannelId = false;
+            calls.length = 0;
+        }
+        store.destroy();
+    });
+
+    QUnit.test(
+        "avatars queued during a full list read stay partial after its selected detail",
+        async (assert) => {
+            for (const channelId of [10, 20]) {
+                const {store, timer, calls, notify, read} = avatarFixture();
+                const pending = deferred();
+                store.state.selectedChannelId = 10;
+                store.state.timelineChannelId = 10;
+                store.orm.silent.call = (_model, method, args, kwargs) => {
+                    calls.push({method, args, kwargs});
+                    return method === "list_conversations"
+                        ? pending.promise
+                        : Promise.resolve(read(method, args));
+                };
+                store.scheduleSynchronization(false);
+                await timer.advance(120);
+                notify(channelId);
+                pending.resolve({
+                    schema_version: 1,
+                    items: [avatarRow(10), avatarRow(20)],
+                    total: 2,
+                    has_more: false,
+                });
+                await settle();
+                assert.deepEqual(
+                    calls.map((call) => call.method),
+                    ["list_conversations", "get_conversation"]
+                );
+                assert.notOk(store.syncFullRequested);
+                assert.ok(store.syncAvatarChannels.has(channelId));
+                await timer.advance(2000);
+                assert.deepEqual(
+                    calls.map((call) => call.method),
+                    [
+                        "list_conversations",
+                        "get_conversation",
+                        "get_conversation_avatars",
+                    ]
+                );
+                assert.deepEqual(calls[2].args, [[channelId]]);
+                assert.ok(store.loadedConversation(channelId).identity.avatar_url);
+                store.destroy();
+                assert.strictEqual(timer.tasks.size, 0);
+            }
+        }
+    );
+
+    QUnit.test(
+        "stale and missing projections trigger full repair without applying old rows",
+        async (assert) => {
+            for (const change of [
+                "generation",
+                "filter",
+                "list",
+                "delete",
+                "identity",
+                "row",
+                "missing",
+                "malformed",
+            ]) {
+                const {store, timer, notify, calls, read} = avatarFixture();
+                const pending = deferred();
+                store.orm.silent.call = (_model, method, args) => {
+                    calls.push({method});
+                    return method === "get_conversation_avatars"
+                        ? pending.promise
+                        : Promise.resolve(read(method, args));
+                };
+                notify();
+                await timer.advance(120);
+                if (change === "generation") {
+                    store.noteSnapshotInvalidation(avatarEvent().payload);
+                }
+                if (change === "filter") {
+                    store.bumpFilterRevision();
+                }
+                if (change === "list") {
+                    store.listRequest++;
+                }
+                if (change === "delete") {
+                    store.deletedConversationIds.add(10);
+                    store.state.conversations = [avatarRow(20)];
+                }
+                if (change === "identity") {
+                    store.loadedConversation(10).identity = {
+                        id: 999,
+                        avatar_url: false,
+                    };
+                }
+                if (change === "row") {
+                    store.state.conversations = [avatarRow(10), avatarRow(20)];
+                }
+                const payload = read("get_conversation_avatars", [[10]]);
+                if (change === "missing") {
+                    payload.items = [];
+                }
+                if (change === "malformed") {
+                    payload.items[0].avatar_url = "https://provider.invalid/private";
+                }
+                pending.resolve(payload);
+                await settle();
+                assert.ok(store.syncFullRequested, `${change}: full repair retained`);
+                const current = store.loadedConversation(10);
+                assert.notOk(
+                    current && current.identity.avatar_url,
+                    `${change}: stale photo was not applied`
+                );
+                if (change === "delete") {
+                    assert.notOk(current, "deleted row stays absent");
+                }
+                store.destroy();
+            }
+        }
+    );
+
+    QUnit.test(
+        "older detail read and new detail during avatar RPC both force full repair",
+        async (assert) => {
+            for (const first of ["detail", "avatar"]) {
+                const {store, timer, notify, read} = avatarFixture();
+                const detail = deferred(),
+                    avatar = deferred();
+                store.orm.silent.call = (_model, method, args) =>
+                    method === "get_conversation"
+                        ? detail.promise
+                        : method === "get_conversation_avatars"
+                        ? avatar.promise
+                        : Promise.resolve(read(method, args));
+                let detailWork = null;
+                if (first === "detail") {
+                    detailWork = store.call(
+                        "get_conversation",
+                        [10],
+                        {},
+                        {silent: true}
+                    );
+                }
+                notify();
+                await timer.advance(120);
+                if (first === "avatar") {
+                    detailWork = store.call(
+                        "get_conversation",
+                        [10],
+                        {},
+                        {silent: true}
+                    );
+                }
+                avatar.resolve(read("get_conversation_avatars", [[10]]));
+                await settle();
+                assert.ok(store.syncFullRequested, first);
+                assert.strictEqual(
+                    store.loadedConversation(10).identity.avatar_url,
+                    false
+                );
+                detail.resolve(read("get_conversation", [10]));
+                await detailWork;
+                store.destroy();
+            }
+        }
+    );
+
+    QUnit.test(
+        "avatar deadline aborts its real RPC and retries full; destroy cancels its own read",
+        async (assert) => {
+            for (const action of ["deadline", "destroy", "reject", "throw"]) {
+                const {store, timer, notify, calls, read} = avatarFixture();
+                const pending = deferred();
+                store.orm.silent.call = (_model, method, args) => {
+                    calls.push({method});
+                    if (method !== "get_conversation_avatars") {
+                        return Promise.resolve(read(method, args));
+                    }
+                    if (action === "throw") {
+                        throw new Error("transport unavailable");
+                    }
+                    return pending.promise;
+                };
+                notify();
+                await timer.advance(120);
+                if (action === "deadline") {
+                    await timer.advance(30000);
+                    assert.strictEqual(pending.aborts, 1);
+                    assert.ok(store.syncFullRequested);
+                    await timer.advance(30030);
+                    assert.ok(
+                        calls.some((call) => call.method === "list_conversations")
+                    );
+                } else if (action === "destroy") {
+                    store.destroy();
+                    assert.strictEqual(pending.aborts, 1);
+                } else {
+                    if (action === "reject") {
+                        pending.reject(new Error("offline"));
+                    }
+                    await settle();
+                    assert.ok(store.syncFullRequested, action);
+                    await timer.advance(2200);
+                    assert.ok(
+                        calls.some((call) => call.method === "list_conversations")
+                    );
+                }
+                store.destroy();
+                assert.strictEqual(timer.tasks.size, 0);
+            }
+        }
+    );
+
+    QUnit.test(
+        "a full deadline with queued avatars stays full and repairs selected timeline",
+        async (assert) => {
+            const {store, timer, calls, notify, read} = avatarFixture();
+            const pending = deferred();
+            store.state.selectedChannelId = 10;
+            store.state.timelineChannelId = 10;
+            let stalled = true;
+            store.orm.silent.call = (_model, method, args) => {
+                calls.push({method});
+                return method === "list_conversations" && stalled
+                    ? pending.promise
+                    : Promise.resolve(read(method, args));
+            };
+            store.scheduleSynchronization(true, true);
+            await timer.advance(120);
+            notify();
+            await timer.advance(30000);
+            assert.strictEqual(pending.aborts, 1);
+            assert.ok(store.syncFullRequested);
+            assert.ok(store.syncReconnect);
+            assert.ok(store.syncTimeline);
+            stalled = false;
+            await timer.advance(30030);
+            assert.ok(calls.some((call) => call.method === "get_timeline"));
+            assert.notOk(
+                calls.some((call) => call.method === "get_conversation_avatars")
+            );
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "hidden avatar events wait, overflow defaults full, and direct empty run stays full",
+        async (assert) => {
+            const {store, timer, calls, notify, visible} = avatarFixture();
+            visible.hidden = true;
+            notify();
+            await timer.advance(10000);
+            assert.deepEqual(calls, []);
+            visible.hidden = false;
+            store.onRefreshVisibility();
+            await timer.advance(120);
+            assert.strictEqual(calls[0].method, "list_conversations");
+            calls.length = 0;
+            for (let id = 1; id <= 101; id++) {
+                store.state.listPhase = "loading";
+                notify(id);
+            }
+            assert.ok(store.syncFullRequested);
+            assert.strictEqual(store.syncAvatarChannels.size, 0);
+            store.destroy();
+            const direct = avatarFixture();
+            await direct.store.syncRefresh.run();
+            assert.strictEqual(direct.calls[0].method, "list_conversations");
+            direct.store.destroy();
+        }
+    );
+    QUnit.test(
+        "explicit detail abort preserves the native contract without leaving a read fence",
+        async (assert) => {
+            const {store} = avatarFixture();
+            let options = null;
+            const rpc = new Promise(() => undefined);
+            rpc.abort = (value) => {
+                options = value;
+            };
+            store.orm.call = () => rpc;
+            const detail = store.call("get_conversation", [10]);
+            assert.strictEqual(store.conversationDetailReadsInFlight, 1);
+            detail.abort({reject: false});
+            assert.deepEqual(options, {reject: false});
+            assert.strictEqual(store.conversationDetailReadsInFlight, 0);
+            detail.abort({reject: false});
+            assert.strictEqual(
+                store.conversationDetailReadsInFlight,
+                0,
+                "fence releases only once"
+            );
+            store.destroy();
         }
     );
 });

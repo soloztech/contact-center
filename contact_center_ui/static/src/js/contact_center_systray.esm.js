@@ -2,7 +2,10 @@
 
 import {AutomaticReadOwner, CoalescedRefresh} from "./contact_center_refresh.esm";
 import {browser} from "@web/core/browser/browser";
-import {contactCenterNotifications} from "./contact_center_model.esm";
+import {
+    contactCenterNotifications,
+    conversationUpdateScope,
+} from "./contact_center_model.esm";
 
 export const SYSTRAY_SUMMARY_DEBOUNCE = 800;
 export const SYSTRAY_SAFETY_REFRESH = 5 * 60 * 1000;
@@ -92,7 +95,8 @@ export class SystraySummary {
     handleNotifications(detail) {
         const relevant = contactCenterNotifications(detail).some(
             (payload) =>
-                REFRESHING_EVENTS.has(payload.event_type) ||
+                (REFRESHING_EVENTS.has(payload.event_type) &&
+                    !conversationUpdateScope(payload)) ||
                 (payload.event_type === "member_seen" &&
                     payload.user_id === this.userId)
         );
