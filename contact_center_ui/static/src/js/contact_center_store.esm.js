@@ -22,6 +22,11 @@ import {
     secondaryCompaniesForIdentity,
     validateEnvelope,
 } from "./contact_center_model.esm";
+import {
+    AutomaticReadOwner,
+    AutomaticRefreshDeferred,
+    CoalescedRefresh,
+} from "./contact_center_refresh.esm";
 import {_t} from "@web/core/l10n/translation";
 import {browser} from "@web/core/browser/browser";
 import {outboundStructuredCapabilities} from "./structured_content.esm";
@@ -1188,6 +1193,10 @@ export class ContactCenterStore {
         contactTimer = browser,
         companyTimer = browser,
         realtimeTimer = browser,
+        refreshNow = () => performance.now(),
+        refreshRandom = Math.random,
+        visibilityDocument = document,
+        focusTarget = browser,
         inboxDensityStorage = browserLocalStorage(),
         inboxPreferenceStorage = false,
         inboxContext = createInboxDocumentContext(),
@@ -1366,13 +1375,50 @@ export class ContactCenterStore {
         this.companyLinkerRequest = 0;
         this.pendingCompanyOperations = new Set();
         this.conversationSelectionGuard = null;
-        this.syncTimer = null;
+        this.visibilityDocument = visibilityDocument;
+        this.focusTarget = focusTarget;
+        this.syncListPending = false;
+        this.syncActiveWaiters = [];
+        this.syncCycleStopped = false;
+        this.syncCycleFailed = false;
+        this.syncRefresh = new CoalescedRefresh({
+            timer: realtimeTimer,
+            now: refreshNow,
+            random: refreshRandom,
+            canRun: () => !this.visibilityDocument.hidden,
+            run: () => this.runSynchronization(),
+        });
+        this.syncReads = new AutomaticReadOwner({
+            timer: realtimeTimer,
+            onDeadline: () => {
+                this.syncCycleStopped = true;
+                this.syncRefresh.noteDeadline();
+            },
+        });
+        this.healthRefresh = new CoalescedRefresh({
+            timer: healthTimer,
+            now: refreshNow,
+            random: refreshRandom,
+            debounce: CONNECTION_HEALTH_INVALIDATION_DELAY,
+            interval: 0,
+            run: () => {
+                this.healthRequest = this.fetchConnectionHealth();
+                return this.healthRequest;
+            },
+        });
+        this.healthReads = new AutomaticReadOwner({
+            timer: healthTimer,
+            onDeadline: () => this.healthRefresh.noteDeadline(),
+        });
+        this.healthInvalidationRequestRevision = 0;
+        this.healthRequestBusRevision = 0;
         // Resolved once the scheduled synchronization refreshed the list.
         this.syncWaiters = [];
         this.consistencySyncTimer = null;
         this.healthSyncTimer = null;
         this.healthSyncAttempt = 0;
         this.connectionHealthBusRevision = 0;
+        this.connectionHealthInvalidationRevision = 0;
         this.syncReconnect = false;
         this.syncTimeline = false;
         // The newest preference received per conversation, ordered only by the
@@ -1409,6 +1455,26 @@ export class ContactCenterStore {
         this.onReconnecting = this.onReconnecting.bind(this);
         this.onDisconnect = this.onDisconnect.bind(this);
         this.onPageHide = this.onPageHide.bind(this);
+        this.onRefreshVisibility = () => {
+            if (this.visibilityDocument.hidden) {
+                this.syncRefresh.pause();
+            } else {
+                this.scheduleSynchronization(true, true);
+                this.scheduleConnectionHealthRefresh();
+            }
+        };
+        this.onRefreshFocus = () => {
+            if (
+                !this.visibilityDocument.hidden &&
+                (this.syncRefresh.pending ||
+                    this.state.realtime !== "online" ||
+                    this.syncRefresh.now() - this.syncRefresh.lastStarted >=
+                        CONSISTENCY_SYNCHRONIZATION_INTERVAL)
+            ) {
+                this.scheduleSynchronization(true, true);
+                this.scheduleConnectionHealthRefresh();
+            }
+        };
         if (this.attention) {
             this.attention.setStateListener((snapshot) => {
                 if (!this.destroyed) {
@@ -1772,8 +1838,49 @@ export class ContactCenterStore {
         return this.capabilities.check_connection_health === true;
     }
 
-    async call(method, args = [], kwargs = {}) {
-        return this.orm.call(API_MODEL, method, args, kwargs);
+    call(
+        method,
+        args = [],
+        kwargs = {},
+        {silent = false, automatic = false, health = false} = {}
+    ) {
+        if (health && method !== "get_connection_health") {
+            throw new TypeError("Health refresh is restricted to the safe projection.");
+        }
+        if (
+            automatic &&
+            !["list_conversations", "get_conversation", "get_timeline"].includes(method)
+        ) {
+            throw new TypeError(
+                "Automatic refresh is restricted to conversation reads."
+            );
+        }
+        if (
+            automatic &&
+            (this.destroyed || this.syncCycleStopped || this.visibilityDocument.hidden)
+        ) {
+            return Promise.reject(new AutomaticRefreshDeferred());
+        }
+        const orm =
+            (silent || automatic || health) && this.orm.silent
+                ? this.orm.silent
+                : this.orm;
+        const request = orm.call(API_MODEL, method, args, kwargs);
+        return health
+            ? this.healthReads.read(request)
+            : automatic
+            ? this.syncReads.read(request)
+            : request;
+    }
+
+    get syncTimer() {
+        return this.syncRefresh.timer;
+    }
+
+    hasScheduledListSynchronization() {
+        return (
+            this.syncRefresh.pending || this.syncTimer !== null || this.syncListPending
+        );
     }
 
     notify(message, options = {}) {
@@ -1796,6 +1903,11 @@ export class ContactCenterStore {
     async start() {
         this.started = true;
         window.addEventListener("pagehide", this.onPageHide);
+        this.visibilityDocument.addEventListener(
+            "visibilitychange",
+            this.onRefreshVisibility
+        );
+        this.focusTarget.addEventListener("focus", this.onRefreshFocus);
         this.busService.addEventListener("notification", this.onNotification);
         this.busService.addEventListener("connect", this.onConnect);
         this.busService.addEventListener("reconnect", this.onReconnect);
@@ -1831,6 +1943,11 @@ export class ContactCenterStore {
         this.cancelSeenRetry();
         this.started = false;
         window.removeEventListener("pagehide", this.onPageHide);
+        this.visibilityDocument.removeEventListener(
+            "visibilitychange",
+            this.onRefreshVisibility
+        );
+        this.focusTarget.removeEventListener("focus", this.onRefreshFocus);
         this.busService.removeEventListener("notification", this.onNotification);
         this.busService.removeEventListener("connect", this.onConnect);
         this.busService.removeEventListener("reconnect", this.onReconnect);
@@ -1839,11 +1956,11 @@ export class ContactCenterStore {
         if (this.searchTimer !== null) {
             browser.clearTimeout(this.searchTimer);
         }
-        if (this.syncTimer !== null) {
-            this.realtimeTimer.clearTimeout(this.syncTimer);
-            this.syncTimer = null;
-        }
-        this.releaseSynchronizationWaiters();
+        this.syncRefresh.destroy();
+        this.syncReads.destroy();
+        this.healthRefresh.destroy();
+        this.healthReads.destroy();
+        this.releaseSynchronizationWaiters(true);
         if (this.contactSearchTimer !== null) {
             this.contactTimer.clearTimeout(this.contactSearchTimer);
             this.contactSearchTimer = null;
@@ -2148,15 +2265,24 @@ export class ContactCenterStore {
     }
 
     waitForScheduledSynchronization() {
-        if (this.syncTimer === null) {
+        if (!this.hasScheduledListSynchronization()) {
             return Promise.resolve(false);
         }
-        return new Promise((resolve) => this.syncWaiters.push(resolve));
+        // A queued cycle owns new waiters even if an older list is in flight.
+        const waiters =
+            this.syncRefresh.pending || this.syncTimer !== null
+                ? this.syncWaiters
+                : this.syncActiveWaiters;
+        return new Promise((resolve) => waiters.push(resolve));
     }
 
-    releaseSynchronizationWaiters() {
-        const waiters = this.syncWaiters;
-        this.syncWaiters = [];
+    releaseSynchronizationWaiters(all = false) {
+        const waiters = this.syncActiveWaiters;
+        this.syncActiveWaiters = [];
+        if (all) {
+            waiters.push(...this.syncWaiters);
+            this.syncWaiters = [];
+        }
         waiters.forEach((resolve) => resolve(true));
     }
 
@@ -2327,7 +2453,7 @@ export class ContactCenterStore {
                 if (
                     pass < budget &&
                     this.state.listPhase !== "error" &&
-                    this.syncTimer !== null
+                    this.hasScheduledListSynchronization()
                 ) {
                     await this.waitForScheduledSynchronization();
                     continue;
@@ -2516,7 +2642,7 @@ export class ContactCenterStore {
      * @param {Array} serverItems rows actually returned by this refresh
      * @returns {Promise<Boolean>} whether a revalidation ran
      */
-    async revalidatePreservedSelection(serverItems = []) {
+    async revalidatePreservedSelection(serverItems = [], {automatic = false} = {}) {
         const channelId = this.state.selectedChannelId;
         if (
             !channelId ||
@@ -2525,7 +2651,7 @@ export class ContactCenterStore {
         ) {
             return false;
         }
-        await this.refreshSelectedConversation({silent: true});
+        await this.refreshSelectedConversation({silent: true, automatic});
         return true;
     }
 
@@ -2569,18 +2695,50 @@ export class ContactCenterStore {
         }
     }
 
-    async refreshConnectionHealth() {
+    refreshConnectionHealth() {
         if (this.destroyed) {
-            return false;
+            return Promise.resolve(false);
         }
-        const busRevision = this.connectionHealthBusRevision;
-        try {
-            const payload = await this.call("bootstrap");
-            validateEnvelope(payload);
-            if (this.connectionHealthBusRevision !== busRevision) {
-                return true;
+        if (this.healthRefresh.running) {
+            if (
+                this.healthRequestBusRevision !== this.connectionHealthBusRevision ||
+                this.healthInvalidationRequestRevision !==
+                    this.connectionHealthInvalidationRevision
+            ) {
+                this.healthRefresh.schedule();
             }
-            return this.applyConnectionHealth(payload.connection_health);
+            return this.healthRequest || Promise.resolve(false);
+        }
+        return this.healthRefresh.run();
+    }
+
+    async fetchConnectionHealth() {
+        const busRevision = this.connectionHealthBusRevision;
+        const invalidationRevision = this.connectionHealthInvalidationRevision;
+        this.healthInvalidationRequestRevision = invalidationRevision;
+        this.healthRequestBusRevision = busRevision;
+        try {
+            const payload = await this.call(
+                "get_connection_health",
+                [],
+                {},
+                {silent: true, health: true}
+            );
+            validateEnvelope(payload);
+            if (this.destroyed) {
+                return false;
+            }
+            if (this.connectionHealthBusRevision !== busRevision) {
+                // Preserve bus items/snapshots without overwriting them with an
+                // older read. Only an unapplied invalidation needs another RPC.
+                const invalidated =
+                    this.connectionHealthInvalidationRevision !== invalidationRevision;
+                if (invalidated) {
+                    this.healthRefresh.schedule();
+                }
+                return !invalidated;
+            }
+            return this.applyConnectionHealth(payload);
         } catch (_error) {
             return false;
         }
@@ -2834,8 +2992,11 @@ export class ContactCenterStore {
         if (!silent) {
             this.state.listPhase = "error";
             this.notify(errorMessage(error), {
-                type: "danger",
-                title: "Conversas indisponíveis",
+                type: error instanceof AutomaticRefreshDeferred ? "info" : "danger",
+                title:
+                    error instanceof AutomaticRefreshDeferred
+                        ? "Atualização adiada"
+                        : "Conversas indisponíveis",
             });
         }
         return false;
@@ -2853,7 +3014,11 @@ export class ContactCenterStore {
         }
     }
 
-    async loadConversationsPage({reset = false, silent = false} = {}) {
+    async loadConversationsPage({
+        reset = false,
+        silent = false,
+        automatic = false,
+    } = {}) {
         if (this.destroyed) {
             return false;
         }
@@ -2867,11 +3032,16 @@ export class ContactCenterStore {
         }
         const cursor = reset ? false : this.state.nextConversationCursor;
         try {
-            const payload = await this.call("list_conversations", [], {
-                limit: LIST_LIMIT,
-                filters: this.conversationFilters(),
-                cursor,
-            });
+            const payload = await this.call(
+                "list_conversations",
+                [],
+                {
+                    limit: LIST_LIMIT,
+                    filters: this.conversationFilters(),
+                    cursor,
+                },
+                {silent, automatic}
+            );
             validateEnvelope(payload);
             this.rememberPagePreferences(payload.items);
             if (!this.isCurrentConversationRequest(request)) {
@@ -2889,10 +3059,11 @@ export class ContactCenterStore {
             this.listTailStale = this.listTailStale && !reset;
             this.reconcileConversationSelection({reset, previousSelected});
             if (reset && silent) {
-                await this.revalidatePreservedSelection(payload.items);
+                await this.revalidatePreservedSelection(payload.items, {automatic});
             }
             return true;
         } catch (error) {
+            this.syncCycleFailed = this.syncCycleFailed || automatic;
             return this.conversationLoadFailed(error, request, silent && !takesOver);
         }
     }
@@ -2971,7 +3142,7 @@ export class ContactCenterStore {
         }
     }
 
-    async refreshLoadedConversationWindow({silent = true} = {}) {
+    async refreshLoadedConversationWindow({silent = true, automatic = false} = {}) {
         if (this.destroyed) {
             return false;
         }
@@ -2995,11 +3166,16 @@ export class ContactCenterStore {
         const seenCursors = new Set();
         try {
             while (hasMore && items.length < targetCount) {
-                const payload = await this.call("list_conversations", [], {
-                    limit: Math.min(100, targetCount - items.length),
-                    filters: this.conversationFilters(),
-                    cursor,
-                });
+                const payload = await this.call(
+                    "list_conversations",
+                    [],
+                    {
+                        limit: Math.min(100, targetCount - items.length),
+                        filters: this.conversationFilters(),
+                        cursor,
+                    },
+                    {silent, automatic}
+                );
                 validateEnvelope(payload);
                 this.rememberPagePreferences(payload.items);
                 if (!this.isCurrentConversationRequest(request)) {
@@ -3046,9 +3222,10 @@ export class ContactCenterStore {
             this.listWindowFilterRevision = filterRevision;
             this.listTailStale = this.listTailStale && !dropsStaleTail;
             this.reconcileConversationSelection({reset: true, previousSelected});
-            await this.revalidatePreservedSelection(items);
+            await this.revalidatePreservedSelection(items, {automatic});
             return true;
         } catch (error) {
+            this.syncCycleFailed = this.syncCycleFailed || automatic;
             return this.conversationLoadFailed(error, request, silent && !takesOver);
         }
     }
@@ -4136,11 +4313,22 @@ export class ContactCenterStore {
         return afterMessageId;
     }
 
-    async fetchForwardTimelinePage(request, channelId, afterMessageId, limit) {
-        const payload = await this.call("get_timeline", [channelId], {
-            after_message_id: afterMessageId,
-            limit,
-        });
+    async fetchForwardTimelinePage(
+        request,
+        channelId,
+        afterMessageId,
+        limit,
+        options = {}
+    ) {
+        const payload = await this.call(
+            "get_timeline",
+            [channelId],
+            {
+                after_message_id: afterMessageId,
+                limit,
+            },
+            options
+        );
         validateEnvelope(payload);
         if (!this.isCurrentTimelineRequest(request, channelId)) {
             return false;
@@ -4151,12 +4339,23 @@ export class ContactCenterStore {
         return forwardTimelinePage(payload, afterMessageId);
     }
 
-    async fetchCurrentTimelineHead(request, channelId, limit, invalidMessage) {
-        const payload = await this.call("get_timeline", [channelId], {
-            before_message_id: false,
-            limit,
-            known_received_message_id: this.receivedTimelineCursor(channelId),
-        });
+    async fetchCurrentTimelineHead(
+        request,
+        channelId,
+        limit,
+        invalidMessage,
+        options = {}
+    ) {
+        const payload = await this.call(
+            "get_timeline",
+            [channelId],
+            {
+                before_message_id: false,
+                limit,
+                known_received_message_id: this.receivedTimelineCursor(channelId),
+            },
+            options
+        );
         validateEnvelope(payload);
         if (!this.isCurrentTimelineRequest(request, channelId)) {
             return false;
@@ -4167,12 +4366,13 @@ export class ContactCenterStore {
         return payload;
     }
 
-    async reanchorTimelineAfterForwardLimit(request, channelId, limit) {
+    async reanchorTimelineAfterForwardLimit(request, channelId, limit, options = {}) {
         const payload = await this.fetchCurrentTimelineHead(
             request,
             channelId,
             limit,
-            "A conversa da recentralização de mensagens é inválida."
+            "A conversa da recentralização de mensagens é inválida.",
+            options
         );
         if (!payload) {
             return false;
@@ -4186,12 +4386,13 @@ export class ContactCenterStore {
         return true;
     }
 
-    async finishTimelineForwardRecovery(request, channelId, limit) {
+    async finishTimelineForwardRecovery(request, channelId, limit, options = {}) {
         const payload = await this.fetchCurrentTimelineHead(
             request,
             channelId,
             limit,
-            "A conversa da atualização final de mensagens é inválida."
+            "A conversa da atualização final de mensagens é inválida.",
+            options
         );
         if (!payload) {
             return false;
@@ -4199,7 +4400,7 @@ export class ContactCenterStore {
         if (this.timelineHeadHasContiguousGap(payload, channelId)) {
             // More than one head window arrived while the bounded catch-up was
             // running. Preserve the confirmed cursor for the next fenced cycle.
-            this.scheduleSynchronization(false, true);
+            this.scheduleSynchronization(false, true, {urgent: true});
             return true;
         }
         this.resetTimelineForwardRecovery();
@@ -4207,7 +4408,7 @@ export class ContactCenterStore {
         return true;
     }
 
-    async recoverTimelineGap(request, channelId, limit) {
+    async recoverTimelineGap(request, channelId, limit, options = {}) {
         let afterMessageId = this.beginTimelineForwardRecovery(channelId);
         let hasMore = true;
         while (hasMore && this.timelineForwardPageCount < TIMELINE_FORWARD_MAX_PAGES) {
@@ -4215,7 +4416,8 @@ export class ContactCenterStore {
                 request,
                 channelId,
                 afterMessageId,
-                limit
+                limit,
+                options
             );
             if (!page) {
                 return false;
@@ -4234,9 +4436,14 @@ export class ContactCenterStore {
             // Bound the aggregate automatic catch-up, not only one RPC chain.
             // A very large offline backlog is reanchored to a fresh head; the
             // operator can still page backwards without an unbounded DOM/RPC loop.
-            return this.reanchorTimelineAfterForwardLimit(request, channelId, limit);
+            return this.reanchorTimelineAfterForwardLimit(
+                request,
+                channelId,
+                limit,
+                options
+            );
         }
-        return this.finishTimelineForwardRecovery(request, channelId, limit);
+        return this.finishTimelineForwardRecovery(request, channelId, limit, options);
     }
 
     scheduleTimelineForwardRetry(channelId) {
@@ -4250,7 +4457,7 @@ export class ContactCenterStore {
         // Failed RPC/validation attempts consume the same aggregate budget as
         // successful forward pages, so a broken endpoint cannot create a retry loop.
         this.timelineForwardPageCount += 1;
-        this.scheduleSynchronization(false, true);
+        this.scheduleSynchronization(false, true, {urgent: true});
         return true;
     }
 
@@ -4282,6 +4489,7 @@ export class ContactCenterStore {
         silent = false,
         limit = TIMELINE_LIMIT,
         anchorUnread = true,
+        automatic = false,
     } = {}) {
         const channelId = this.state.selectedChannelId;
         if (!channelId || this.destroyed) {
@@ -4309,7 +4517,10 @@ export class ContactCenterStore {
                 query.known_received_message_id =
                     this.receivedTimelineCursor(channelId);
             }
-            const payload = await this.call("get_timeline", [channelId], query);
+            const payload = await this.call("get_timeline", [channelId], query, {
+                silent,
+                automatic,
+            });
             validateEnvelope(payload);
             if (!this.isCurrentTimelineRequest(request, channelId)) {
                 return false;
@@ -4321,11 +4532,15 @@ export class ContactCenterStore {
                 mode === "refresh_latest" &&
                 this.timelineNeedsForwardRecovery(payload, channelId)
             ) {
-                return await this.recoverTimelineGap(request, channelId, limit);
+                return await this.recoverTimelineGap(request, channelId, limit, {
+                    silent,
+                    automatic,
+                });
             }
             this.applyTimelinePage(payload, mode, channelId);
             return true;
         } catch (error) {
+            this.syncCycleFailed = this.syncCycleFailed || automatic;
             return this.timelineLoadFailed(error, request, channelId, silent);
         }
     }
@@ -4361,7 +4576,7 @@ export class ContactCenterStore {
         return this.loadTimeline({reset: true, anchorUnread: false});
     }
 
-    refreshLatestTimeline() {
+    refreshLatestTimeline({automatic = false} = {}) {
         if (this.state.timelineHasMoreForward) {
             return Promise.resolve(false);
         }
@@ -4369,6 +4584,7 @@ export class ContactCenterStore {
             mode: "refresh_latest",
             silent: true,
             limit: TIMELINE_REFRESH_LIMIT,
+            automatic,
         });
     }
 
@@ -4390,7 +4606,7 @@ export class ContactCenterStore {
             return false;
         }
         if (attempt >= SEEN_RETRY_DELAYS.length) {
-            this.scheduleSynchronization(false, false);
+            this.scheduleSynchronization(false, false, {urgent: true});
             return false;
         }
         this.seenRetryTimer = this.realtimeTimer.setTimeout(async () => {
@@ -4477,7 +4693,7 @@ export class ContactCenterStore {
                 }
                 this.state.timelineFirstUnreadMessageId = false;
             } else {
-                this.scheduleSynchronization(false, true);
+                this.scheduleSynchronization(false, true, {urgent: true});
             }
             return true;
         } catch (_error) {
@@ -5068,7 +5284,7 @@ export class ContactCenterStore {
                 throw new TypeError("O servidor não confirmou a exclusão da conversa.");
             }
             this.forgetDeletedConversation(channelId);
-            this.scheduleSynchronization(false, false);
+            this.scheduleSynchronization(false, false, {urgent: true});
             return true;
         } catch (error) {
             this.notify(errorMessage(error), {
@@ -5382,7 +5598,7 @@ export class ContactCenterStore {
             return true;
         } catch (error) {
             if (current()) {
-                this.scheduleSynchronization(false, false);
+                this.scheduleSynchronization(false, false, {urgent: true});
                 this.notify(errorMessage(error), {
                     type: "danger",
                     title: "Não foi possível confirmar a leitura",
@@ -5421,7 +5637,7 @@ export class ContactCenterStore {
         const current = this.loadedConversation(channelId);
         if (!this.destroyed && current) {
             current.retention = payload.policy;
-            this.scheduleSynchronization(false, false);
+            this.scheduleSynchronization(false, false, {urgent: true});
         }
         return payload;
     }
@@ -5951,19 +6167,30 @@ export class ContactCenterStore {
         return this.applyIdentity(channelId, identity);
     }
 
-    async refreshSelectedConversation({silent = false} = {}) {
+    async refreshSelectedConversation({silent = false, automatic = false} = {}) {
         const channelId = this.state.selectedChannelId;
         if (!channelId) {
             return false;
         }
         try {
-            const payload = await this.call("get_conversation", [channelId]);
+            const payload = await this.call(
+                "get_conversation",
+                [channelId],
+                undefined,
+                {silent, automatic}
+            );
             validateEnvelope(payload);
+            if (this.destroyed) {
+                return false;
+            }
             if (channelId === this.state.selectedChannelId) {
                 this.reconcileTagCatalog(payload.item && payload.item.tags);
                 this.replaceConversation(payload.item);
                 if (!this.state.selectedChannelId) {
-                    await this.loadConversations({reset: true});
+                    await this.loadConversations({
+                        reset: true,
+                        ...(automatic ? {silent: true, automatic: true} : {}),
+                    });
                 }
             } else if (payload.item && payload.item.channel_id === channelId) {
                 // No longer open: only its preference still counts.
@@ -5971,6 +6198,10 @@ export class ContactCenterStore {
             }
             return true;
         } catch (error) {
+            this.syncCycleFailed = this.syncCycleFailed || automatic;
+            if (this.destroyed) {
+                return false;
+            }
             if (accessWasRevoked(error)) {
                 this.revokeConversation(channelId);
                 return false;
@@ -6604,9 +6835,11 @@ export class ContactCenterStore {
             return false;
         }
         this.connectionHealthBusRevision += 1;
-        if (payload.connection_health) {
-            this.applyConnectionHealth(payload.connection_health);
-        } else if (!payload.item || !this.applyConnectionHealthItem(payload.item)) {
+        const applied = payload.connection_health
+            ? this.applyConnectionHealth(payload.connection_health)
+            : payload.item && this.applyConnectionHealthItem(payload.item);
+        if (!applied) {
+            this.connectionHealthInvalidationRevision += 1;
             this.scheduleConnectionHealthRefresh();
         }
         return true;
@@ -7063,37 +7296,57 @@ export class ContactCenterStore {
         }
     }
 
-    scheduleSynchronization(reconnect, refreshTimeline = false) {
+    scheduleSynchronization(reconnect, refreshTimeline = false, {urgent = false} = {}) {
         if (this.destroyed) {
-            return;
+            return false;
         }
         this.syncReconnect = this.syncReconnect || reconnect;
         this.syncTimeline = this.syncTimeline || refreshTimeline;
-        if (this.syncTimer !== null) {
-            return;
+        return this.syncRefresh.schedule({urgent});
+    }
+
+    async runSynchronization() {
+        const reconnect = this.syncReconnect;
+        const timeline = this.syncTimeline;
+        this.syncReconnect = false;
+        this.syncTimeline = false;
+        this.syncCycleStopped = false;
+        this.syncCycleFailed = false;
+        this.syncActiveWaiters.push(...this.syncWaiters);
+        this.syncWaiters = [];
+        this.syncListPending = true;
+        try {
+            await this.refreshLoadedConversations({
+                silent: true,
+                automatic: true,
+            });
+        } finally {
+            this.syncListPending = false;
+            this.releaseSynchronizationWaiters();
         }
-        this.syncTimer = this.realtimeTimer.setTimeout(async () => {
-            this.syncTimer = null;
-            const synchronizedReconnect = this.syncReconnect;
-            const synchronizeTimeline = this.syncTimeline;
-            this.syncReconnect = false;
-            this.syncTimeline = false;
-            try {
-                await this.refreshLoadedConversations({silent: true});
-            } finally {
-                this.releaseSynchronizationWaiters();
+        const deferred = () =>
+            this.destroyed || this.syncCycleStopped || this.visibilityDocument.hidden;
+        if (!deferred() && this.state.selectedChannelId) {
+            await this.refreshSelectedConversation({
+                silent: true,
+                automatic: true,
+            });
+            if (
+                !deferred() &&
+                this.state.selectedChannelId &&
+                (timeline || reconnect)
+            ) {
+                await this.refreshLatestTimeline({automatic: true});
             }
-            if (this.state.selectedChannelId) {
-                await this.refreshSelectedConversation({silent: true});
-                if (
-                    this.state.selectedChannelId &&
-                    (synchronizeTimeline || synchronizedReconnect)
-                ) {
-                    await this.refreshLatestTimeline();
-                }
-            }
-            // Only bus events prove connectivity. A successful RPC refresh can
-            // finish after a newer disconnect and must not overwrite that state.
-        }, 120);
+        }
+        if (deferred() && !this.destroyed) {
+            this.syncReconnect = this.syncReconnect || reconnect;
+            this.syncTimeline = this.syncTimeline || timeline;
+            this.syncRefresh.schedule();
+            return false;
+        }
+        // Skipped history and superseded snapshots are neutral; caught read or
+        // validation failures keep the backoff, including nested revalidation.
+        return !this.syncCycleFailed;
     }
 }

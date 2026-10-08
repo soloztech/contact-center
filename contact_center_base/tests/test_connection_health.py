@@ -1480,3 +1480,90 @@ class TestConnectionHealth(SavepointCase):
             self.assertEqual(payload["event_type"], "connection_health_updated")
             self.assertEqual(payload["connection_id"], self.connection.id)
             self.assertNotIn("item", payload)
+
+    def test_light_health_equals_bootstrap_without_catalog_or_provider_work(self):
+        api = self.env["contact.center.ui.api"].with_user(self.agent)
+        now = fields.Datetime.now()
+        with mock.patch.object(fields.Datetime, "now", return_value=now):
+            expected = api.bootstrap()["connection_health"]
+            ConnectionHealthAdapter.health_calls.clear()
+            ConnectionHealthAdapter.execute_calls.clear()
+            ConnectionHealthAdapter.capability_calls.clear()
+            with trap_jobs() as trap, mock.patch.object(
+                type(api), "bootstrap", side_effect=AssertionError("no bootstrap")
+            ), mock.patch.object(
+                type(self.env["contact.center.tag"]),
+                "search",
+                side_effect=AssertionError("no tag catalog"),
+            ), mock.patch.object(
+                type(self.env["contact.center.team"]),
+                "search",
+                side_effect=AssertionError("no team catalog"),
+            ):
+                self.assertEqual(api.get_connection_health(), expected)
+                trap.assert_jobs_count(0)
+            self.assertFalse(ConnectionHealthAdapter.health_calls)
+            self.assertFalse(ConnectionHealthAdapter.execute_calls)
+            self.assertFalse(ConnectionHealthAdapter.capability_calls)
+
+    def test_light_health_checks_agent_and_visibility(self):
+        employee = (
+            self.env["res.users"]
+            .with_context(no_reset_password=True)
+            .create(
+                {
+                    "name": "Health employee",
+                    "login": "health-employee-%s" % uuid.uuid4(),
+                    "groups_id": [(6, 0, self.env.ref("base.group_user").ids)],
+                }
+            )
+        )
+        with self.assertRaises(AccessError):
+            self.env["contact.center.ui.api"].with_user(
+                employee
+            ).get_connection_health()
+        self.account.write(
+            {
+                "access_team_ids": [(5, 0, 0)],
+                "access_user_ids": [(6, 0, self.admin.ids)],
+            }
+        )
+        result = (
+            self.env["contact.center.ui.api"]
+            .with_user(self.agent)
+            .get_connection_health()
+        )
+        self.assertNotIn(self.connection.id, [item["id"] for item in result["items"]])
+
+    def test_light_health_scopes_supervisor_and_allowed_companies(self):
+        company = self.env["res.company"].create({"name": "Health other company"})
+        self.agent.company_ids |= company
+        account = self.account.copy(
+            {
+                "company_id": company.id,
+                "access_team_ids": [(5, 0, 0)],
+                "access_user_ids": [(6, 0, self.agent.ids)],
+            }
+        )
+        other = self.connection.copy(
+            {
+                "account_id": account.id,
+                "role": "standby",
+                "inbound_active": False,
+                "outbound_active": False,
+            }
+        )
+        api = self.env["contact.center.ui.api"].with_user(self.agent)
+        restricted = api.with_context(allowed_company_ids=self.env.company.ids)
+        expanded = api.with_context(
+            allowed_company_ids=(self.env.company | company).ids
+        )
+        self.assertNotIn(
+            other.id,
+            [item["id"] for item in restricted.get_connection_health()["items"]],
+        )
+        self.assertIn(
+            other.id, [item["id"] for item in expanded.get_connection_health()["items"]]
+        )
+        supervisor = self.env["contact.center.ui.api"].with_user(self.supervisor)
+        self.assertTrue(supervisor.get_connection_health()["summary"]["can_check"])

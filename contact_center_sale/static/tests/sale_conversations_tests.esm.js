@@ -96,6 +96,8 @@ async function setup(options = {}) {
                 switch (args.method) {
                     case "systray_summary":
                         return envelope({enabled: false});
+                    case "get_connection_health":
+                        return {schema_version: 1, items: [], summary: {total: 0}};
                     case "bootstrap":
                         return envelope({
                             user: {id: 3},

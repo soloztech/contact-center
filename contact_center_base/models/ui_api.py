@@ -1804,6 +1804,12 @@ class ContactCenterUiApi(models.AbstractModel):
         }
 
     @api.model
+    def get_connection_health(self):
+        """Read the visible health projection without catalogs or provider I/O."""
+
+        return self._connection_health_snapshot()
+
+    @api.model
     def check_connection_health(self, connection_id=False):
         """Schedule visible health probes and return their current safe snapshot."""
 

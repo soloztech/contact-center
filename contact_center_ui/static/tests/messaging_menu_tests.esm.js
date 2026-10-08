@@ -4,6 +4,7 @@
 
 import {
     ContactCenterChat,
+    ContactCenterMessagingList,
     openContactCenterChat,
 } from "@contact_center_ui/js/contact_center_messaging.esm";
 import {editInput, patchWithCleanup} from "@web/../tests/helpers/utils";
@@ -12,7 +13,13 @@ import {
     start,
     startServer,
 } from "@mail/../tests/helpers/test_utils";
-import {SUPPORTED_SCHEMA_VERSION} from "@contact_center_ui/js/contact_center_model.esm";
+import {EventBus} from "@odoo/owl";
+import {jsonrpc} from "@web/core/network/rpc_service";
+import {ormService} from "@web/core/orm_service";
+import {
+    CONTACT_CENTER_NOTIFICATION_TYPE,
+    SUPPORTED_SCHEMA_VERSION,
+} from "@contact_center_ui/js/contact_center_model.esm";
 
 const envelope = (values) => ({schema_version: SUPPORTED_SCHEMA_VERSION, ...values});
 const row = (id = 91) => ({
@@ -58,6 +65,8 @@ async function setup({enabled = true, listError = false, messages = []} = {}) {
                         throw new Error("Access denied");
                     }
                     return envelope({items: [row()], total: 1, has_more: false});
+                case "get_connection_health":
+                    return envelope({items: [], summary: {total: 0}});
                 case "bootstrap":
                     return envelope({
                         user: {id: 3},
@@ -91,6 +100,122 @@ async function setup({enabled = true, listError = false, messages = []} = {}) {
         },
     });
     return {...result, calls};
+}
+
+// Keep the mounted dropdown and native ORM/jsonrpc path, controlling only XHR
+// and elapsed time. Other mail services continue using their normal test mocks.
+function previewFixture() {
+    let time = 0,
+        next = 1,
+        rpcId = 0,
+        component = null;
+    const tasks = new Map(),
+        requests = [];
+    const timer = {
+        now: () => time,
+        setTimeout(callback, delay) {
+            const id = next++;
+            tasks.set(id, {callback, at: time + delay});
+            return id;
+        },
+        clearTimeout: (id) => tasks.delete(id),
+        async advance(ms) {
+            const end = time + ms;
+            for (;;) {
+                const task = [...tasks]
+                    .filter(([, item]) => item.at <= end)
+                    .sort((a, b) => a[1].at - b[1].at)[0];
+                if (!task) {
+                    break;
+                }
+                tasks.delete(task[0]);
+                time = task[1].at;
+                task[1].callback();
+                for (let i = 0; i < 30; i++) {
+                    await Promise.resolve();
+                }
+            }
+            time = end;
+            for (let i = 0; i < 30; i++) {
+                await Promise.resolve();
+            }
+            await nextAnimationFrame();
+        },
+    };
+    class PreviewXHR extends EventTarget {
+        constructor() {
+            super();
+            this.aborts = 0;
+            this.finished = false;
+        }
+        open() {
+            /* HTTP configuration is simulated by the fixture. */
+        }
+        setRequestHeader() {
+            /* No real headers are sent in this fixture. */
+        }
+        send() {
+            this.startedAt = time;
+            requests.push(this);
+        }
+        abort() {
+            this.aborts++;
+            this.finished = true;
+        }
+        respond() {
+            this.finished = true;
+            this.response = JSON.stringify({
+                result: envelope({items: [row()], has_more: false}),
+            });
+            this.dispatchEvent(new Event("load"));
+        }
+        fail() {
+            this.finished = true;
+            this.dispatchEvent(new Event("error"));
+        }
+    }
+    const bus = new EventBus();
+    const orm = ormService.start(
+        {bus},
+        {
+            user: {context: {}},
+            rpc: (url, params, options) =>
+                jsonrpc({bus}, ++rpcId, url, params, {
+                    ...options,
+                    xhr: new PreviewXHR(),
+                }),
+        }
+    );
+    patchWithCleanup(ContactCenterMessagingList.prototype, {
+        setup() {
+            this._super(...arguments);
+            component = this;
+            this.orm = orm;
+            this.refresh.timerApi = timer;
+            this.refresh.now = timer.now;
+            this.refresh.random = () => 0;
+            this.reads.timer = timer;
+        },
+    });
+    const notify = (env, count = 1) => {
+        for (let i = 0; i < count; i++) {
+            env.services.bus_service.trigger("notification", [
+                {
+                    type: CONTACT_CENTER_NOTIFICATION_TYPE,
+                    payload: envelope({event_type: "message_created", channel_id: 91}),
+                },
+            ]);
+        }
+    };
+    return {
+        timer,
+        tasks,
+        requests,
+        notify,
+        get component() {
+            return component;
+        },
+    };
 }
 
 QUnit.module("contact_center_ui > native messaging", () => {
@@ -203,6 +328,118 @@ QUnit.module("contact_center_ui > native messaging", () => {
             await click(".cc-messaging-tab");
             assert.containsOnce(document.body, '.cc-messaging-list [role="alert"]');
             assert.containsNone(document.body, ".cc-messaging-item");
+        }
+    );
+
+    QUnit.test(
+        "mounted personal previews coalesce bursts into one request and one spaced trailing request",
+        async (assert) => {
+            const fixture = previewFixture();
+            const {click, env} = await setup();
+            await click(".o_MessagingMenu_toggler");
+            await click(".cc-messaging-tab");
+            assert.strictEqual(fixture.requests.length, 1);
+            fixture.requests[0].respond();
+            await fixture.timer.advance(0);
+            fixture.notify(env, 50);
+            await fixture.timer.advance(1999);
+            assert.strictEqual(fixture.requests.length, 1);
+            await fixture.timer.advance(1);
+            assert.strictEqual(fixture.requests.length, 2);
+            fixture.notify(env, 50);
+            await fixture.timer.advance(1000);
+            assert.strictEqual(
+                fixture.requests.length,
+                2,
+                "notifications never overlap an active read"
+            );
+            fixture.requests[1].respond();
+            await fixture.timer.advance(0);
+            await fixture.timer.advance(999);
+            assert.strictEqual(fixture.requests.length, 2);
+            await fixture.timer.advance(1);
+            assert.deepEqual(
+                fixture.requests.map((request) => request.startedAt),
+                [0, 2000, 4000]
+            );
+            fixture.requests[2].respond();
+            await fixture.timer.advance(5000);
+            assert.strictEqual(
+                fixture.requests.length,
+                3,
+                "no extra cycle after the dirty bit is consumed"
+            );
+            assert.containsOnce(document.body, ".cc-messaging-item");
+            await click(".o_MessagingMenu_toggler");
+            assert.strictEqual(
+                fixture.tasks.size,
+                0,
+                "destroy clears the component's timers"
+            );
+        }
+    );
+
+    QUnit.test(
+        "mounted previews fail closed on transport and deadline, abort XHR and wait for a new trigger",
+        async (assert) => {
+            const fixture = previewFixture();
+            const {click, env} = await setup();
+            await click(".o_MessagingMenu_toggler");
+            await click(".cc-messaging-tab");
+            fixture.requests[0].respond();
+            await fixture.timer.advance(0);
+            fixture.notify(env);
+            await fixture.timer.advance(2000);
+            fixture.requests[1].fail();
+            await fixture.timer.advance(0);
+            assert.containsNone(document.body, ".cc-messaging-item");
+            assert.containsOnce(document.body, '.cc-messaging-list [role="alert"]');
+            await fixture.timer.advance(150000);
+            assert.strictEqual(
+                fixture.requests.length,
+                2,
+                "transport error does not retry itself"
+            );
+            fixture.notify(env);
+            await fixture.timer.advance(800);
+            fixture.requests[2].respond();
+            await fixture.timer.advance(0);
+            assert.containsOnce(document.body, ".cc-messaging-item");
+            fixture.notify(env);
+            await fixture.timer.advance(2000);
+            fixture.notify(env, 20);
+            await fixture.timer.advance(30000);
+            assert.strictEqual(
+                fixture.requests[3].aborts,
+                1,
+                "deadline reaches native jsonrpc's actual XHR"
+            );
+            assert.containsNone(document.body, ".cc-messaging-item");
+            assert.containsOnce(document.body, '.cc-messaging-list [role="alert"]');
+            await fixture.timer.advance(150000);
+            assert.strictEqual(
+                fixture.requests.length,
+                4,
+                "deadline discards old dirty work and never self-retries"
+            );
+            fixture.notify(env);
+            await fixture.timer.advance(800);
+            assert.strictEqual(
+                fixture.requests.length,
+                5,
+                "a fresh trigger retries after backoff"
+            );
+            assert.strictEqual(
+                fixture.requests.filter((request) => !request.finished).length,
+                1
+            );
+            await click(".o_MessagingMenu_toggler");
+            assert.strictEqual(
+                fixture.requests[4].aborts,
+                1,
+                "destroy aborts the final read"
+            );
+            assert.strictEqual(fixture.tasks.size, 0);
         }
     );
 

@@ -30,6 +30,7 @@ class TestApplicationServiceContract(TransactionCase):
             "_notify_connection_health",
         )
         ui_rpc_methods = (
+            "get_connection_health",
             "bootstrap",
             "check_connection_health",
             "list_conversations",

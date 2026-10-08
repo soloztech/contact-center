@@ -20,8 +20,10 @@ const USER_ID = 7;
 function fakeTimer() {
     const pending = new Map();
     let next = 1;
+    let time = 0;
     return {
         pending,
+        now: () => time,
         delays: [],
         setTimeout(callback, delay) {
             const id = next++;
@@ -38,6 +40,9 @@ function fakeTimer() {
                 ([, item]) => delay === undefined || item.delay === delay
             );
             due.forEach(([id]) => pending.delete(id));
+            if (due.length) {
+                time += Math.max(...due.map(([, item]) => item.delay));
+            }
             due.forEach(([, item]) => item.callback());
         },
     };
@@ -71,6 +76,7 @@ function summaryFixture(responses = []) {
         },
         userId: USER_ID,
         timer,
+        now: timer.now,
         onChange: (value) => changes.push(value),
     });
     return {summary, timer, calls, changes};
@@ -124,7 +130,10 @@ QUnit.module("contact_center_ui > systray", () => {
                     summary.handleNotifications(detail),
                     detail[0].payload.event_type
                 );
-                timer.flush();
+                const due = [...timer.pending.values()].find(
+                    (item) => item.delay !== 30000
+                );
+                timer.flush(due ? due.delay : undefined);
                 await settle();
             }
             assert.strictEqual(calls.length, 9);
@@ -152,7 +161,7 @@ QUnit.module("contact_center_ui > systray", () => {
         summary.handleNotifications([notification("message_created")]);
         summary.handleNotifications([notification("conversation_updated")]);
         assert.strictEqual(timer.pending.size, 1);
-        timer.flush();
+        timer.flush(SYSTRAY_SUMMARY_DEBOUNCE);
         await settle();
         assert.strictEqual(calls.length, 1);
         summary.destroy();
@@ -166,7 +175,7 @@ QUnit.module("contact_center_ui > systray", () => {
         summary.start();
         await settle();
         assert.ok(summary.schedule());
-        timer.flush(SYSTRAY_SUMMARY_DEBOUNCE);
+        timer.flush(2000);
         await settle();
         assert.deepEqual(changes, [{enabled: true, mine: 2, all: 4}]);
         summary.destroy();
@@ -183,6 +192,7 @@ QUnit.module("contact_center_ui > systray", () => {
                 call: () => new Promise((resolve) => pending.push(resolve)),
                 userId: USER_ID,
                 timer,
+                now: timer.now,
                 onChange: (value) => changes.push(value),
             });
             summary.load();
@@ -196,6 +206,13 @@ QUnit.module("contact_center_ui > systray", () => {
             pending[0]({enabled: true, mine_unread: 1, all_unread: 1});
             await settle();
             assert.deepEqual(changes, [{enabled: true, mine: 1, all: 1}]);
+            assert.strictEqual(
+                pending.length,
+                1,
+                "follow-up waits for its scheduled deadline"
+            );
+            timer.flush(2000);
+            await settle();
             assert.strictEqual(pending.length, 2, "one coalesced follow-up request");
             pending[1]({enabled: true, mine_unread: 2, all_unread: 5});
             await settle();
@@ -203,6 +220,8 @@ QUnit.module("contact_center_ui > systray", () => {
             assert.strictEqual(pending.length, 2);
             // Destroying cancels what is pending: a late answer changes nothing.
             summary.load();
+            timer.flush(2000);
+            await settle();
             summary.handleNotifications([notification("message_created")]);
             summary.destroy();
             pending[2]({enabled: true, mine_unread: 9, all_unread: 9});
