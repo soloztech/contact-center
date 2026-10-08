@@ -17,6 +17,7 @@ import {ConversationTimeline} from "./conversation_timeline.esm";
 import {DeferredImage} from "./deferred_image.esm";
 import {MessageComposer} from "./message_composer.esm";
 import {MessagingMenu} from "@mail/components/messaging_menu/messaging_menu";
+import {AutomaticReadOwner, CoalescedRefresh} from "./contact_center_refresh.esm";
 import {SystraySummary} from "./contact_center_systray.esm";
 import {attr} from "@mail/model/model_field";
 import {browser} from "@web/core/browser/browser";
@@ -165,15 +166,15 @@ export class ContactCenterMessagingList extends Component {
         });
         this.request = 0;
         this.destroyed = false;
-        this.timer = null;
-        const schedule = () => {
-            if (this.timer === null) {
-                this.timer = browser.setTimeout(() => {
-                    this.timer = null;
-                    this.load();
-                }, 800);
-            }
-        };
+        this.refresh = new CoalescedRefresh({
+            debounce: 800,
+            retryOnDeadline: false,
+            run: () => this.load(false, {automatic: true}),
+        });
+        this.reads = new AutomaticReadOwner({
+            onDeadline: () => this.refresh.noteDeadline(),
+        });
+        const schedule = () => this.refresh.schedule();
         const onNotification = (event) => {
             if (contactCenterNotifications(event.detail).length) {
                 schedule();
@@ -183,26 +184,27 @@ export class ContactCenterMessagingList extends Component {
             bus.addEventListener("notification", onNotification);
             bus.addEventListener("reconnect", schedule);
             browser.addEventListener("focus", schedule);
-            this.load();
+            this.refresh.run();
         });
         onWillDestroy(() => {
             this.destroyed = true;
             this.request += 1;
-            browser.clearTimeout(this.timer);
+            this.refresh.destroy();
+            this.reads.destroy();
             bus.removeEventListener("notification", onNotification);
             bus.removeEventListener("reconnect", schedule);
             browser.removeEventListener("focus", schedule);
         });
     }
 
-    async load(more = false) {
+    async load(more = false, {automatic = false} = {}) {
         if (more && (!this.state.more || this.state.phase === "loading")) {
             return;
         }
         const request = ++this.request;
         this.state.phase = "loading";
         try {
-            const payload = await this.orm.silent.call(
+            const rpc = this.orm.silent.call(
                 "contact.center.ui.api",
                 "list_conversations",
                 [],
@@ -212,8 +214,9 @@ export class ContactCenterMessagingList extends Component {
                     filters: {responsibility: "mine"},
                 }
             );
+            const payload = await (automatic ? this.reads.read(rpc) : rpc);
             if (this.destroyed || request !== this.request) {
-                return;
+                return !this.destroyed;
             }
             validateEnvelope(payload);
             if (!Array.isArray(payload.items)) {
@@ -228,12 +231,14 @@ export class ContactCenterMessagingList extends Component {
             this.state.more = Boolean(payload.has_more && payload.next_cursor);
             this.state.cursor = payload.next_cursor || false;
             this.state.phase = "ready";
+            return true;
         } catch (_error) {
             if (!this.destroyed && request === this.request) {
                 // A failed authorization/refresh must not keep stale previews.
                 this.state.items = [];
                 this.state.phase = "error";
             }
+            return false;
         }
     }
 
@@ -291,11 +296,13 @@ patch(MessagingMenu.prototype, "contact_center_ui.messaging_menu", {
             summary.start();
             busService.addEventListener("notification", onNotification);
             browser.addEventListener("focus", onFocus);
+            busService.addEventListener("reconnect", onFocus);
         });
         onWillDestroy(() => {
             summary.destroy();
             busService.removeEventListener("notification", onNotification);
             browser.removeEventListener("focus", onFocus);
+            busService.removeEventListener("reconnect", onFocus);
         });
     },
     get contactCenterCounter() {

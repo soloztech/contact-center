@@ -1,5 +1,6 @@
 /** @odoo-module **/
 
+import {AutomaticReadOwner, CoalescedRefresh} from "./contact_center_refresh.esm";
 import {browser} from "@web/core/browser/browser";
 import {contactCenterNotifications} from "./contact_center_model.esm";
 
@@ -28,15 +29,30 @@ const REFRESHING_EVENTS = new Set([
  * the numbers shown are the conversations each preset opens.
  */
 export class SystraySummary {
-    constructor({call, userId, timer = browser, onChange = () => undefined}) {
+    constructor({
+        call,
+        userId,
+        timer = browser,
+        now = () => performance.now(),
+        random = Math.random,
+        onChange = () => undefined,
+    }) {
         this.call = call;
         this.userId = userId;
         this.timer = timer;
         this.onChange = onChange;
-        this.debounceTimer = null;
+        this.refresh = new CoalescedRefresh({
+            timer,
+            now,
+            random,
+            debounce: SYSTRAY_SUMMARY_DEBOUNCE,
+            run: () => this.fetchOnce(),
+        });
+        this.reads = new AutomaticReadOwner({
+            timer,
+            onDeadline: () => this.refresh.noteDeadline(),
+        });
         this.safetyTimer = null;
-        this.loading = false;
-        this.reloadPending = false;
         this.destroyed = false;
         this.state = {enabled: false, mine: 0, all: 0};
     }
@@ -48,10 +64,8 @@ export class SystraySummary {
 
     destroy() {
         this.destroyed = true;
-        if (this.debounceTimer !== null) {
-            this.timer.clearTimeout(this.debounceTimer);
-            this.debounceTimer = null;
-        }
+        this.refresh.destroy();
+        this.reads.destroy();
         if (this.safetyTimer !== null) {
             this.timer.clearTimeout(this.safetyTimer);
             this.safetyTimer = null;
@@ -86,49 +100,17 @@ export class SystraySummary {
     }
 
     schedule() {
-        if (this.destroyed) {
-            return false;
-        }
-        if (this.debounceTimer !== null) {
-            return true;
-        }
-        this.debounceTimer = this.timer.setTimeout(() => {
-            this.debounceTimer = null;
-            this.load();
-        }, SYSTRAY_SUMMARY_DEBOUNCE);
-        return true;
+        return this.refresh.schedule();
     }
 
-    /**
-     * Load the summary with one request at a time.
-     *
-     * Events arriving meanwhile are coalesced into one more request after it,
-     * so sustained traffic cannot keep discarding every answer.
-     *
-     * @returns {Promise<Boolean>} whether counts were applied
-     */
-    async load() {
-        if (this.loading) {
-            this.reloadPending = true;
-            return false;
-        }
-        this.loading = true;
-        let applied = false;
-        try {
-            do {
-                this.reloadPending = false;
-                applied = (await this.fetchOnce()) || applied;
-            } while (this.reloadPending && !this.destroyed);
-        } finally {
-            this.loading = false;
-        }
-        return applied;
+    load() {
+        return this.refresh.run();
     }
 
     async fetchOnce() {
         let payload = null;
         try {
-            payload = await this.call();
+            payload = await this.reads.read(this.call());
         } catch (_error) {
             // The top bar never interrupts the agent; the next event retries.
             return false;

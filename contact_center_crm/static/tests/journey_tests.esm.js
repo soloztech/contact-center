@@ -85,6 +85,9 @@ async function setup(options = {}) {
                 if (args.method === "systray_summary") {
                     return {schema_version: 1, enabled: false};
                 }
+                if (args.method === "get_connection_health") {
+                    return {schema_version: 1, items: [], summary: {total: 0}};
+                }
                 if (args.method === "bootstrap") {
                     return {
                         schema_version: 1,

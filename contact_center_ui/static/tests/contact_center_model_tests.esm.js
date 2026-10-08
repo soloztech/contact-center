@@ -7515,7 +7515,10 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                     return healthSnapshot(true);
                 }
                 bootstrapCalls += 1;
-                return healthSnapshot(bootstrapCalls === 1);
+                return {
+                    schema_version: SUPPORTED_SCHEMA_VERSION,
+                    ...healthSnapshot(bootstrapCalls === 1).connection_health,
+                };
             };
 
             assert.strictEqual(await store.checkConnectionHealth(false), true);
@@ -7535,8 +7538,8 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             assert.strictEqual(tasks.length, 0, "settlement cancels further polling");
             assert.deepEqual(calls, [
                 "check_connection_health",
-                "bootstrap",
-                "bootstrap",
+                "get_connection_health",
+                "get_connection_health",
             ]);
             store.stopConnectionHealthRefresh();
 
@@ -7548,7 +7551,10 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 notification: false,
                 healthTimer,
             });
-            stuckStore.call = async () => healthSnapshot(true);
+            stuckStore.call = async () => ({
+                schema_version: SUPPORTED_SCHEMA_VERSION,
+                ...healthSnapshot(true).connection_health,
+            });
             stuckStore.applyConnectionHealth(healthSnapshot(true).connection_health);
             while (tasks.length) {
                 await tasks.shift().callback();
@@ -7611,7 +7617,10 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                         resolveCheck = resolve;
                     });
                 }
-                return healthSnapshot(false);
+                return {
+                    schema_version: SUPPORTED_SCHEMA_VERSION,
+                    ...healthSnapshot(false).connection_health,
+                };
             };
 
             const request = store.checkConnectionHealth(false);
@@ -7655,15 +7664,19 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             store.onNotification({
                 detail: [healthEvent(false, "2026-08-23 22:04:25")],
             });
-            resolveRefresh(healthSnapshot(true));
+            resolveRefresh({
+                schema_version: SUPPORTED_SCHEMA_VERSION,
+                ...healthSnapshot(true).connection_health,
+            });
             await confirmation;
             assert.strictEqual(store.connectionHealth.summary.checking, 0);
             assert.strictEqual(
                 tasks.length,
                 0,
-                "an in-flight confirmation also preserves the newer bus event"
+                "an applied bus item needs no trailing confirmation"
             );
             store.stopConnectionHealthRefresh();
+            store.healthRefresh.destroy();
         }
     );
 
@@ -10706,7 +10719,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 next_after_message_id: 2,
             });
             assert.strictEqual(await refresh, true);
-            assert.deepEqual(scheduled, [[false, true]]);
+            assert.deepEqual(scheduled, [[false, true, {urgent: true}]]);
         }
     );
 
@@ -10762,7 +10775,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
 
             assert.strictEqual(await store.refreshLatestTimeline(), false);
             assert.deepEqual(afterCursors, [1]);
-            assert.deepEqual(scheduled, [[false, true]]);
+            assert.deepEqual(scheduled, [[false, true, {urgent: true}]]);
             assert.strictEqual(store.timelineForwardChannelId, 10);
             assert.strictEqual(store.timelineForwardCursor, 1);
             assert.strictEqual(store.timelineForwardPageCount, 1);
@@ -10791,7 +10804,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             assert.strictEqual(await store.refreshLatestTimeline(), false);
             assert.deepEqual(
                 scheduled,
-                [[false, true]],
+                [[false, true, {urgent: true}]],
                 "an exhausted recovery budget does not schedule another retry"
             );
             assert.strictEqual(store.timelineForwardCursor, 200);

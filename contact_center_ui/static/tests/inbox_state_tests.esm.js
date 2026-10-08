@@ -31,19 +31,26 @@ function fakeStorage(initial = {}) {
 function fakeTimer() {
     const pending = new Map();
     let next = 1;
+    let time = 0;
+    const delays = new Map();
     return {
         pending,
-        setTimeout(callback) {
+        now: () => time,
+        setTimeout(callback, delay = 0) {
             const id = next++;
             pending.set(id, callback);
+            delays.set(id, delay);
             return id;
         },
         clearTimeout(id) {
             pending.delete(id);
+            delays.delete(id);
         },
         flush() {
             const callbacks = [...pending.values()];
+            time += Math.max(0, ...delays.values());
             pending.clear();
+            delays.clear();
             callbacks.forEach((callback) => callback());
         },
     };
@@ -110,6 +117,7 @@ function inboxStore({
         inboxContext: context,
         inboxPreferenceTimer: timer,
         realtimeTimer,
+        refreshNow: realtimeTimer && realtimeTimer.now,
         operationDatabase: DATABASE,
         initialActionParams: params,
     });
@@ -117,6 +125,13 @@ function inboxStore({
     const server = {items};
     store.call = async (method, args = [], kwargs = {}) => {
         calls.push({method, args, kwargs});
+        if (method === "get_connection_health") {
+            return {
+                schema_version: SUPPORTED_SCHEMA_VERSION,
+                items: [],
+                summary: {total: 0},
+            };
+        }
         if (method === "bootstrap") {
             return bootstrapPayload(userId);
         }

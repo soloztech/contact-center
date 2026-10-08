@@ -117,6 +117,53 @@ class MailChannelProductivity(models.Model):
 class MailChannelMemberProductivity(models.Model):
     _inherit = "mail.channel.member"
 
+    @api.model
+    def _contact_center_unread_channel_ids(self):
+        """Test existence for ORM-scoped members without computing exact counts.
+
+        Keep the chronological and internal-note rules of the exact counter.
+        These IDs are request-local hints; the final channel search still applies
+        its own domain, access rules and personal preferences.
+        """
+
+        members = self.env["mail.channel.member"].search(
+            [
+                ("partner_id", "=", self.env.user.partner_id.id),
+                ("channel_id.channel_type", "=", "contact_center"),
+                ("channel_id.contact_center_company_id", "in", self.env.companies.ids),
+            ]
+        )
+        if not members:
+            return []
+        self.env["contact.center.internal.note.request"].flush_model(["message_id"])
+        self.env["mail.message"].flush_model(
+            ["date", "model", "res_id", "message_type"]
+        )
+        members.flush_recordset(["channel_id", "seen_message_id"])
+        self.env.cr.execute(
+            """
+            SELECT member.channel_id
+              FROM mail_channel_member AS member
+         LEFT JOIN mail_message AS seen ON seen.id = member.seen_message_id
+             WHERE member.id = ANY(%s)
+               AND EXISTS (
+                    SELECT 1 FROM mail_message AS message
+                     WHERE message.model = 'mail.channel'
+                       AND message.res_id = member.channel_id
+                       AND message.message_type NOT IN
+                           ('notification', 'user_notification')
+                       AND (seen.id IS NULL OR
+                            (COALESCE(message.date, '9999-12-31 23:59:59'::timestamp),
+                             message.id)
+                            > (COALESCE(seen.date, '9999-12-31 23:59:59'::timestamp), seen.id))
+                       AND NOT EXISTS (
+                            SELECT 1 FROM contact_center_internal_note_request AS note_request
+                             WHERE note_request.message_id = message.id))
+            """,
+            [members.ids],
+        )
+        return [row[0] for row in self.env.cr.fetchall()]
+
     def _compute_message_unread(self):
         """Count chronological unread messages, excluding internal notes."""
 
@@ -142,7 +189,8 @@ class MailChannelMemberProductivity(models.Model):
              WHERE member.id = ANY(%s)
                AND message.message_type NOT IN ('notification', 'user_notification')
                AND (seen.id IS NULL OR
-                    (COALESCE(message.date, '9999-12-31 23:59:59'::timestamp), message.id)
+                    (COALESCE(message.date, '9999-12-31 23:59:59'::timestamp),
+                             message.id)
                     > (COALESCE(seen.date, '9999-12-31 23:59:59'::timestamp), seen.id))
                AND NOT EXISTS (
                     SELECT 1 FROM contact_center_internal_note_request AS note_request
@@ -1475,13 +1523,21 @@ class ContactCenterUiApiProductivity(models.AbstractModel):
             return {"schema_version": SCHEMA_VERSION, "enabled": False}
         channels = self.env["mail.channel"]
         preset = {"unread_only": True, "exclude_muted": True}
+        unread_domain = self._conversation_list_domain(preset)
         return {
             "schema_version": SCHEMA_VERSION,
             "enabled": True,
             "mine_unread": channels.search_count(
-                self._conversation_list_domain(dict(preset, responsibility="mine"))
+                expression.AND(
+                    [
+                        unread_domain,
+                        self._conversation_responsibility_domain(
+                            {"responsibility": "mine"}
+                        ),
+                    ]
+                )
             ),
-            "all_unread": channels.search_count(self._conversation_list_domain(preset)),
+            "all_unread": channels.search_count(unread_domain),
         }
 
     @api.model
@@ -1492,28 +1548,19 @@ class ContactCenterUiApiProductivity(models.AbstractModel):
         if unread_only not in (False, True, None):
             raise ValidationError(_("The unread filter must be boolean."))
         if unread_only:
-            # ``message_unread_counter`` is computed by mail and is not a
-            # searchable stored column in every supported Odoo release.  Scope
-            # the recordset to the current partner first, then evaluate the
-            # counter in Python.  This also avoids the classic one2many-domain
-            # false positive where the partner condition matches one member
-            # and the unread condition matches another.
-            current_members = self.env["mail.channel.member"].search(
-                [
-                    ("partner_id", "=", self.env.user.partner_id.id),
-                    ("channel_id.channel_type", "=", "contact_center"),
-                    (
-                        "channel_id.contact_center_company_id",
-                        "in",
-                        self.env.companies.ids,
-                    ),
-                ]
-            )
-            unread_members = current_members.filtered(
-                lambda member: member.message_unread_counter > 0
-            )
             domain = expression.AND(
-                [domain, [("id", "in", unread_members.channel_id.ids)]]
+                [
+                    domain,
+                    [
+                        (
+                            "id",
+                            "in",
+                            self.env[
+                                "mail.channel.member"
+                            ]._contact_center_unread_channel_ids(),
+                        )
+                    ],
+                ]
             )
         exclude_muted = filters.get("exclude_muted", False)
         if exclude_muted not in (False, True, None):
