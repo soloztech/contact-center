@@ -16,4 +16,13 @@
         <field name="channel_id" ref="queue_channel_crm_intake" />
         <field name="retry_pattern" eval="{1: 2, 2: 5, 3: 10, 4: 30, 5: 60, 6: 120}" />
     </record>
+    <record id="queue_function_crm_intake_assignment" model="queue.job.function">
+        <field
+            name="model_id"
+            ref="contact_center_base.model_contact_center_channel_binding"
+        />
+        <field name="method">_job_crm_intake_assignment</field>
+        <field name="channel_id" ref="queue_channel_crm_intake" />
+        <field name="retry_pattern" eval="{1: 2, 2: 5, 3: 10, 4: 30, 5: 60, 6: 120}" />
+    </record>
 </odoo>

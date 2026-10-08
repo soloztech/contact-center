@@ -58,8 +58,16 @@ ledger independently of customer-panel reads. Native CRM remains authoritative f
 the business record. An existing document being visible in the panel does not mean
 it is associated with this conversation.
 
-This addon does not turn messages, ad referrals or ``fbads`` hints into leads and
-does not assign native UTM fields. Optional acquisition-evidence and CRM-link projection belong to `Marketing Center
+An explicitly enabled commercial WhatsApp inbox can create or reuse a CRM lead
+on the first eligible customer message. New automatic leads have an empty
+**Created by** field; the protected intake receipt and conversation link retain
+the executor audit. The current eligible conversation assignee initializes the
+editable salesperson. Unassigned leads wait for the first eligible assignment;
+later conversation transfers do not synchronize CRM ownership. Existing
+businesses retain their salesperson and commercial fields.
+
+Ad referrals and ``fbads`` hints alone do not create leads or assign native UTM
+fields. Optional acquisition evidence and CRM-link projection belong to `Marketing Center
 <https://github.com/soloztech/marketing-center/tree/16.0>`_ and its separately
 installed bridges.
 
@@ -137,6 +145,38 @@ explicitly; opening this form does not create a CRM lead.
 
 For campaign evidence, see the `cross-project intake and attribution contract
 <https://github.com/soloztech/marketing-center/blob/16.0/docs/crm-intake-and-attribution.md>`_.
+
+Initial salesperson for commercial WhatsApp intake
+==================================================
+
+Automatic intake is opt-in per commercial inbox. On the first eligible customer
+message, it reuses an unambiguous accessible business or creates a lead. A new
+automatic lead has **Created by** empty, while its intake receipt and conversation
+association preserve the technical executor audit. Earlier creator history is
+unchanged.
+
+The conversation's eligible current assignee becomes the new lead's salesperson.
+If the conversation is unassigned, the lead's salesperson stays empty until its
+first eligible assignment. Processing uses the persisted assignment history in
+sequence order and checks permissions when the job runs. Events already examined
+as ineligible are consumed: a later permission grant does not revive them.
+Events not yet examined use the permissions available when they are processed.
+The salesperson remains editable in CRM; choosing one manually cancels waiting
+automatic assignment. Converting to an opportunity without choosing a salesperson
+keeps that initial assignment pending.
+
+Later transfers or unassignments in the inbox do not synchronize the salesperson.
+Reused businesses keep their existing commercial ownership. An intake administrator
+can recover pending initial assignment with the existing recovery action on at
+most 100 selected conversations, within the available companies. Recovery checks
+the original active association, current permissions and pending state again; it
+does not overwrite a manual choice, detached association or merged business.
+After fixing permissions for an already-consumed assignment, select the salesperson
+in CRM or make a new conversation assignment. Recovery does not replay that event.
+Disabling automatic intake also pauses initial salesperson assignment, even if
+the executor stays configured. Pending state is preserved; after re-enabling,
+explicit recovery can continue. The same policy and automation guards required
+for lead creation are checked before automatic salesperson assignment.
 
 Bug Tracker
 ===========

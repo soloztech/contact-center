@@ -19,8 +19,7 @@ from ..models.intake_policy import automation_guards_available
 from .test_conversation_crm import ConversationCrmCase
 
 
-@tagged("post_install", "-at_install")
-class TestCrmIntake(ConversationCrmCase):
+class CrmIntakeCase(ConversationCrmCase):
     def setUp(self):
         super().setUp()
         self.env.company.country_id = self.env.ref("base.br")
@@ -104,6 +103,9 @@ class TestCrmIntake(ConversationCrmCase):
             }
         )
 
+
+@tagged("post_install", "-at_install")
+class TestCrmIntake(CrmIntakeCase):
     def test_first_message_queues_then_creates_once_without_chat_copy(self):
         binding = self._new()
         before = self.env["crm.lead"].search_count([])
@@ -114,9 +116,15 @@ class TestCrmIntake(ConversationCrmCase):
         self.assertEqual(binding.crm_intake_state, "created")
         self.assertEqual(
             (lead.type, lead.company_id, lead.user_id),
-            ("lead", self.env.company, self.agent),
+            ("lead", self.env.company, self.env["res.users"]),
         )
         self.assertTrue(lead.contact_center_intake_created)
+        self.assertTrue(lead.contact_center_intake_assignment_pending)
+        lead.flush_recordset()
+        lead.invalidate_recordset()
+        self.assertFalse(lead.create_uid)
+        self.assertTrue(lead.create_date)
+        self.assertTrue(lead.write_uid)
         self.assertFalse(lead.partner_id)
         self.assertFalse(lead.team_id)
         self.assertNotIn("Synthetic private", lead.description or "")
@@ -125,6 +133,7 @@ class TestCrmIntake(ConversationCrmCase):
             (link.writer, link.origin, link.scope_state),
             ("intake", "created", "context"),
         )
+        self.assertEqual(link.create_uid, self.agent)
         self._run(binding)
         self._message(binding)
         self.assertEqual(self.env["crm.lead"].search_count([]), before + 1)

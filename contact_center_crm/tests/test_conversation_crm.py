@@ -61,7 +61,7 @@ class ConversationCrmCase(TransactionCase):
         guest = cls.env["mail.guest"].create({"name": "CRM Guest"})
         identity = cls.env["contact.center.identity"].create(
             {
-                "company_id": cls.env.company.id,
+                "company_id": account.company_id.id,
                 "name": "CRM Customer",
                 "mail_guest_id": guest.id,
                 "partner_id": partner.id if partner else False,

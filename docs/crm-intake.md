@@ -19,9 +19,23 @@ Sem candidato e com identidade suficiente, cria um lead. IP, nome, sufixo telef�
 LID e outros contatos da mesma empresa não são identidade suficiente.
 
 O responsável atual da conversa recebe o novo lead se tiver acesso e permissões; caso
-contrário, recebe o usuário de execução. Reutilizar não modifica vendedor, equipe,
-etapa, descrição ou UTMs do negócio. O vínculo aparece na Jornada como **Entrada
-automática**, em **contexto**. A equipe confirma o período comercial depois.
+contrário, o vendedor fica vazio, aguardando a atribuição inicial elegível. Nos novos
+leads automáticos, **Criado por** fica vazio; o recibo de entrada e o vínculo da
+conversa preservam a auditoria do executor técnico. Os registros históricos não são
+reescritos. Reutilizar não modifica vendedor, equipe, etapa, descrição ou UTMs do
+negócio. O vínculo aparece na Jornada como **Entrada automática**, em **contexto**. A
+equipe confirma o período comercial depois.
+
+A primeira atribuição elegível posterior preenche o vendedor uma única vez. Depois,
+transferências e desatribuições da conversa não sincronizam o vendedor do CRM, que
+continua editável. Escolher um vendedor no CRM ou alterar o vendedor existente encerra a
+inicialização pendente. Converter para oportunidade sem escolher vendedor mantém a
+pendência. Uma escrita que apenas mantém o vendedor já vazio também mantém a pendência.
+
+O worker examina os eventos persistidos em ordem e verifica as permissões disponíveis no
+processamento. Atribuições já examinadas como inelegíveis não voltam a concorrer após um
+ganho de permissão. Nesse caso, escolha o vendedor no CRM ou faça uma nova atribuição da
+conversa; a recuperação não revive o evento já processado.
 
 Leads criados por esta entrada ficam permanentemente excluídos de automações nativas,
 enrolamento OCA e passos de email, ação, atividade e Contact Center. Quando instalado, o
@@ -35,12 +49,19 @@ necessária, sem revelar negócios restritos. A retenção de mensagens preserva
 decisão na conversa. Uma decisão terminal não cria outro lead nem repõe um vínculo
 removido manualmente.
 
-Para parar novas entradas, desmarque a regra na caixa; isso invalida jobs antigos.
+Para parar novas entradas, desmarque a regra na caixa; isso invalida jobs antigos e
+pausa a atribuição inicial dos leads pendentes, mesmo com executor configurado. A
+pendência e a posição dos eventos permanecem intactas enquanto a regra estiver
+desligada. A política completa e os guards também são verificados antes de atribuir.
 Reativar cria novo corte e não admite conversas antigas. Uma conversa já admitida, ainda
 não decidida, pode retomar com uma nova mensagem elegível. Após falha técnica do
 agendamento, um administrador pode invocar `action_recover_crm_intake` sobre até 100
-bindings explicitamente selecionadas. A recuperação aplica os mesmos cortes; não há cron
-de recuperação histórica e decisões terminais permanecem intactas.
+bindings explicitamente selecionadas. A recuperação de uma entrada ainda não decidida
+aplica os mesmos cortes. Para recibos **Lead criado** cujo lead ainda aguarda vendedor,
+ela também pode reagendar a atribuição inicial após a reativação e revalidação da
+política. Isso preserva a decisão de criação, respeita os eventos já processados e não
+cria outro lead. Não há cron de recuperação histórica, alteração do vendedor escolhido
+manualmente nem reconstrução de vínculo removido.
 
 O corte começa no segundo seguinte à ativação, conservando a precisão das datas do
 provedor. Mensagens recebidas antes desse horário ficam fora da regra, inclusive
@@ -48,10 +69,10 @@ webhooks antigos processados depois. Arquivar a caixa desliga a entrada e invali
 pendentes; desarquivar mantém a entrada desligada até nova ativação explícita.
 
 Sem equipe CRM configurada na caixa, os novos leads ficam explicitamente **sem equipe
-comercial**, mantendo o responsável da conversa ou executor. Configure a equipe da
-empresa na caixa quando quiser incluí-los automaticamente no funil de uma equipe.
-Remoção manual do vínculo também exige revisão se ocorreu antes da primeira resposta do
-cliente; a entrada não refaz essa associação.
+comercial**, com o responsável elegível da conversa ou vendedor vazio. Configure a
+equipe da empresa na caixa quando quiser incluí-los automaticamente no funil de uma
+equipe. Remoção manual do vínculo também exige revisão se ocorreu antes da primeira
+resposta do cliente; a entrada não refaz essa associação.
 
 ### Recuperar um agendamento que falhou
 
@@ -74,8 +95,9 @@ env.cr.commit()
 ```
 
 O método aplica autorização e elegibilidade novamente. Não confirma períodos nem associa
-manualmente um lead; apenas reagenda entradas elegíveis. Em produção, seguir o wrapper
-de deploy e registrar IDs/resultado sem corpo de mensagem.
+manualmente um lead; apenas reagenda entradas elegíveis ou a atribuição inicial de um
+lead criado e ainda pendente. Em produção, seguir o wrapper de deploy e registrar
+IDs/resultado sem corpo de mensagem.
 
 ### Limite quando Kanban estiver instalado
 
@@ -85,5 +107,5 @@ caixa podem ter retry por serialização; não são descartadas. O timeout de 25
 continua aplicado ao worker. Essa ampliação de contenção é um residual aceito para a
 composição opcional. Kanban não está instalado na produção desta entrega; o aplicador
 preserva o conjunto de módulos instalados. A prova de corrida com candidato ligado a
-caso fica como cobertura adicional futura; as oito corridas executadas nesta entrega não
-afirmam cobrir essa composição.
+caso fica como cobertura adicional futura. As provas de concorrência de entrada CRM e
+atribuição inicial executadas para este fluxo não afirmam cobrir essa composição.

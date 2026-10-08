@@ -399,8 +399,15 @@ between conversations and native <tt class="docutils literal">crm.lead</tt> reco
 ledger independently of customer-panel reads. Native CRM remains authoritative for
 the business record. An existing document being visible in the panel does not mean
 it is associated with this conversation.</p>
-<p>This addon does not turn messages, ad referrals or <tt class="docutils literal">fbads</tt> hints into leads and
-does not assign native UTM fields. Optional acquisition-evidence and CRM-link projection belong to <a class="reference external" href="https://github.com/soloztech/marketing-center/tree/16.0">Marketing Center</a> and its separately
+<p>An explicitly enabled commercial WhatsApp inbox can create or reuse a CRM lead
+on the first eligible customer message. New automatic leads have an empty
+<strong>Created by</strong> field; the protected intake receipt and conversation link retain
+the executor audit. The current eligible conversation assignee initializes the
+editable salesperson. Unassigned leads wait for the first eligible assignment;
+later conversation transfers do not synchronize CRM ownership. Existing
+businesses retain their salesperson and commercial fields.</p>
+<p>Ad referrals and <tt class="docutils literal">fbads</tt> hints alone do not create leads or assign native UTM
+fields. Optional acquisition evidence and CRM-link projection belong to <a class="reference external" href="https://github.com/soloztech/marketing-center/tree/16.0">Marketing Center</a> and its separately
 installed bridges.</p>
 <p>External-campaign mapping to native CRM UTM fields and GCLID enrichment belong
 to Marketing Center. This module does not perform those lookups while opening
@@ -462,6 +469,35 @@ duplicate lead. <strong>Vinculado a esta conversa</strong> identifies an explici
 commercial customer and inbox company as defaults. The user saves the quotation
 explicitly; opening this form does not create a CRM lead.</p>
 <p>For campaign evidence, see the <a class="reference external" href="https://github.com/soloztech/marketing-center/blob/16.0/docs/crm-intake-and-attribution.md">cross-project intake and attribution contract</a>.</p>
+</div>
+<div class="section" id="initial-salesperson-for-commercial-whatsapp-intake">
+<h1>Initial salesperson for commercial WhatsApp intake</h1>
+<p>Automatic intake is opt-in per commercial inbox. On the first eligible customer
+message, it reuses an unambiguous accessible business or creates a lead. A new
+automatic lead has <strong>Created by</strong> empty, while its intake receipt and conversation
+association preserve the technical executor audit. Earlier creator history is
+unchanged.</p>
+<p>The conversation’s eligible current assignee becomes the new lead’s salesperson.
+If the conversation is unassigned, the lead’s salesperson stays empty until its
+first eligible assignment. Processing uses the persisted assignment history in
+sequence order and checks permissions when the job runs. Events already examined
+as ineligible are consumed: a later permission grant does not revive them.
+Events not yet examined use the permissions available when they are processed.
+The salesperson remains editable in CRM; choosing one manually cancels waiting
+automatic assignment. Converting to an opportunity without choosing a salesperson
+keeps that initial assignment pending.</p>
+<p>Later transfers or unassignments in the inbox do not synchronize the salesperson.
+Reused businesses keep their existing commercial ownership. An intake administrator
+can recover pending initial assignment with the existing recovery action on at
+most 100 selected conversations, within the available companies. Recovery checks
+the original active association, current permissions and pending state again; it
+does not overwrite a manual choice, detached association or merged business.
+After fixing permissions for an already-consumed assignment, select the salesperson
+in CRM or make a new conversation assignment. Recovery does not replay that event.
+Disabling automatic intake also pauses initial salesperson assignment, even if
+the executor stays configured. Pending state is preserved; after re-enabling,
+explicit recovery can continue. The same policy and automation guards required
+for lead creation are checked before automatic salesperson assignment.</p>
 </div>
 <div class="section" id="bug-tracker">
 <h1>Bug Tracker</h1>

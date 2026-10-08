@@ -34,8 +34,16 @@ ledger independently of customer-panel reads. Native CRM remains authoritative f
 the business record. An existing document being visible in the panel does not mean
 it is associated with this conversation.
 
-This addon does not turn messages, ad referrals or ``fbads`` hints into leads and
-does not assign native UTM fields. Optional acquisition-evidence and CRM-link projection belong to `Marketing Center
+An explicitly enabled commercial WhatsApp inbox can create or reuse a CRM lead
+on the first eligible customer message. New automatic leads have an empty
+**Created by** field; the protected intake receipt and conversation link retain
+the executor audit. The current eligible conversation assignee initializes the
+editable salesperson. Unassigned leads wait for the first eligible assignment;
+later conversation transfers do not synchronize CRM ownership. Existing
+businesses retain their salesperson and commercial fields.
+
+Ad referrals and ``fbads`` hints alone do not create leads or assign native UTM
+fields. Optional acquisition evidence and CRM-link projection belong to `Marketing Center
 <https://github.com/soloztech/marketing-center/tree/16.0>`_ and its separately
 installed bridges.
 

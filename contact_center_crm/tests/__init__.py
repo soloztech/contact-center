@@ -4,4 +4,5 @@ from . import test_lead_start
 from . import test_journey
 
 from . import test_intake
+from . import test_intake_assignment
 from . import test_intake_vocabulary
