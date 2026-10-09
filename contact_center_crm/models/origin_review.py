@@ -204,7 +204,6 @@ class OriginReview(models.TransientModel):
         channel, link, occurred_at = lead._journey_origin_review_context(
             channel.id, self.evidence_key
         )
-        link._crm_origin_pending_reason(occurred_at) or "business"
         if self.decision == "include":
             if link._crm_origin_is_return(occurred_at) and not lead_is_open(lead):
                 raise ValidationError(

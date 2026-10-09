@@ -9,3 +9,5 @@ from . import test_intake_assignment
 from . import test_intake_vocabulary
 
 from . import test_intake_review
+
+from . import test_scope_migration
