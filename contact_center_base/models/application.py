@@ -26,7 +26,11 @@ from ..services.lifecycle import (
     LifecycleCreations,
 )
 from ..services.timeline import message_chronology_key
-from ..services.tokens import CONTACT_CENTER_MEMBERSHIP_TOKEN
+from ..services.tokens import (
+    CONTACT_CENTER_IDENTITY_MERGE_TOKEN,
+    CONTACT_CENTER_IDENTITY_PROJECTION_TOKEN,
+    CONTACT_CENTER_MEMBERSHIP_TOKEN,
+)
 
 _logger = logging.getLogger(__name__)
 _COMPANY_PORTABLE_IDENTITY_NAMESPACES = frozenset({"whatsapp.pn"})
@@ -902,16 +906,24 @@ class ContactCenterApplication(models.AbstractModel):
         channel_aliases_changed = self._enrich_channel_aliases(
             binding, event.conversation.addresses
         )
-        identity_aliases_changed = self._enrich_identity_aliases(
+        identity_aliases_changed = self.with_context(
+            contact_center_identity_projection_token=CONTACT_CENTER_IDENTITY_PROJECTION_TOKEN
+        )._enrich_identity_aliases(
             connection.account_id, binding.identity_id, event.actor.addresses
         )
         if channel_aliases_changed or identity_aliases_changed:
             # A picture hint can also teach us a searchable phone/alias. Keep
             # that semantic invalidation separate from the later avatar job.
-            self._notify_ui(
-                binding.channel_id,
-                "conversation_updated",
-                {"changed_fields": ["identity_aliases"]},
+            self._notify_identity_projection(
+                binding.identity_id,
+                ["identity_aliases"],
+                channels=(
+                    binding.identity_id.channel_binding_ids.filtered(
+                        lambda item: item.active and not item.merged_into_id
+                    ).channel_id
+                    if identity_aliases_changed
+                    else binding.channel_id
+                ),
             )
         binding._request_identity_avatar_sync(connection, force=True)
         return binding
@@ -2329,14 +2341,27 @@ class ContactCenterApplication(models.AbstractModel):
                     identity = identity.merged_into_id
                 canonical_identities |= identity
             identities = canonical_identities
+        merged_channels = self.env["mail.channel"]
+        merged = False
         if len(identities) > 1 and portable_keys:
+            candidate_channels = (
+                identities.mapped("channel_binding_ids")
+                .filtered(lambda binding: binding.active and not binding.merged_into_id)
+                .channel_id
+            )
             survivor, blocker = (
                 self.env["contact.center.identity"]
                 .sudo()
+                .with_context(
+                    contact_center_identity_merge_token=CONTACT_CENTER_IDENTITY_MERGE_TOKEN,
+                    contact_center_skip_name_notification=True,
+                )
                 ._contact_center_merge_portable_component(identities)
             )
             if not blocker:
                 identities = survivor
+                merged = True
+                merged_channels = candidate_channels
         if len(identities) > 1:
             raise IdentityConflictError(
                 "observed addresses resolve to different identities",
@@ -2380,7 +2405,42 @@ class ContactCenterApplication(models.AbstractModel):
                     "mail_guest_id": guest.id,
                 }
             )
-        self._enrich_identity_aliases(account, identity, addresses)
+        return self._finish_identity_resolution(
+            account,
+            identity,
+            addresses,
+            actor,
+            inbox_event=inbox_event,
+            observed_name_at=observed_name_at,
+            merged=merged,
+            merged_channels=merged_channels,
+        )
+
+    def _finish_identity_resolution(
+        self,
+        account,
+        identity,
+        addresses,
+        actor,
+        *,
+        inbox_event,
+        observed_name_at,
+        merged,
+        merged_channels,
+    ):
+        """Publish the final identity once after alias/name/topology convergence."""
+
+        previous_name = identity.name
+        aggregate = self.with_context(
+            contact_center_identity_projection_token=CONTACT_CENTER_IDENTITY_PROJECTION_TOKEN,
+            contact_center_identity_merge_token=(
+                CONTACT_CENTER_IDENTITY_MERGE_TOKEN if merged else None
+            ),
+        )
+        aliases_changed = aggregate._enrich_identity_aliases(
+            account, identity, addresses
+        )
+        identity = identity.with_context(contact_center_skip_name_notification=True)
         if observed_name_at is not None or inbox_event:
             identity._contact_center_observe_name(
                 actor.display_name,
@@ -2388,7 +2448,48 @@ class ContactCenterApplication(models.AbstractModel):
                 inbox_event,
             )
         identity._contact_center_sync_fallback_name_from_addresses(addresses)
-        return identity
+        changed_fields = []
+        if aliases_changed:
+            changed_fields.append("identity_aliases")
+        if previous_name != identity.name:
+            changed_fields.append("identity_name")
+        if merged:
+            changed_fields.append("identity")
+        if changed_fields:
+            channels = (
+                identity.channel_binding_ids.filtered(
+                    lambda binding: binding.active and not binding.merged_into_id
+                ).channel_id
+                | merged_channels
+            )
+            aggregate._notify_identity_projection(
+                identity, changed_fields, channels=channels
+            )
+        return identity.with_context(contact_center_skip_name_notification=False)
+
+    def _notify_identity_projection(self, identity, changed_fields, channels=None):
+        """Publish one exact metadata scope, or one legacy topology invalidation."""
+
+        if channels is None:
+            channels = (
+                identity.channel_binding_ids.sudo()
+                .filtered(lambda binding: binding.active and not binding.merged_into_id)
+                .channel_id
+            )
+        changed_fields = list(dict.fromkeys(changed_fields))
+        payload = {"changed_fields": changed_fields, "identity_id": identity.id}
+        if (
+            len(changed_fields) == 1
+            and changed_fields[0] in ("identity_name", "identity_aliases")
+            and self.env.context.get("contact_center_identity_merge_token")
+            is not CONTACT_CENTER_IDENTITY_MERGE_TOKEN
+        ):
+            payload.update(
+                {"update_scope_version": 1, "update_scope": changed_fields[0]}
+            )
+        for channel in channels:
+            self._notify_ui(channel, "conversation_updated", dict(payload))
+        return True
 
     def _enrich_identity_aliases(self, account, identity, addresses):
         alias_model = self.env["contact.center.identity.alias"].sudo()
@@ -2454,6 +2555,14 @@ class ContactCenterApplication(models.AbstractModel):
                     "resolution_scope": address.resolution_scope,
                 }
             )
+        if (
+            changed
+            and self.env.context.get("contact_center_identity_projection_token")
+            is not CONTACT_CENTER_IDENTITY_PROJECTION_TOKEN
+            and self.env.context.get("contact_center_identity_merge_token")
+            is not CONTACT_CENTER_IDENTITY_MERGE_TOKEN
+        ):
+            self._notify_identity_projection(identity, ["identity_aliases"])
         return changed
 
     def _resolve_channel(self, account, identity, event=None, *, conversation_ref=None):

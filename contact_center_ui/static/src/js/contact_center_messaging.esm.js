@@ -7,6 +7,7 @@ import {
     conversationAvatarUrl,
     conversationDisplayName,
     conversationUiPolicy,
+    hasAuthorizedConversationDetail,
     initials,
     isRenderableConversation,
     messagePreviewText,
@@ -219,6 +220,7 @@ export class ContactCenterMessagingList extends Component {
                     limit: 30,
                     cursor: more ? this.state.cursor : false,
                     filters: {responsibility: "mine"},
+                    projection: "list_v1",
                 }
             );
             const payload = await (automatic ? this.reads.read(rpc) : rpc);
@@ -335,6 +337,7 @@ export class ContactCenterChat extends Component {
             // The shortcut never takes ownership of the full inbox's filters,
             // scroll position or selected conversation.
             inboxPreferenceStorage: false,
+            sharedReads: this.env.services["contact_center_ui.shared_reads"],
         });
         this.store.state.detailsOpen = false;
         this.props.chatWindow.update({contactCenterComponent: this});
@@ -380,10 +383,22 @@ export class ContactCenterChat extends Component {
 
     get canCompose() {
         return Boolean(
-            this.conversation &&
+            this.selectedDetailReady &&
+                this.conversation &&
                 (conversationUiPolicy(this.conversation).show_composer ||
                     this.store.capabilities.internal_notes)
         );
+    }
+
+    get selectedDetailReady() {
+        return hasAuthorizedConversationDetail(this.store, this.conversation);
+    }
+
+    get selectedDetailError() {
+        const detail = this.store.state.selectedDetail;
+        return !this.selectedDetailReady && detail && detail.status === "error"
+            ? detail.error || "Não foi possível carregar os detalhes da conversa."
+            : "";
     }
 
     canClose() {

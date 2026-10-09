@@ -11,7 +11,10 @@ import {
 import {deserializeDate, formatDate} from "@web/core/l10n/dates";
 import {formatFloat} from "@web/views/fields/formatters";
 import {useService} from "@web/core/utils/hooks";
-import {validateEnvelope} from "@contact_center_ui/js/contact_center_model.esm";
+import {
+    hasAuthorizedConversationDetail,
+    validateEnvelope,
+} from "@contact_center_ui/js/contact_center_model.esm";
 
 const PAGE_SIZE = 20;
 export const CUSTOMER_TABS = [
@@ -302,6 +305,10 @@ export class CrmPanelModel {
     current() {
         return (
             !this.destroyed &&
+            hasAuthorizedConversationDetail(
+                this.store,
+                this.store.selectedConversation
+            ) &&
             this.store.state.selectedChannelId === this.channelId &&
             this.store.capabilities.view_crm === true &&
             customerKey(this.store) === this.customerKey

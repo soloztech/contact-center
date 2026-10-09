@@ -8,6 +8,7 @@ import {
     groupMetadataStateMeta,
     groupMetadataUi,
     groupRoleMeta,
+    hasAuthorizedConversationDetail,
     initials,
     isGroupConversation,
     partnerCompanyForIdentity,
@@ -192,7 +193,11 @@ export class ContactPanel extends Component {
     }
 
     get canViewAttribution() {
-        return this.store.canViewAttribution(this.conversation);
+        return this.detailReady && this.store.canViewAttribution(this.conversation);
+    }
+
+    get detailReady() {
+        return hasAuthorizedConversationDetail(this.store, this.conversation);
     }
 
     get identity() {
@@ -217,7 +222,8 @@ export class ContactPanel extends Component {
 
     get canManageCompany() {
         return Boolean(
-            this.partner &&
+            this.detailReady &&
+                this.partner &&
                 this.partner.company_management_allowed &&
                 this.store.capabilities.link_company
         );
@@ -251,11 +257,15 @@ export class ContactPanel extends Component {
     }
 
     get canLinkCentralCompany() {
-        return Boolean(this.store.capabilities.link_central_company);
+        return (
+            this.detailReady && Boolean(this.store.capabilities.link_central_company)
+        );
     }
 
     get canCreateCentralCompany() {
-        return Boolean(this.store.capabilities.create_central_company);
+        return (
+            this.detailReady && Boolean(this.store.capabilities.create_central_company)
+        );
     }
 
     get canManageCentralCompany() {
@@ -278,7 +288,8 @@ export class ContactPanel extends Component {
 
     get canLinkCompany() {
         return Boolean(
-            this.identity &&
+            this.detailReady &&
+                this.identity &&
                 this.identity.partner &&
                 this.identity.link_kind === "person" &&
                 this.identity.partner.is_company === false &&
@@ -317,7 +328,8 @@ export class ContactPanel extends Component {
 
     get canRenameGuest() {
         return Boolean(
-            this.identity &&
+            this.detailReady &&
+                this.identity &&
                 this.identity.persona_kind === "guest" &&
                 this.store.capabilities.rename_guest
         );

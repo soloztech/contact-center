@@ -8,6 +8,7 @@ import {
     conversationDisplayName,
     conversationResolutionAction,
     conversationUiPolicy,
+    hasAuthorizedConversationDetail,
     initials,
     technicalChannelActionEnabled,
 } from "./contact_center_model.esm";
@@ -64,6 +65,7 @@ export class ContactCenterApp extends Component {
             ),
             inboxPreferenceStorage: browserLocalStorage(),
             inboxContext,
+            sharedReads: this.env.services["contact_center_ui.shared_reads"],
         });
         this.layoutRestored = false;
         useEffect(
@@ -114,9 +116,12 @@ export class ContactCenterApp extends Component {
     }
 
     get canViewTechnicalChannel() {
-        return technicalChannelActionEnabled(
-            this.store.capabilities,
-            this.selectedConversation
+        return (
+            this.selectedDetailReady &&
+            technicalChannelActionEnabled(
+                this.store.capabilities,
+                this.selectedConversation
+            )
         );
     }
 
@@ -138,6 +143,17 @@ export class ContactCenterApp extends Component {
 
     get selectedConversation() {
         return this.store.selectedConversation;
+    }
+
+    get selectedDetailReady() {
+        return hasAuthorizedConversationDetail(this.store, this.selectedConversation);
+    }
+
+    get selectedDetailError() {
+        const detail = this.store.state.selectedDetail;
+        return !this.selectedDetailReady && detail && detail.status === "error"
+            ? detail.error || "Não foi possível carregar os detalhes da conversa."
+            : "";
     }
 
     get contactPanelSelected() {
@@ -182,6 +198,9 @@ export class ContactCenterApp extends Component {
     }
 
     get retentionIndicator() {
+        if (!this.selectedDetailReady) {
+            return "";
+        }
         const policy = this.selectedConversation && this.selectedConversation.retention;
         return policy &&
             policy.effective === true &&
@@ -192,6 +211,9 @@ export class ContactCenterApp extends Component {
     }
 
     openRetentionPanel() {
+        if (!this.selectedDetailReady) {
+            return;
+        }
         this.ui.sidePanel = "contact";
         this.store.state.detailsOpen = true;
         this.store.state.retentionFocusRequest += 1;
@@ -203,9 +225,12 @@ export class ContactCenterApp extends Component {
     }
 
     get canShowComposer() {
-        return conversationComposerAvailable(
-            this.conversationPolicy,
-            this.store.capabilities
+        return (
+            this.selectedDetailReady &&
+            conversationComposerAvailable(
+                this.conversationPolicy,
+                this.store.capabilities
+            )
         );
     }
 
@@ -229,7 +254,9 @@ export class ContactCenterApp extends Component {
     }
 
     get resolutionAction() {
-        return conversationResolutionAction(this.selectedConversation);
+        return this.selectedDetailReady
+            ? conversationResolutionAction(this.selectedConversation)
+            : false;
     }
 
     get fleetMeta() {

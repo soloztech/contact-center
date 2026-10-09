@@ -2,6 +2,7 @@
 
 import {ContactCenterApp} from "@contact_center_ui/js/contact_center_app.esm";
 import {CrmPanel} from "./crm_panel.esm";
+import {hasAuthorizedConversationDetail} from "@contact_center_ui/js/contact_center_model.esm";
 import {patch} from "@web/core/utils/patch";
 
 patch(ContactCenterApp, "contact_center_crm.components", {
@@ -17,9 +18,13 @@ patch(ContactCenterApp.prototype, "contact_center_crm.customer_records", {
         return this.canViewCrm && this.ui.sidePanel === "crm";
     },
 
+    get crmDetailReady() {
+        return hasAuthorizedConversationDetail(this.store, this.selectedConversation);
+    },
+
     get crmPanelKey() {
         const conversation = this.selectedConversation;
-        if (!conversation) {
+        if (!conversation || !this.crmDetailReady) {
             return "none";
         }
         const partner = conversation.identity && conversation.identity.partner;

@@ -173,7 +173,27 @@
                     t-if="conversation.account"
                     t-esc="conversation.account.name"
                 />
-                <ConversationTimeline state="store.state" store="store" />
+                <div
+                    t-if="!selectedDetailReady"
+                    class="cc-selected-detail-status p-3"
+                    t-att-role="selectedDetailError ? 'alert' : 'status'"
+                    t-att-aria-busy="selectedDetailError ? 'false' : 'true'"
+                >
+                    <t t-if="selectedDetailError">
+                        <p t-esc="selectedDetailError" />
+                        <button
+                            type="button"
+                            class="btn btn-link"
+                            t-on-click="() => store.retrySelectedDetail()"
+                        >Tentar novamente</button>
+                    </t>
+                    <p t-else="">Carregando detalhes da conversa…</p>
+                </div>
+                <ConversationTimeline
+                    t-if="selectedDetailReady"
+                    state="store.state"
+                    store="store"
+                />
                 <MessageComposer
                     t-if="canCompose"
                     conversation="conversation"
@@ -181,7 +201,7 @@
                     store="store"
                 />
                 <div
-                    t-else=""
+                    t-elif="selectedDetailReady"
                     class="p-2 text-muted"
                 >Envio indisponível nesta conversa.</div>
             </t>

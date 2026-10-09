@@ -6,6 +6,7 @@ from odoo.exceptions import AccessError, UserError, ValidationError
 from ..services.timeline import message_chronology_key
 from ..services.tokens import (
     CONTACT_CENTER_ATTRIBUTION_TOKEN,
+    CONTACT_CENTER_IDENTITY_MERGE_TOKEN,
     CONTACT_CENTER_MEMBERSHIP_TOKEN,
 )
 
@@ -362,6 +363,7 @@ class ContactCenterIdentity(models.Model):
 
     def write(self, values):
         values = dict(values)
+        name_only = set(values) == {"name"}
         internal_name_write = (
             self.env.context.get("contact_center_identity_name_token")
             is _IDENTITY_NAME_TOKEN
@@ -412,7 +414,9 @@ class ContactCenterIdentity(models.Model):
         if manual_name_write:
             for identity in self:
                 identity._contact_center_sync_managed_name(
-                    previous_names.get(identity.id) or "", identity.name or ""
+                    previous_names.get(identity.id) or "",
+                    identity.name or "",
+                    metadata_only=name_only,
                 )
         return result
 
@@ -431,7 +435,9 @@ class ContactCenterIdentity(models.Model):
             )
         return observed_at.replace(microsecond=0)
 
-    def _contact_center_sync_managed_name(self, previous_name, new_name):
+    def _contact_center_sync_managed_name(
+        self, previous_name, new_name, *, metadata_only=True
+    ):
         """Synchronize dependants only while they still equal our old fallback."""
 
         self.ensure_one()
@@ -454,14 +460,17 @@ class ContactCenterIdentity(models.Model):
         )
         if managed_channels:
             managed_channels.sudo().write({"name": new_name})
-        if not self.env.context.get("contact_center_skip_name_notification"):
+        if (
+            not self.env.context.get("contact_center_skip_name_notification")
+            and self.env.context.get("contact_center_identity_merge_token")
+            is not CONTACT_CENTER_IDENTITY_MERGE_TOKEN
+        ):
             application = self.env["contact.center.application"]
-            for channel in direct_channels:
-                application._notify_ui(
-                    channel,
-                    "conversation_updated",
-                    {"changed_fields": ["identity_name"]},
-                )
+            application._notify_identity_projection(
+                self,
+                ["identity_name"] if metadata_only else ["identity_name", "identity"],
+                channels=direct_channels,
+            )
         return True
 
     @api.model
@@ -824,6 +833,11 @@ class ContactCenterIdentity(models.Model):
         if blocker:
             return False, blocker
         survivor = self._contact_center_portable_merge_survivor(identities)
+        affected_channels = (
+            identities.mapped("channel_binding_ids")
+            .filtered(lambda binding: binding.active and not binding.merged_into_id)
+            .channel_id
+        )
         retired = identities - survivor
         retired_guests = retired.mapped("mail_guest_id")
         self._contact_center_rebind_retired_guest_memberships(retired_guests, survivor)
@@ -845,6 +859,13 @@ class ContactCenterIdentity(models.Model):
         retired.with_context(
             contact_center_identity_link_token=_IDENTITY_LINK_TOKEN
         ).write({"state": "merged", "merged_into_id": survivor.id})
+        if (
+            self.env.context.get("contact_center_identity_merge_token")
+            is not CONTACT_CENTER_IDENTITY_MERGE_TOKEN
+        ):
+            self.env["contact.center.application"]._notify_identity_projection(
+                survivor, ["identity"], channels=affected_channels
+            )
         return survivor, ""
 
     def _lock_partner_link(self):

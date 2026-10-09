@@ -10,6 +10,7 @@ import {
 import {
     compareTimelineItems,
     conversationUiPolicy,
+    hasAuthorizedConversationDetail,
     initials,
     messageActionEnabled,
     messageDispatchReasonMeta,
@@ -352,7 +353,16 @@ export class ConversationTimeline extends Component {
     }
 
     get conversationPolicy() {
-        return conversationUiPolicy(this.store.selectedConversation);
+        return conversationUiPolicy(
+            this.detailReady ? this.store.selectedConversation : false
+        );
+    }
+
+    get detailReady() {
+        return hasAuthorizedConversationDetail(
+            this.store,
+            this.store.selectedConversation
+        );
     }
 
     get isGroupConversation() {
@@ -362,7 +372,8 @@ export class ConversationTimeline extends Component {
     get keepsDeletedMessageContent() {
         const conversation = this.store.selectedConversation;
         return Boolean(
-            conversation &&
+            this.detailReady &&
+                conversation &&
                 conversation.account &&
                 conversation.account.show_deleted_message_content === true
         );
@@ -541,13 +552,14 @@ export class ConversationTimeline extends Component {
 
     hasActions(message) {
         return (
-            technicalMessageActionEnabled(this.store.capabilities, message) ||
-            sourceWebhookActionEnabled(this.store.capabilities, message) ||
-            downloadableMessageMedia(message).length > 0 ||
-            (!isControlTimelineMessage(message) &&
-                ["reply", "react", "edit", "delete"].some((action) =>
-                    this.messageActionAllowed(message, action)
-                ))
+            this.detailReady &&
+            (technicalMessageActionEnabled(this.store.capabilities, message) ||
+                sourceWebhookActionEnabled(this.store.capabilities, message) ||
+                downloadableMessageMedia(message).length > 0 ||
+                (!isControlTimelineMessage(message) &&
+                    ["reply", "react", "edit", "delete"].some((action) =>
+                        this.messageActionAllowed(message, action)
+                    )))
         );
     }
 
@@ -556,15 +568,21 @@ export class ConversationTimeline extends Component {
     }
 
     canViewTechnicalMessage(message) {
-        return technicalMessageActionEnabled(this.store.capabilities, message);
+        return (
+            this.detailReady &&
+            technicalMessageActionEnabled(this.store.capabilities, message)
+        );
     }
 
     canViewSourceWebhook(message) {
-        return sourceWebhookActionEnabled(this.store.capabilities, message);
+        return (
+            this.detailReady &&
+            sourceWebhookActionEnabled(this.store.capabilities, message)
+        );
     }
 
     messageActionAllowed(message, action) {
-        if (isControlTimelineMessage(message)) {
+        if (!this.detailReady || isControlTimelineMessage(message)) {
             return false;
         }
         return messageActionEnabled(this.store.selectedConversation, message, action);

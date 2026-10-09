@@ -760,7 +760,10 @@ QUnit.module("contact_center_ui > automatic refresh", () => {
                 };
                 const call = (_model, method) =>
                     method === "get_conversation"
-                        ? Promise.resolve({schema_version: 1, item: false})
+                        ? Promise.resolve({
+                              schema_version: 1,
+                              item: {channel_id: 10, state: "open"},
+                          })
                         : Promise.reject(new Error("reload failed"));
                 store.orm = {call, silent: {call}};
                 await store.refreshSelectedConversation({silent: true, automatic});
@@ -980,7 +983,11 @@ function avatarFixture(stateFactory = undefined) {
         if (method === "get_conversation") {
             return {
                 schema_version: 1,
-                item: freshRow(store.loadedConversation(args[0]) || avatarRow(args[0])),
+                item: freshRow({
+                    ...avatarRow(args[0]),
+                    ...store.loadedConversation(args[0]),
+                    projection: undefined,
+                }),
             };
         }
         if (method === "get_timeline") {
@@ -1087,7 +1094,7 @@ QUnit.module("contact_center_ui > selective avatar refresh", () => {
     );
 
     QUnit.test(
-        "legacy, name and mixed events win over the avatar batch",
+        "legacy and mixed events win; strict group fallback refreshes without timeline",
         async (assert) => {
             for (const values of [
                 {update_scope_version: undefined},
@@ -1103,7 +1110,11 @@ QUnit.module("contact_center_ui > selective avatar refresh", () => {
                 notify(10, values);
                 await timer.advance(120);
                 assert.ok(calls.some((call) => call.method === "list_conversations"));
-                assert.ok(calls.some((call) => call.method === "get_timeline"));
+                assert.strictEqual(
+                    calls.some((call) => call.method === "get_timeline"),
+                    values.update_scope !== "group_metadata",
+                    "only strict metadata can skip the selected timeline"
+                );
                 assert.notOk(
                     calls.some((call) => call.method === "get_conversation_avatars")
                 );

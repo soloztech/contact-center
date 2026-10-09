@@ -878,14 +878,18 @@ class TestContactCenterIdentityAvatar(SavepointCase):
         ) as notify:
             self.assertTrue(self._run_job(binding))
         events = [(call.args[1], call.args[2]) for call in notify.call_args_list]
-        self.assertIn(
-            ("conversation_updated", {"changed_fields": ["identity_name"]}), events
-        )
         scopes = [payload for _event, payload in events if payload.get("update_scope")]
-        self.assertEqual(len(scopes), 1)
-        self.assertEqual(scopes[0]["update_scope"], "identity_avatar")
-        self.assertEqual(scopes[0]["update_scope_version"], 1)
-        self.assertEqual(scopes[0]["changed_fields"], ["identity_avatar"])
+        self.assertEqual(len(scopes), 2)
+        self.assertEqual(
+            {payload["update_scope"] for payload in scopes},
+            {"identity_avatar", "identity_name"},
+        )
+        for payload in scopes:
+            self.assertEqual(payload["update_scope_version"], 1)
+            self.assertEqual(payload["changed_fields"], [payload["update_scope"]])
+        self.assertEqual(
+            {event for event, _payload in events}, {"conversation_updated"}
+        )
 
     def test_avatar_hint_announces_new_alias_but_not_timestamp_only_observations(self):
         binding = self._create_direct_binding()
@@ -910,7 +914,13 @@ class TestContactCenterIdentityAvatar(SavepointCase):
             self.assertEqual(notify.call_count, 1)
             self.assertEqual(notify.call_args.args[1], "conversation_updated")
             self.assertEqual(
-                notify.call_args.args[2], {"changed_fields": ["identity_aliases"]}
+                notify.call_args.args[2],
+                {
+                    "changed_fields": ["identity_aliases"],
+                    "identity_id": binding.identity_id.id,
+                    "update_scope_version": 1,
+                    "update_scope": "identity_aliases",
+                },
             )
             actor_values = {
                 address["value_normalized"] for address in hint["actor"]["addresses"]

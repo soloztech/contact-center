@@ -1005,7 +1005,7 @@ class ContactCenterUiApi(models.AbstractModel):
             )
         return {
             "id": identity.id,
-            "name": (partner.name or identity.name) if partner else identity.name,
+            "name": self._identity_display_name(identity),
             "persona_kind": "contact" if partner else "guest",
             "link_kind": link_kind,
             "link_invariant_valid": bool(
@@ -1074,6 +1074,13 @@ class ContactCenterUiApi(models.AbstractModel):
                 ).sorted(key=lambda item: (item.namespace, item.id))
             ],
         }
+
+    @api.model
+    def _identity_display_name(self, identity):
+        """Resolve list and detail names identically without building detail."""
+
+        partner = identity.partner_id
+        return (partner.name or identity.name) if partner else identity.name
 
     @api.model
     def _latest_message(self, channel):
@@ -1985,7 +1992,7 @@ class ContactCenterUiApi(models.AbstractModel):
         return ordered, preference_by_channel
 
     @api.model
-    def _conversation_list_prefetch(self, channels):
+    def _conversation_list_prefetch(self, channels, projection=None):
         """Load every list projection dependency in bounded, shared queries."""
 
         bindings = self.env["contact.center.channel.binding"].search(
@@ -1996,12 +2003,17 @@ class ContactCenterUiApi(models.AbstractModel):
             ]
         )
         binding_by_channel = {binding.channel_id.id: binding for binding in bindings}
-        (
-            partner_company_by_identity,
-            company_linking_allowed_by_identity,
-            secondary_companies_by_identity,
-            company_management_allowed_by_identity,
-        ) = self._batch_partner_company_projection(bindings.mapped("identity_id"))
+        partner_company_by_identity = {}
+        company_linking_allowed_by_identity = {}
+        secondary_companies_by_identity = {}
+        company_management_allowed_by_identity = {}
+        if projection is None:
+            (
+                partner_company_by_identity,
+                company_linking_allowed_by_identity,
+                secondary_companies_by_identity,
+                company_management_allowed_by_identity,
+            ) = self._batch_partner_company_projection(bindings.mapped("identity_id"))
         members = self.env["mail.channel.member"].search(
             [
                 ("channel_id", "in", channels.ids),
@@ -2085,6 +2097,16 @@ class ContactCenterUiApi(models.AbstractModel):
         group_profile_by_binding = {}
         for profile in group_profiles:
             group_profile_by_binding.setdefault(profile.channel_binding_id.id, profile)
+        management_by_account = {}
+        if projection == "list_v1":
+            for account in bindings.mapped("account_id"):
+                management_by_account[account.id] = {
+                    operation
+                    + "_conversation": bool(
+                        account._contact_center_user_can_manage_conversation(operation)
+                    )
+                    for operation in ("delete", "ignore")
+                }
         return {
             "binding_by_channel": binding_by_channel,
             "ignored_by_binding": self.env[
@@ -2103,13 +2125,166 @@ class ContactCenterUiApi(models.AbstractModel):
             "company_linking_allowed_by_identity": (
                 company_linking_allowed_by_identity
             ),
-            "own_protocol_by_binding": self._batch_group_own_protocol_participants(
-                group_profiles
+            "own_protocol_by_binding": (
+                self._batch_group_own_protocol_participants(group_profiles)
+                if projection is None
+                else {}
             ),
+            "management_by_account": management_by_account,
         }
 
     @api.model
-    def _serialize_conversation_list_items(self, channels, prefetched):
+    def _serialize_conversation_list_v1(self, channel, prefetched):
+        """Build the list DTO directly; never construct and discard detail.
+
+        Only the two inbox menu policies are exposed here. Provider sending,
+        attribution, partner/company links, aliases and group sender resolution
+        belong to an authorized full detail request.
+        """
+
+        member = prefetched["member_by_channel"].get(channel.id)
+        if not member:
+            raise AccessError(_("You are not a member of this conversation."))
+        binding = prefetched["binding_by_channel"].get(channel.id)
+        account = binding.account_id if binding else self.env["contact.center.account"]
+        identity = (
+            binding.identity_id if binding else self.env["contact.center.identity"]
+        )
+        conversation_type = binding.conversation_type if binding else "other"
+        profile = (
+            prefetched["group_profile_by_binding"].get(binding.id) if binding else False
+        )
+        connection = (
+            profile.provider_connection_id
+            if conversation_type == "group" and profile
+            else self._provider_connection(binding)
+        )
+        last_message = prefetched["last_message_by_channel"][channel.id]
+        last_binding = (
+            prefetched["last_binding_by_message"].get(last_message.id)
+            if last_message
+            else False
+        )
+        last_outbox = (
+            prefetched["last_outbox_by_binding"].get(last_binding.id)
+            if last_binding
+            else False
+        )
+        identity_payload = (
+            {
+                "id": identity.id,
+                "name": self._identity_display_name(identity),
+                "avatar_url": self._identity_avatar_url(binding, identity),
+            }
+            if identity
+            else False
+        )
+        group_name = (
+            (profile.name if profile else False) or channel.name or _("Conversation")
+        )
+        management = prefetched["management_by_account"].get(
+            account.id if account else False, {}
+        )
+        return {
+            "projection": "list_v1",
+            "channel_id": channel.id,
+            "conversation_type": conversation_type,
+            "name": (
+                group_name
+                if conversation_type == "group"
+                else identity_payload["name"]
+                if identity_payload
+                else channel.name or _("Conversation")
+            ),
+            "state": channel.contact_center_state,
+            "ignored": bool(
+                binding and prefetched["ignored_by_binding"].get(binding.id, False)
+            ),
+            "unread_count": member.message_unread_counter or 0,
+            "first_unread_message_id": prefetched["first_unread_by_channel"].get(
+                channel.id, False
+            ),
+            "preference": self._serialize_conversation_preference(
+                prefetched["preference_by_channel"].get(channel.id)
+            ),
+            "last_activity_at": fields.Datetime.to_string(
+                channel.contact_center_last_message_at
+                or (last_message.date if last_message else channel.create_date)
+            ),
+            "account": (
+                {"id": account.id, "name": account.name, "platform": account.platform}
+                if account
+                else False
+            ),
+            "platform": account.platform if account else "",
+            "provider": connection.adapter_key if connection else "",
+            "responsible": (
+                {
+                    "id": channel.contact_center_responsible_id.id,
+                    "name": channel.contact_center_responsible_id.display_name,
+                }
+                if channel.contact_center_responsible_id
+                else False
+            ),
+            "tags": [
+                {"id": tag.id, "name": tag.name, "color": tag.color}
+                for tag in channel.contact_center_tag_ids.sorted(
+                    key=lambda item: (item.name, item.id)
+                )
+            ],
+            "last_message": (
+                self._serialize_message_preview(last_message, last_binding, last_outbox)
+                if last_message
+                else False
+            ),
+            "identity": identity_payload,
+            "group": (
+                {
+                    "display_name": group_name,
+                    "avatar_url": (
+                        "/contact_center/group/%s/avatar?v=%s"
+                        % (channel.id, (profile.avatar_sha256 or "")[:12])
+                        if profile and profile.avatar_attachment_id
+                        else False
+                    ),
+                    "participant_count": (
+                        profile.participant_count
+                        if profile
+                        and profile.last_synced_at
+                        and profile.roster_complete
+                        else False
+                    ),
+                    "admin_count": (
+                        profile.admin_count
+                        if profile
+                        and profile.last_synced_at
+                        and profile.roster_complete
+                        else False
+                    ),
+                    "own_role": profile.own_role if profile else "unknown",
+                    "metadata_state": profile.metadata_state
+                    if profile
+                    else "unavailable",
+                    "last_synced_at": (
+                        fields.Datetime.to_string(profile.last_synced_at)
+                        if profile and profile.last_synced_at
+                        else False
+                    ),
+                }
+                if conversation_type == "group"
+                else False
+            ),
+            "capabilities": {
+                "delete_conversation": bool(management.get("delete_conversation")),
+                "ignore_conversation": bool(
+                    conversation_type in ("direct", "group")
+                    and management.get("ignore_conversation")
+                ),
+            },
+        }
+
+    @api.model
+    def _serialize_conversation_list_items(self, channels, prefetched, projection=None):
         """Serialize one authorized page using only prefetched dependencies."""
 
         empty_binding = self.env["contact.center.message.binding"]
@@ -2117,6 +2292,11 @@ class ContactCenterUiApi(models.AbstractModel):
         empty_profile = self.env["contact.center.group.profile"]
         empty_partner = self.env["res.partner"]
         items = []
+        if projection == "list_v1":
+            return [
+                self._serialize_conversation_list_v1(channel, prefetched)
+                for channel in channels
+            ]
         for channel in channels:
             member = prefetched["member_by_channel"].get(channel.id)
             if not member:
@@ -2196,7 +2376,13 @@ class ContactCenterUiApi(models.AbstractModel):
         return items
 
     @api.model
-    def list_conversations(self, limit=50, offset=0, filters=None, cursor=None):
+    def _conversation_list_window(self, limit, offset, filters, cursor):
+        """Choose the authorized ordered page without DTO or unread projection.
+
+        The effective unread-only domain can still perform its native membership
+        unread lookup. Ordinary window verification never calculates per-row
+        counters or first-unread IDs.
+        """
         self._application()._check_agent()
         limit = self._bounded_int(
             limit, default=50, minimum=1, maximum=100, label=_("limit")
@@ -2237,42 +2423,152 @@ class ContactCenterUiApi(models.AbstractModel):
             activity_domain = expression.AND(
                 [activity_domain, self._conversation_list_cursor_domain(cursor)]
             )
-        activity_page = self.env["mail.channel"].search(
-            activity_domain,
-            order="contact_center_last_message_at desc, id desc",
-            limit=remaining,
-            offset=activity_offset,
-        )
+        activity_page = self.env["mail.channel"]
+        if remaining:
+            activity_page = self.env["mail.channel"].search(
+                activity_domain,
+                order="contact_center_last_message_at desc, id desc",
+                limit=remaining,
+                offset=activity_offset,
+            )
         channels = pinned_page | activity_page
         has_more = len(channels) > limit
         channels = channels[:limit]
-        prefetched = self._conversation_list_prefetch(channels)
-        prefetched["preference_by_channel"].update(pinned_preference_by_channel)
-        items = self._serialize_conversation_list_items(channels, prefetched)
         next_cursor = False
-        if has_more and items:
-            last_item = items[-1]
-            if last_item["preference"]["pinned"]:
+        if has_more and channels:
+            last_channel = channels[-1]
+            preference = pinned_preference_by_channel.get(last_channel.id)
+            if preference and preference.pinned_at:
                 next_cursor = {
                     "segment": "pinned",
-                    "pinned_at": last_item["preference"]["pinned_at"],
-                    "channel_id": last_item["channel_id"],
+                    "pinned_at": fields.Datetime.to_string(preference.pinned_at),
+                    "channel_id": last_channel.id,
                 }
             else:
+                last_message = self._latest_message(last_channel)
                 next_cursor = {
                     "segment": "activity",
-                    "last_activity_at": last_item["last_activity_at"],
-                    "channel_id": last_item["channel_id"],
+                    "last_activity_at": fields.Datetime.to_string(
+                        last_channel.contact_center_last_message_at
+                        or (
+                            last_message.date
+                            if last_message
+                            else last_channel.create_date
+                        )
+                    ),
+                    "channel_id": last_channel.id,
                 }
         return {
-            "schema_version": SCHEMA_VERSION,
-            "items": items,
+            "channels": channels,
+            "pinned_preference_by_channel": pinned_preference_by_channel,
             "has_more": has_more,
             "next_cursor": next_cursor,
             "total": (
                 self.env["mail.channel"].search_count(domain) if not cursor else False
             ),
         }
+
+    @api.model
+    def _validate_conversation_projection(self, projection):
+        if projection is not None and projection != "list_v1":
+            raise ValidationError(_("Unsupported conversation projection."))
+
+    @api.model
+    def list_conversations(
+        self, limit=50, offset=0, filters=None, cursor=None, projection=None
+    ):
+        """Keep the full v1 default; callers may opt into the compact list DTO."""
+
+        self._validate_conversation_projection(projection)
+        window = self._conversation_list_window(limit, offset, filters, cursor)
+        channels = window["channels"]
+        prefetched = (
+            self._conversation_list_prefetch(channels, projection=projection)
+            if projection is not None
+            else self._conversation_list_prefetch(channels)
+        )
+        prefetched["preference_by_channel"].update(
+            window["pinned_preference_by_channel"]
+        )
+        payload = {
+            "schema_version": SCHEMA_VERSION,
+            "items": (
+                self._serialize_conversation_list_items(
+                    channels, prefetched, projection=projection
+                )
+                if projection is not None
+                else self._serialize_conversation_list_items(channels, prefetched)
+            ),
+            "has_more": window["has_more"],
+            "next_cursor": window["next_cursor"],
+            "total": window["total"],
+        }
+        if projection is not None:
+            payload["projection"] = projection
+        return payload
+
+    @api.model
+    def _conversation_delta_ids(self, values):
+        if (
+            not isinstance(values, list)
+            or not 1 <= len(values) <= 100
+            or any(type(value) is not int or value <= 0 for value in values)
+        ):
+            raise ValidationError(
+                _("Expected between 1 and 100 positive conversation IDs.")
+            )
+        return list(dict.fromkeys(values))
+
+    @api.model
+    def reconcile_conversations(
+        self, channel_ids, window_ids, filters=None, projection="list_v1"
+    ):
+        """Recheck the first window before disclosing any affected projection.
+
+        Client IDs are comparison input, never authorization evidence. A changed
+        window returns no IDs or DTOs. A stable window serializes only its
+        intersection with affected IDs, in the same order as the native list.
+        """
+
+        self._application()._check_agent()
+        self._validate_conversation_projection(projection)
+        affected_ids = self._conversation_delta_ids(channel_ids)
+        expected_ids = self._conversation_delta_ids(window_ids)
+        window = self._conversation_list_window(len(expected_ids), 0, filters, None)
+        channels = window["channels"]
+        if channels.ids != expected_ids:
+            return {
+                "schema_version": SCHEMA_VERSION,
+                "refresh_required": True,
+                "items": [],
+            }
+        affected = channels.filtered(lambda channel: channel.id in affected_ids)
+        prefetched = (
+            self._conversation_list_prefetch(affected, projection=projection)
+            if projection is not None
+            else self._conversation_list_prefetch(affected)
+        )
+        prefetched["preference_by_channel"].update(
+            window["pinned_preference_by_channel"]
+        )
+        payload = {
+            "schema_version": SCHEMA_VERSION,
+            "refresh_required": False,
+            "window_ids": channels.ids,
+            "items": (
+                self._serialize_conversation_list_items(
+                    affected, prefetched, projection=projection
+                )
+                if projection is not None
+                else self._serialize_conversation_list_items(affected, prefetched)
+            ),
+            "has_more": window["has_more"],
+            "next_cursor": window["next_cursor"],
+            "total": window["total"],
+        }
+        if projection is not None:
+            payload["projection"] = projection
+        return payload
 
     @api.model
     def _identity_avatar_url(self, binding, identity):

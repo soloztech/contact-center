@@ -4,6 +4,7 @@ from unittest import mock
 from odoo import fields
 from odoo.tests.common import SavepointCase
 
+from ..models.identity import _IDENTITY_LINK_TOKEN
 from ..services.adapter import ProviderAdapter, adapter_registry
 from ..services.dto import ActorDTO, AddressDTO, EventDTO
 
@@ -212,9 +213,10 @@ class TestIdentityNameConvergence(SavepointCase):
             actor,
         )
 
-    def _direct_channel(self, identity, conversation_ref):
+    def _direct_channel(self, identity, conversation_ref, account=None):
+        account = account or self.account
         channel = self.env["mail.channel"]._contact_center_create_channel(
-            account=self.account,
+            account=account,
             identity=identity,
             teams=self.team,
             partner_ids=self.agent.partner_id.ids,
@@ -223,13 +225,152 @@ class TestIdentityNameConvergence(SavepointCase):
         self.env["contact.center.channel.binding"].sudo().create(
             {
                 "channel_id": channel.id,
-                "account_id": self.account.id,
+                "account_id": account.id,
                 "identity_id": identity.id,
                 "conversation_type": "direct",
                 "conversation_ref": conversation_ref,
             }
         )
         return channel
+
+    def test_exact_name_and_alias_writers_publish_singleton_scopes(self):
+        identity = self._resolve_actor(self._actor("700000000000999@lid"))
+        channel = self._direct_channel(identity, "exact-metadata-writer")
+        application = self.env["contact.center.application"]
+        with mock.patch.object(
+            type(application), "_notify_ui", autospec=True
+        ) as notify:
+            identity.with_user(self.agent).action_rename_guest("Operator Metadata Name")
+        self.assertEqual(len(notify.call_args_list), 1)
+        call = notify.call_args_list[0]
+        self.assertEqual(call.args[1], channel)
+        self.assertEqual(call.args[2], "conversation_updated")
+        self.assertEqual(call.args[3]["update_scope_version"], 1)
+        self.assertEqual(call.args[3]["update_scope"], "identity_name")
+        self.assertEqual(call.args[3]["changed_fields"], ["identity_name"])
+        with mock.patch.object(
+            type(application), "_notify_ui", autospec=True
+        ) as notify:
+            changed = application._enrich_identity_aliases(
+                self.account,
+                identity,
+                self._actor(
+                    "700000000000999@lid", "5511900000999@s.whatsapp.net"
+                ).addresses,
+            )
+        self.assertTrue(changed)
+        self.assertEqual(len(notify.call_args_list), 1)
+        payload = notify.call_args_list[0].args[3]
+        self.assertEqual(payload["update_scope_version"], 1)
+        self.assertEqual(payload["update_scope"], "identity_aliases")
+        self.assertEqual(payload["changed_fields"], ["identity_aliases"])
+        # Timestamp-only observations have no projected change and no event.
+        with mock.patch.object(
+            type(application), "_notify_ui", autospec=True
+        ) as notify:
+            application._enrich_identity_aliases(
+                self.account,
+                identity,
+                self._actor(
+                    "700000000000999@lid", "5511900000999@s.whatsapp.net"
+                ).addresses,
+            )
+        self.assertFalse(notify.called)
+
+    def test_alias_plus_name_resolution_is_one_legacy_event(self):
+        lid = "700000000000998@lid"
+        identity = self._resolve_actor(self._actor(lid))
+        channel = self._direct_channel(identity, "mixed-metadata-writer")
+        application = self.env["contact.center.application"]
+        with mock.patch.object(
+            type(application), "_notify_ui", autospec=True
+        ) as notify:
+            resolved = application._resolve_identity(
+                self.account,
+                self._actor(
+                    lid, "5511900000998@s.whatsapp.net", display_name="Final Mixed Name"
+                ),
+                observed_name_at=fields.Datetime.now(),
+            )
+        self.assertEqual(resolved, identity)
+        self.assertEqual(identity.name, "Final Mixed Name")
+        self.assertEqual(len(notify.call_args_list), 1)
+        self.assertEqual(notify.call_args_list[0].args[1], channel)
+        payload = notify.call_args_list[0].args[3]
+        self.assertEqual(
+            set(payload["changed_fields"]), {"identity_name", "identity_aliases"}
+        )
+        self.assertNotIn("update_scope", payload)
+        self.assertNotIn("update_scope_version", payload)
+
+    def test_mixed_name_write_cannot_claim_metadata_scope(self):
+        identity = self._resolve_actor(self._actor("700000000000995@lid"))
+        self._direct_channel(identity, "mixed-name-write")
+        application = self.env["contact.center.application"]
+        with mock.patch.object(
+            type(application), "_notify_ui", autospec=True
+        ) as notify:
+            identity.with_context(
+                contact_center_identity_link_token=_IDENTITY_LINK_TOKEN
+            ).write(
+                {
+                    "name": "Mixed Writer Name",
+                    "mail_guest_id": identity.mail_guest_id.id,
+                }
+            )
+        self.assertEqual(len(notify.call_args_list), 1)
+        payload = notify.call_args_list[0].args[3]
+        self.assertEqual(set(payload["changed_fields"]), {"identity", "identity_name"})
+        self.assertNotIn("update_scope", payload)
+        self.assertNotIn("update_scope_version", payload)
+
+    def test_merge_then_name_and_alias_emit_one_final_legacy_event_per_channel(self):
+        account_b = self.account.copy(
+            {
+                "name": "Merge Other Account",
+                "external_ref": "merge-account-%s" % uuid.uuid4(),
+            }
+        )
+        application = self.env["contact.center.application"]
+        lid_a = "700000000000997@lid"
+        lid_b = "700000000000996@lid"
+        pn = "5511900000997@s.whatsapp.net"
+        first = application._resolve_identity(self.account, self._actor(lid_a))
+        second = application._resolve_identity(account_b, self._actor(lid_b, pn))
+        channel_a = self._direct_channel(first, "merge-a", account=self.account)
+        channel_b = self._direct_channel(second, "merge-b", account=account_b)
+        old_ids = {first.id, second.id}
+        with mock.patch.object(
+            type(application), "_notify_ui", autospec=True
+        ) as notify:
+            resolved = application._resolve_identity(
+                self.account,
+                self._actor(lid_a, pn, display_name="Final Merged Identity"),
+                observed_name_at=fields.Datetime.now(),
+            )
+        self.assertIn(resolved.id, old_ids)
+        self.assertEqual(resolved.name, "Final Merged Identity")
+        self.assertEqual(first.state == "merged" or second.state == "merged", True)
+        self.assertEqual(len(notify.call_args_list), 2)
+        self.assertEqual(
+            {call.args[1].id for call in notify.call_args_list},
+            {channel_a.id, channel_b.id},
+        )
+        for call in notify.call_args_list:
+            self.assertEqual(call.args[2], "conversation_updated")
+            payload = call.args[3]
+            self.assertEqual(payload["identity_id"], resolved.id)
+            self.assertIn("identity", payload["changed_fields"])
+            self.assertNotIn("update_scope", payload)
+            self.assertNotIn("update_scope_version", payload)
+        for channel in channel_a | channel_b:
+            detail = (
+                self.env["contact.center.ui.api"]
+                .with_user(self.agent)
+                .get_conversation(channel.id)["item"]
+            )
+            self.assertEqual(detail["identity"]["id"], resolved.id)
+            self.assertEqual(detail["name"], "Final Merged Identity")
 
     def test_new_lid_identity_prefers_trusted_formatted_pn_fallback(self):
         lid = "700000000000474@lid"
@@ -452,6 +593,15 @@ class TestIdentityNameConvergence(SavepointCase):
                 for call in notify.call_args_list
             )
         )
+        metadata_events = [
+            call.args[3]
+            for call in notify.call_args_list
+            if call.args[2] == "conversation_updated"
+        ]
+        self.assertEqual(len(metadata_events), 1)
+        self.assertEqual(metadata_events[0]["update_scope_version"], 1)
+        self.assertEqual(metadata_events[0]["update_scope"], "identity_name")
+        self.assertEqual(metadata_events[0]["changed_fields"], ["identity_name"])
         self.assertNotEqual(first, second)
 
     def test_observed_name_order_uses_occurred_at_then_inbox_id(self):

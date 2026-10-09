@@ -8,3 +8,8 @@ CONTACT_CENTER_PRODUCTIVITY_TOKEN = object()
 CONTACT_CENTER_DELETION_TOKEN = object()
 # Marks the agent-side bulk read (L08): no read receipt to the customer.
 CONTACT_CENTER_BULK_READ_TOKEN = object()
+
+# Defer metadata notifications while one identity resolution changes aliases,
+# name or topology. These capabilities cannot be supplied in a JSON RPC context.
+CONTACT_CENTER_IDENTITY_PROJECTION_TOKEN = object()
+CONTACT_CENTER_IDENTITY_MERGE_TOKEN = object()

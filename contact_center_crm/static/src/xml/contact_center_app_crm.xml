@@ -23,7 +23,7 @@
         </xpath>
         <xpath expr="//ContactPanel" position="after">
             <CrmPanel
-                t-if="selectedConversation &amp;&amp; crmPanelSelected &amp;&amp; store.state.detailsOpen"
+                t-if="selectedConversation &amp;&amp; crmDetailReady &amp;&amp; crmPanelSelected &amp;&amp; store.state.detailsOpen"
                 t-key="crmPanelKey"
                 store="store"
                 channelId="selectedConversation.channel_id"

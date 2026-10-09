@@ -35,6 +35,8 @@ import {registry} from "@web/core/registry";
 import {session} from "@web/session";
 
 const API_MODEL = "contact.center.ui.api";
+const LIST_PROJECTION = "list_v1";
+const DELTA_LIMIT = 100;
 const LIST_LIMIT = 50;
 const REALTIME_REFRESH_LIMIT = 200;
 // Conversations one "Marcar todas como lidas" action reads at most (L08).
@@ -150,6 +152,217 @@ function timelineQuery(mode, limit, beforeMessageId, afterMessageId, anchorMessa
 
 function isPlainRecord(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+// A full action/opening answer never adds detail fields to an inbox row.
+export function conversationListRow(item) {
+    if (!isPlainRecord(item)) {
+        return item;
+    }
+    const keys = [
+        "channel_id",
+        "conversation_type",
+        "name",
+        "state",
+        "ignored",
+        "unread_count",
+        "first_unread_message_id",
+        "preference",
+        "last_activity_at",
+        "platform",
+        "provider",
+        "responsible",
+        "tags",
+        "last_message",
+    ];
+    const row = {projection: LIST_PROJECTION};
+    for (const key of keys) {
+        if (key in item) {
+            row[key] = item[key];
+        }
+    }
+    const pick = (value, fields) =>
+        value
+            ? Object.fromEntries(
+                  fields.filter((key) => key in value).map((key) => [key, value[key]])
+              )
+            : false;
+    row.identity = pick(item.identity, ["id", "name", "avatar_url"]);
+    row.account = pick(item.account, ["id", "name", "platform"]);
+    row.responsible = pick(item.responsible, ["id", "name"]);
+    row.tags = (item.tags || []).map((tag) => pick(tag, ["id", "name", "color"]));
+    row.preference = pick(item.preference, [
+        "pinned",
+        "pinned_at",
+        "muted",
+        "revision",
+    ]);
+    row.last_message = pick(item.last_message, [
+        "message_id",
+        "body_text",
+        "direction",
+        "content_type",
+        "delivery_state",
+        "dispatch_state",
+        "is_deleted",
+    ]);
+    if (row.last_message) {
+        row.last_message.author = pick(item.last_message.author, [
+            "id",
+            "type",
+            "name",
+            "is_current_user",
+        ]);
+        row.last_message.media = (item.last_message.media || [])
+            .slice(0, 1)
+            .map((media) => pick(media, ["kind", "is_voice_note"]));
+    }
+    row.group = pick(item.group, [
+        "display_name",
+        "avatar_url",
+        "participant_count",
+        "admin_count",
+        "own_role",
+        "metadata_state",
+        "last_synced_at",
+    ]);
+    row.capabilities = {
+        delete_conversation: Boolean(
+            item.capabilities && item.capabilities.delete_conversation === true
+        ),
+        ignore_conversation: Boolean(
+            item.capabilities && item.capabilities.ignore_conversation === true
+        ),
+    };
+    return row;
+}
+
+function sameNestedId(left, right) {
+    return ((left && left.id) || false) === ((right && right.id) || false);
+}
+
+function validDeltaRow(row) {
+    const required = [
+        "channel_id",
+        "conversation_type",
+        "name",
+        "state",
+        "ignored",
+        "unread_count",
+        "first_unread_message_id",
+        "preference",
+        "last_activity_at",
+        "account",
+        "platform",
+        "provider",
+        "responsible",
+        "tags",
+        "last_message",
+        "identity",
+        "group",
+        "capabilities",
+        "projection",
+    ];
+    const exactKeys = (value, fields) =>
+        isPlainRecord(value) &&
+        Object.keys(value).length === fields.length &&
+        fields.every((key) => key in value);
+    return (
+        exactKeys(row, required) &&
+        row.projection === LIST_PROJECTION &&
+        Number.isSafeInteger(row.channel_id) &&
+        row.channel_id > 0 &&
+        ["direct", "group"].includes(row.conversation_type) &&
+        typeof row.name === "string" &&
+        typeof row.platform === "string" &&
+        typeof row.provider === "string" &&
+        (row.last_activity_at === false || typeof row.last_activity_at === "string") &&
+        CONVERSATION_STATES.has(row.state) &&
+        typeof row.ignored === "boolean" &&
+        Number.isSafeInteger(row.unread_count) &&
+        row.unread_count >= 0 &&
+        (row.first_unread_message_id === false ||
+            (Number.isSafeInteger(row.first_unread_message_id) &&
+                row.first_unread_message_id > 0)) &&
+        exactKeys(row.account, ["id", "name", "platform"]) &&
+        Number.isSafeInteger(row.account.id) &&
+        row.account.id > 0 &&
+        typeof row.account.name === "string" &&
+        typeof row.account.platform === "string" &&
+        (row.identity === false ||
+            (exactKeys(row.identity, ["id", "name", "avatar_url"]) &&
+                Number.isSafeInteger(row.identity.id) &&
+                row.identity.id > 0 &&
+                typeof row.identity.name === "string" &&
+                (row.identity.avatar_url === false ||
+                    typeof row.identity.avatar_url === "string"))) &&
+        (row.group === false ||
+            (normalizeConversationGroup(row).group &&
+                exactKeys(row.group, [
+                    "display_name",
+                    "avatar_url",
+                    "participant_count",
+                    "admin_count",
+                    "own_role",
+                    "metadata_state",
+                    "last_synced_at",
+                ]))) &&
+        (row.responsible === false ||
+            (exactKeys(row.responsible, ["id", "name"]) &&
+                Number.isSafeInteger(row.responsible.id) &&
+                row.responsible.id > 0 &&
+                typeof row.responsible.name === "string")) &&
+        Array.isArray(row.tags) &&
+        row.tags.every(
+            (tag) =>
+                exactKeys(tag, ["id", "name", "color"]) &&
+                Number.isSafeInteger(tag.id) &&
+                tag.id > 0 &&
+                typeof tag.name === "string" &&
+                Number.isSafeInteger(tag.color)
+        ) &&
+        exactKeys(row.preference, ["pinned", "pinned_at", "muted", "revision"]) &&
+        typeof row.preference.pinned === "boolean" &&
+        typeof row.preference.muted === "boolean" &&
+        Number.isSafeInteger(row.preference.revision) &&
+        row.preference.revision >= 0 &&
+        (row.preference.pinned_at === false ||
+            typeof row.preference.pinned_at === "string") &&
+        (row.last_message === false ||
+            (exactKeys(row.last_message, [
+                "message_id",
+                "body_text",
+                "author",
+                "direction",
+                "content_type",
+                "delivery_state",
+                "dispatch_state",
+                "media",
+                "is_deleted",
+            ]) &&
+                Number.isSafeInteger(row.last_message.message_id) &&
+                row.last_message.message_id > 0 &&
+                typeof row.last_message.body_text === "string" &&
+                typeof row.last_message.is_deleted === "boolean" &&
+                exactKeys(row.last_message.author, [
+                    "type",
+                    "id",
+                    "name",
+                    "is_current_user",
+                ]) &&
+                typeof row.last_message.author.name === "string" &&
+                typeof row.last_message.author.is_current_user === "boolean" &&
+                Array.isArray(row.last_message.media) &&
+                row.last_message.media.length <= 1 &&
+                row.last_message.media.every(
+                    (media) =>
+                        exactKeys(media, ["kind", "is_voice_note"]) &&
+                        typeof media.kind === "string" &&
+                        typeof media.is_voice_note === "boolean"
+                ))) &&
+        exactKeys(row.capabilities, ["delete_conversation", "ignore_conversation"]) &&
+        Object.values(row.capabilities).every((value) => typeof value === "boolean")
+    );
 }
 
 function normalizeCatalogTag(value) {
@@ -1186,6 +1399,7 @@ function validBulkReadPreparation(payload) {
 export class ContactCenterStore {
     constructor({
         orm,
+        sharedReads = false,
         busService,
         notification,
         stateFactory = (value) => value,
@@ -1211,6 +1425,15 @@ export class ContactCenterStore {
     }) {
         this.initialNavigation = normalizeInboxActionParams(initialActionParams);
         this.orm = orm;
+        this.sharedReads = sharedReads;
+        this.detailEpoch = 0;
+        this.detailRequest = 0;
+        this.detailAppliedRevision = 0;
+        this.detailLifetime = 0;
+        this.answerGuards = new WeakMap();
+        this.detailContext = false;
+        this.detailRetryTimer = null;
+        this.detailReads = new AutomaticReadOwner({timer: realtimeTimer});
         this.busService = busService;
         this.notification = notification;
         this.inboxDensityStorage = inboxDensityStorage;
@@ -1268,6 +1491,14 @@ export class ContactCenterStore {
             conversationsHaveMore: false,
             nextConversationCursor: false,
             selectedChannelId: false,
+            selectedDetail: {
+                channelId: false,
+                status: "idle",
+                snapshot: false,
+                error: "",
+                epoch: 0,
+                generation: 0,
+            },
             timelinePhase: "idle",
             timelineChannelId: false,
             messages: [],
@@ -1383,6 +1614,10 @@ export class ContactCenterStore {
         this.syncFullActive = false;
         this.syncAvatarActive = false;
         this.syncAvatarChannels = new Set();
+        this.syncDeltaChannels = new Set();
+        this.syncDeltaActive = false;
+        this.syncMetadataOnly = false;
+        this.syncRequestGeneration = 0;
         this.conversationDetailReadsInFlight = 0;
         this.lastFullSynchronizationStarted = -Infinity;
         this.syncActiveWaiters = [];
@@ -1493,7 +1728,166 @@ export class ContactCenterStore {
     }
 
     get selectedConversation() {
-        return this.loadedConversation(this.state.selectedChannelId);
+        this.ensureDetailContext();
+        const row = this.loadedConversation(this.state.selectedChannelId);
+        const detail = this.state.selectedDetail;
+        const snapshot = this.selectedDetailReady && detail.snapshot;
+        if (!snapshot) {
+            return row;
+        }
+        if (!row) {
+            return snapshot;
+        }
+        const combined = {...snapshot, ...row, projection: undefined};
+        combined.identity = sameNestedId(snapshot.identity, row.identity)
+            ? snapshot.identity
+                ? {...snapshot.identity, ...row.identity}
+                : false
+            : row.identity;
+        combined.account = sameNestedId(snapshot.account, row.account)
+            ? {...snapshot.account, ...row.account}
+            : row.account;
+        combined.group =
+            snapshot.group || row.group ? {...snapshot.group, ...row.group} : false;
+        combined.capabilities = {...snapshot.capabilities, ...row.capabilities};
+        return combined;
+    }
+
+    detailContextSignature() {
+        return JSON.stringify({
+            uid:
+                (this.orm.user && this.orm.user.userId) ||
+                session.uid ||
+                this.currentUserId,
+            context:
+                (this.orm.user && this.orm.user.context) || session.user_context || {},
+            companies: session.user_companies || false,
+            sharedEpoch:
+                this.sharedReads && this.sharedReads.checkContext
+                    ? this.sharedReads.checkContext()
+                    : false,
+        });
+    }
+
+    ensureDetailContext() {
+        const signature = this.detailContextSignature();
+        if (this.detailContext === false) {
+            this.detailContext = signature;
+        } else if (signature !== this.detailContext) {
+            this.detailContext = signature;
+            this.detailEpoch += 1;
+            this.clearSelectedDetail();
+            this.state.conversations = [];
+            this.listRequest += 1;
+            this.listWindowFilterRevision = -1;
+            this.syncDeltaChannels.clear();
+            this.syncAvatarChannels.clear();
+            this.clearConversationSelection({closePanes: true});
+            if (this.sharedReads && this.sharedReads.checkContext) {
+                this.sharedReads.checkContext();
+            }
+        }
+        return this.detailEpoch;
+    }
+
+    get selectedDetailReady() {
+        this.ensureDetailContext();
+        const detail = this.state.selectedDetail;
+        if (detail.status === "idle") {
+            // Legacy direct callers/tests can provide a full authorized DTO.
+            const row = this.loadedConversation(this.state.selectedChannelId);
+            return Boolean(row && row.projection !== LIST_PROJECTION);
+        }
+        return Boolean(
+            detail.snapshot &&
+                detail.channelId === this.state.selectedChannelId &&
+                detail.epoch === this.detailEpoch &&
+                !["denied", "error"].includes(detail.status)
+        );
+    }
+
+    get permissionReady() {
+        return this.selectedDetailReady;
+    }
+
+    clearSelectedDetail() {
+        this.detailLifetime += 1;
+        this.detailRequest += 1;
+        this.detailAppliedRevision += 1;
+        if (this.detailRetryTimer !== null) {
+            this.realtimeTimer.clearTimeout(this.detailRetryTimer);
+            this.detailRetryTimer = null;
+        }
+        this.detailReads.destroy();
+        this.detailReads = new AutomaticReadOwner({timer: this.realtimeTimer});
+        this.state.selectedDetail = {
+            channelId: false,
+            status: "idle",
+            snapshot: false,
+            error: "",
+            epoch: this.detailEpoch,
+            generation: this.detailRequest,
+        };
+    }
+
+    seedSelectedDetail(item) {
+        if (
+            !item ||
+            item.projection === LIST_PROJECTION ||
+            item.channel_id !== this.state.selectedChannelId ||
+            this.destroyed
+        ) {
+            return false;
+        }
+        this.ensureDetailContext();
+        if (item.channel_id !== this.state.selectedChannelId) {
+            return false;
+        }
+        this.detailAppliedRevision += 1;
+        this.state.selectedDetail = {
+            channelId: item.channel_id,
+            status: "ready",
+            snapshot: item,
+            error: "",
+            epoch: this.detailEpoch,
+            generation: this.detailRequest,
+        };
+        return true;
+    }
+
+    invalidateChangedDetail(row) {
+        const detail = this.state.selectedDetail;
+        if (
+            row &&
+            detail.snapshot &&
+            row.channel_id === detail.channelId &&
+            (!sameNestedId(detail.snapshot.identity, row.identity) ||
+                !sameNestedId(detail.snapshot.account, row.account))
+        ) {
+            this.clearSelectedDetail();
+            this.state.selectedDetail = {
+                channelId: row.channel_id,
+                status: "loading",
+                snapshot: false,
+                error: "",
+                epoch: this.detailEpoch,
+                generation: this.detailRequest,
+            };
+            if (!this.syncFullActive && !this.syncDeltaActive) {
+                // Only detail is invalidated. The selected timeline remains.
+                Promise.resolve()
+                    .then(() => {
+                        if (
+                            !this.destroyed &&
+                            this.state.selectedChannelId === row.channel_id &&
+                            !this.selectedDetailReady
+                        ) {
+                            return this.refreshSelectedConversation({silent: true});
+                        }
+                    })
+                    .catch(() => undefined);
+            }
+        }
     }
 
     loadedConversation(channelId) {
@@ -1509,7 +1903,8 @@ export class ContactCenterStore {
 
     canViewAttribution(conversation = this.selectedConversation) {
         return Boolean(
-            conversation &&
+            this.permissionReady &&
+                conversation &&
                 conversation.capabilities &&
                 conversation.capabilities.view_attribution === true
         );
@@ -1862,6 +2257,7 @@ export class ContactCenterStore {
                 "get_conversation",
                 "get_timeline",
                 "get_conversation_avatars",
+                "reconcile_conversations",
             ].includes(method)
         ) {
             throw new TypeError(
@@ -1878,12 +2274,46 @@ export class ContactCenterStore {
             (silent || automatic || health) && this.orm.silent
                 ? this.orm.silent
                 : this.orm;
-        const request = orm.call(API_MODEL, method, args, kwargs);
-        const result = health
+        const epoch = this.ensureDetailContext();
+        const answerGuard = {
+            epoch,
+            lifetime: this.detailLifetime,
+            revision: this.detailAppliedRevision,
+        };
+        const request =
+            health && this.sharedReads
+                ? this.sharedReads.call(API_MODEL, method, args, kwargs)
+                : orm.call(API_MODEL, method, args, kwargs);
+        const owned = health
             ? this.healthReads.read(request)
             : automatic
             ? this.syncReads.read(request)
             : request;
+        const result = Promise.resolve(owned).then((payload) => {
+            if (this.ensureDetailContext() !== epoch || this.destroyed) {
+                throw new AutomaticRefreshDeferred();
+            }
+            if (
+                !method.startsWith("get_") &&
+                ![
+                    "list_conversations",
+                    "reconcile_conversations",
+                    "bootstrap",
+                ].includes(method) &&
+                isPlainRecord(payload)
+            ) {
+                for (const value of [payload.item, payload.identity, payload.policy]) {
+                    if (isPlainRecord(value)) {
+                        this.answerGuards.set(value, answerGuard);
+                    }
+                }
+            }
+            return payload;
+        });
+        // Keep the transport abort available to the detail read owner.
+        if (request.abort) {
+            result.abort = (...abortArgs) => request.abort(...abortArgs);
+        }
         if (method !== "get_conversation") {
             return result;
         }
@@ -1921,7 +2351,9 @@ export class ContactCenterStore {
     hasScheduledListSynchronization() {
         return (
             this.syncListPending ||
-            (this.syncFullRequested &&
+            ((this.syncFullRequested ||
+                this.syncDeltaChannels.size ||
+                this.syncDeltaActive) &&
                 (this.syncRefresh.pending || this.syncTimer !== null))
         );
     }
@@ -2001,7 +2433,13 @@ export class ContactCenterStore {
         }
         this.syncRefresh.destroy();
         this.syncReads.destroy();
+        this.detailReads.destroy();
+        if (this.detailRetryTimer !== null) {
+            this.realtimeTimer.clearTimeout(this.detailRetryTimer);
+            this.detailRetryTimer = null;
+        }
         this.syncAvatarChannels.clear();
+        this.syncDeltaChannels.clear();
         this.healthRefresh.destroy();
         this.healthReads.destroy();
         this.releaseSynchronizationWaiters(true);
@@ -2461,7 +2899,7 @@ export class ContactCenterStore {
             ) {
                 throw new TypeError("A conversa retornada pelo servidor é inválida.");
             }
-            return this.selectConversation(channelId);
+            return this.selectConversation(channelId, {detailItem: payload.item});
         } catch (error) {
             if (current()) {
                 this.notify(errorMessage(error), {
@@ -2662,14 +3100,14 @@ export class ContactCenterStore {
             this.forgetRememberedConversation(channelId);
             return "unavailable";
         }
-        return this.reopenRestoredConversation(channelId);
+        return this.reopenRestoredConversation(channelId, payload.item);
     }
 
-    async reopenRestoredConversation(channelId) {
+    async reopenRestoredConversation(channelId, detailItem = false) {
         // Restoring is not reading: wait for the agent to interact.
         this.state.seenPausedChannelId = channelId;
         this.restoreDeniedChannelId = false;
-        await this.selectConversation(channelId, {restored: true});
+        await this.selectConversation(channelId, {restored: true, detailItem});
         // A timeline refused right after the authorization cleared it.
         const refused = this.restoreDeniedChannelId === channelId;
         this.restoreDeniedChannelId = false;
@@ -2854,6 +3292,13 @@ export class ContactCenterStore {
             });
             return false;
         } finally {
+            // A mutation settles a causal barrier even when its answer failed.
+            // Already scheduled poll timers cannot join a GET started before it.
+            if (this.sharedReads) {
+                this.sharedReads.invalidate(API_MODEL, "get_connection_health");
+            }
+            this.connectionHealthBusRevision += 1;
+            this.connectionHealthInvalidationRevision += 1;
             this.state.connectionHealthPhase = "idle";
             this.state.connectionHealthCheckingId = false;
         }
@@ -2907,6 +3352,7 @@ export class ContactCenterStore {
     }
 
     clearConversationSelection({closePanes = false} = {}) {
+        this.clearSelectedDetail();
         const previousChannelId = this.state.selectedChannelId;
         this.restoringChannelId = false;
         this.cancelSeenRetry();
@@ -2945,6 +3391,7 @@ export class ContactCenterStore {
         // current selection.
         const items = normalizedConversationItems(payload.items)
             .map((item) => this.resolvedPreference(item))
+            .map(conversationListRow)
             .filter(
                 (item) =>
                     !this.deletedConversationIds.has(item.channel_id) &&
@@ -2969,7 +3416,9 @@ export class ContactCenterStore {
                 (payload.has_more || this.hasVolatileFilters) &&
                 this.conversationMatchesStructuralFilters(previousConversation)
             ) {
-                this.state.conversations.push(previousConversation);
+                this.state.conversations.push(
+                    conversationListRow(previousConversation)
+                );
                 this.preservedConversationChannelId = previousConversation.channel_id;
             }
         } else {
@@ -2981,6 +3430,9 @@ export class ContactCenterStore {
         this.state.conversationsHaveMore = Boolean(payload.has_more);
         this.state.nextConversationCursor = payload.next_cursor || false;
         this.state.listPhase = "ready";
+        this.invalidateChangedDetail(
+            this.loadedConversation(this.state.selectedChannelId)
+        );
     }
 
     /**
@@ -3082,6 +3534,7 @@ export class ContactCenterStore {
                 [],
                 {
                     limit: LIST_LIMIT,
+                    projection: LIST_PROJECTION,
                     filters: this.conversationFilters(),
                     cursor,
                 },
@@ -3216,6 +3669,7 @@ export class ContactCenterStore {
                     [],
                     {
                         limit: Math.min(100, targetCount - items.length),
+                        projection: LIST_PROJECTION,
                         filters: this.conversationFilters(),
                         cursor,
                     },
@@ -3267,7 +3721,9 @@ export class ContactCenterStore {
             this.listWindowFilterRevision = filterRevision;
             this.listTailStale = this.listTailStale && !dropsStaleTail;
             this.reconcileConversationSelection({reset: true, previousSelected});
-            await this.revalidatePreservedSelection(items, {automatic});
+            if (!this.syncFullActive) {
+                await this.revalidatePreservedSelection(items, {automatic});
+            }
             return true;
         } catch (error) {
             this.syncCycleFailed = this.syncCycleFailed || automatic;
@@ -3472,7 +3928,9 @@ export class ContactCenterStore {
             this.state.nextConversationCursor = false;
             this.state.listPhase = "ready";
             this.replaceConversation(startedItem, {insert: true});
-            await this.selectConversation(payload.channel_id);
+            await this.selectConversation(payload.channel_id, {
+                detailItem: startedItem,
+            });
             if (!this.destroyed && isCurrent()) {
                 await this.loadConversations({reset: true, silent: true});
             }
@@ -3505,7 +3963,11 @@ export class ContactCenterStore {
         );
     }
 
-    async selectConversation(channelId, {preservePane = false, restored = false} = {}) {
+    async selectConversation(
+        channelId,
+        {preservePane = false, restored = false, detailItem = false} = {}
+    ) {
+        this.ensureDetailContext();
         if (this.selectionRefused(channelId)) {
             return false;
         }
@@ -3541,6 +4003,7 @@ export class ContactCenterStore {
         const previousChannelId = this.state.selectedChannelId;
         this.state.selectedChannelId = channelId;
         if (changedConversation) {
+            this.clearSelectedDetail();
             // The open conversation was kept only while it was open.
             this.dropHiddenRow(previousChannelId);
             this.dropPreservedRow(previousChannelId);
@@ -3571,7 +4034,30 @@ export class ContactCenterStore {
         // Until its first page applies, any current timeline request of a
         // restored conversation, a realtime refresh included, is its check.
         this.restoringChannelId = restored ? channelId : false;
-        return this.loadTimeline({reset: true});
+        if (
+            detailItem &&
+            detailItem.channel_id === channelId &&
+            detailItem.projection !== LIST_PROJECTION
+        ) {
+            this.seedSelectedDetail(detailItem);
+        } else if (changedConversation || !this.selectedDetailReady) {
+            this.state.selectedDetail = {
+                channelId,
+                status: "loading",
+                snapshot: false,
+                error: "",
+                epoch: this.detailEpoch,
+                generation: this.detailRequest,
+            };
+        }
+        // Keep the unread anchor from the row and start both authorized reads
+        // together. Detail failure/retry never reloads this timeline.
+        const detail = this.selectedDetailReady
+            ? Promise.resolve(true)
+            : this.refreshSelectedConversation({silent: true, firstLoad: true});
+        const timeline = this.loadTimeline({reset: true});
+        const results = await Promise.all([detail, timeline]);
+        return results.every(Boolean);
     }
 
     /**
@@ -4732,9 +5218,10 @@ export class ContactCenterStore {
                         ) <= 0
                 )
             ) {
-                if (conversation) {
-                    conversation.unread_count = 0;
-                    conversation.first_unread_message_id = false;
+                const row = this.loadedConversation(channelId);
+                if (row) {
+                    row.unread_count = 0;
+                    row.first_unread_message_id = false;
                 }
                 this.state.timelineFirstUnreadMessageId = false;
             } else {
@@ -4931,14 +5418,14 @@ export class ContactCenterStore {
     }
 
     async sendMessage(body, mediaRefs = [], options = {}) {
-        if (this.destroyed) {
+        if (
+            this.destroyed ||
+            !this.permissionReady ||
+            (options.channelId && options.channelId !== this.state.selectedChannelId)
+        ) {
             return sendOutcome(options, false, true);
         }
-        const conversation = options.channelId
-            ? this.state.conversations.find(
-                  (item) => item.channel_id === options.channelId
-              )
-            : this.selectedConversation;
+        const conversation = this.selectedConversation;
         const cleanBody = typeof body === "string" ? body.trim() : "";
         const cleanMediaRefs = normalizedMediaRefs(mediaRefs);
         const structuredContent = options.structuredContent || false;
@@ -5160,6 +5647,7 @@ export class ContactCenterStore {
     }
 
     replaceConversation(item, {insert = false} = {}) {
+        this.ensureDetailContext();
         const known = isPlainRecord(item)
             ? this.knownPreference(item.channel_id)
             : null;
@@ -5173,6 +5661,25 @@ export class ContactCenterStore {
             return false;
         }
         this.synchronizeOnMuteChange(known, normalizedItem);
+        const guard = this.answerGuards.get(item);
+        if (
+            guard &&
+            normalizedItem.channel_id === this.state.selectedChannelId &&
+            (guard.epoch !== this.detailEpoch ||
+                guard.lifetime !== this.detailLifetime ||
+                guard.revision !== this.detailAppliedRevision)
+        ) {
+            this.acceptPreferenceSnapshot(item);
+            return true;
+        }
+        const selectedFull =
+            normalizedItem.projection !== LIST_PROJECTION &&
+            normalizedItem.channel_id === this.state.selectedChannelId &&
+            (!guard ||
+                (guard.epoch === this.detailEpoch &&
+                    guard.lifetime === this.detailLifetime &&
+                    guard.revision === this.detailAppliedRevision));
+        const row = conversationListRow(normalizedItem);
         if (!this.conversationMatchesStructuralFilters(normalizedItem)) {
             this.state.conversations = this.state.conversations.filter(
                 (conversation) => conversation.channel_id !== normalizedItem.channel_id
@@ -5196,12 +5703,12 @@ export class ContactCenterStore {
                 conversation.channel_id === normalizedItem.channel_id
         );
         if (index >= 0) {
-            this.state.conversations.splice(index, 1, normalizedItem);
+            this.state.conversations.splice(index, 1, row);
         } else if (
             insert ||
             normalizedItem.channel_id === this.state.selectedChannelId
         ) {
-            this.state.conversations.unshift(normalizedItem);
+            this.state.conversations.unshift(row);
         }
         // Otherwise a late answer for a conversation that left the list only
         // acknowledges: it never brings the row back by itself.
@@ -5213,8 +5720,14 @@ export class ContactCenterStore {
             )
         ) {
             this.clearConversationSelection({closePanes: true});
-        } else if (normalizedItem.channel_id === this.state.selectedChannelId) {
-            this.reconcileSelectedConversation(normalizedItem);
+        } else if (
+            normalizedItem.channel_id === this.state.selectedChannelId &&
+            selectedFull
+        ) {
+            this.seedSelectedDetail(normalizedItem);
+            this.reconcileSelectedConversation(this.selectedConversation);
+        } else if (normalizedItem.projection === LIST_PROJECTION) {
+            this.invalidateChangedDetail(row);
         }
         return true;
     }
@@ -5665,7 +6178,13 @@ export class ContactCenterStore {
 
     async setRetentionPreserve(channelId, preserve, confirmationToken = false) {
         const conversation = this.loadedConversation(channelId);
-        if (!conversation || this.destroyed || typeof preserve !== "boolean") {
+        if (
+            !conversation ||
+            this.destroyed ||
+            !this.permissionReady ||
+            channelId !== this.state.selectedChannelId ||
+            typeof preserve !== "boolean"
+        ) {
             throw new Error("A conversa não está disponível.");
         }
         const payload = await this.call(
@@ -5679,9 +6198,18 @@ export class ContactCenterStore {
         if (payload.policy.preserve !== preserve) {
             throw new TypeError("O servidor não confirmou a preservação do grupo.");
         }
-        const current = this.loadedConversation(channelId);
-        if (!this.destroyed && current) {
-            current.retention = payload.policy;
+        const current = this.state.selectedDetail.snapshot;
+        const guard = this.answerGuards.get(payload.policy);
+        if (
+            !this.destroyed &&
+            current &&
+            channelId === this.state.selectedChannelId &&
+            (!guard ||
+                (guard.epoch === this.detailEpoch &&
+                    guard.lifetime === this.detailLifetime &&
+                    guard.revision === this.detailAppliedRevision))
+        ) {
+            this.seedSelectedDetail({...current, retention: payload.policy});
             this.scheduleSynchronization(false, false, {urgent: true});
         }
         return payload;
@@ -5836,6 +6364,7 @@ export class ContactCenterStore {
 
     identityLinkingAvailable(targetKind = "person", mode = "search") {
         if (
+            !this.permissionReady ||
             !IDENTITY_LINK_TARGETS.has(targetKind) ||
             !["search", "create"].includes(mode)
         ) {
@@ -5913,7 +6442,8 @@ export class ContactCenterStore {
         const identity = conversation && conversation.identity;
         const partner = identity && identity.partner;
         return Boolean(
-            this.capabilities.link_company === true &&
+            this.permissionReady &&
+                this.capabilities.link_company === true &&
                 this.capabilities[capability] === true &&
                 partner &&
                 partner.is_company === false &&
@@ -6186,24 +6716,31 @@ export class ContactCenterStore {
     }
 
     applyIdentity(channelId, identity) {
-        const conversation = this.state.conversations.find(
-            (item) => item.channel_id === channelId
-        );
+        const conversation =
+            channelId === this.state.selectedChannelId
+                ? this.selectedConversation
+                : this.loadedConversation(channelId);
         if (!conversation || !identity) {
             return false;
         }
-        this.replaceConversation({
+        const item = {
             ...conversation,
             identity,
             name: identity.name || conversation.name,
-        });
+        };
+        const guard = this.answerGuards.get(identity);
+        if (guard) {
+            this.answerGuards.set(item, guard);
+        }
+        this.replaceConversation(item);
         return true;
     }
 
     applyIdentityForPartner(channelId, partnerId, identity) {
-        const conversation = this.state.conversations.find(
-            (item) => item.channel_id === channelId
-        );
+        const conversation =
+            channelId === this.state.selectedChannelId
+                ? this.selectedConversation
+                : this.loadedConversation(channelId);
         const currentPartner =
             conversation && conversation.identity && conversation.identity.partner;
         if (!currentPartner || currentPartner.id !== partnerId) {
@@ -6212,44 +6749,135 @@ export class ContactCenterStore {
         return this.applyIdentity(channelId, identity);
     }
 
-    async refreshSelectedConversation({silent = false, automatic = false} = {}) {
+    async refreshSelectedConversation({
+        silent = false,
+        automatic = false,
+        firstLoad = false,
+        retryAttempt = 0,
+    } = {}) {
+        const epoch = this.ensureDetailContext();
         const channelId = this.state.selectedChannelId;
-        if (!channelId) {
+        if (!channelId || this.destroyed) {
             return false;
         }
+        const request = ++this.detailRequest;
+        const lifetime = this.detailLifetime;
+        const applied = this.detailAppliedRevision;
+        const generations = this.snapshotGenerations(channelId);
+        const previous = this.state.selectedDetail;
+        const snapshot = this.selectedDetailReady
+            ? previous.snapshot || this.loadedConversation(channelId)
+            : false;
+        this.state.selectedDetail = {
+            channelId,
+            status: "loading",
+            snapshot,
+            error: "",
+            epoch,
+            generation: request,
+        };
+        const current = () =>
+            !this.destroyed &&
+            this.ensureDetailContext() === epoch &&
+            this.state.selectedChannelId === channelId &&
+            this.detailRequest === request &&
+            this.detailLifetime === lifetime &&
+            this.detailAppliedRevision === applied;
+        const fresh = () =>
+            current() && generations.changes === this.conversationGeneration(channelId);
         try {
-            const payload = await this.call(
+            const transport = this.call(
                 "get_conversation",
                 [channelId],
-                undefined,
+                {},
                 {silent, automatic}
             );
-            validateEnvelope(payload);
-            if (this.destroyed) {
+            const preferenceRead = Promise.resolve(transport).then((payload) => {
+                if (!this.destroyed && this.ensureDetailContext() === epoch) {
+                    validateEnvelope(payload);
+                    if (payload.item && payload.item.channel_id === channelId) {
+                        this.acceptPreferenceSnapshot(payload.item);
+                    }
+                }
+                return payload;
+            });
+            if (transport.abort) {
+                preferenceRead.abort = (...options) => transport.abort(...options);
+            }
+            const payload = await this.detailReads.read(preferenceRead);
+            if (!current()) {
                 return false;
             }
-            if (channelId === this.state.selectedChannelId) {
-                this.reconcileTagCatalog(payload.item && payload.item.tags);
-                this.replaceConversation(payload.item);
-                if (!this.state.selectedChannelId) {
-                    await this.loadConversations({
-                        reset: true,
-                        ...(automatic ? {silent: true, automatic: true} : {}),
-                    });
-                }
-            } else if (payload.item && payload.item.channel_id === channelId) {
-                // No longer open: only its preference still counts.
-                this.acceptPreferenceSnapshot(payload.item);
+            validateEnvelope(payload);
+            if (
+                !isRenderableConversation(payload.item) ||
+                payload.item.channel_id !== channelId ||
+                payload.item.projection === LIST_PROJECTION
+            ) {
+                throw new TypeError("O detalhe retornado pelo servidor é inválido.");
+            }
+            this.acceptPreferenceSnapshot(payload.item);
+            if (
+                !fresh() ||
+                (generations.ownReads !==
+                    (this.ownReadGenerations.get(channelId) || 0) &&
+                    payload.item.unread_count !== 0)
+            ) {
+                this.scheduleSynchronization(false, false, {metadataOnly: true});
+                return false;
+            }
+            this.reconcileTagCatalog(payload.item.tags);
+            this.replaceConversation(payload.item);
+            if (!this.state.selectedChannelId && !firstLoad) {
+                await this.loadConversations({
+                    reset: true,
+                    ...(automatic ? {silent: true, automatic: true} : {}),
+                });
             }
             return true;
         } catch (error) {
-            this.syncCycleFailed = this.syncCycleFailed || automatic;
-            if (this.destroyed) {
+            if (!current()) {
                 return false;
             }
-            if (accessWasRevoked(error)) {
+            if (accessWasRevoked(error) && fresh()) {
+                this.state.selectedDetail = {
+                    channelId,
+                    status: "denied",
+                    snapshot: false,
+                    error: "",
+                    epoch,
+                    generation: request,
+                };
                 this.revokeConversation(channelId);
                 return false;
+            }
+            this.syncCycleFailed = this.syncCycleFailed || automatic;
+            this.state.selectedDetail = {
+                channelId,
+                status: snapshot ? "ready" : "error",
+                snapshot,
+                error: errorMessage(error),
+                epoch,
+                generation: request,
+            };
+            if (
+                !snapshot &&
+                retryAttempt === 0 &&
+                !(error instanceof AutomaticRefreshDeferred)
+            ) {
+                if (this.detailRetryTimer !== null) {
+                    this.realtimeTimer.clearTimeout(this.detailRetryTimer);
+                }
+                this.detailRetryTimer = this.realtimeTimer.setTimeout(() => {
+                    this.detailRetryTimer = null;
+                    if (current() && !this.selectedDetailReady) {
+                        this.refreshSelectedConversation({
+                            silent: true,
+                            firstLoad: true,
+                            retryAttempt: 1,
+                        }).catch(() => undefined);
+                    }
+                }, 1000);
             }
             if (!silent) {
                 this.notify(errorMessage(error), {
@@ -6259,6 +6887,18 @@ export class ContactCenterStore {
             }
             return false;
         }
+    }
+
+    retrySelectedDetail() {
+        if (this.detailRetryTimer !== null) {
+            this.realtimeTimer.clearTimeout(this.detailRetryTimer);
+            this.detailRetryTimer = null;
+        }
+        return this.refreshSelectedConversation({
+            silent: true,
+            firstLoad: true,
+            retryAttempt: 1,
+        });
     }
 
     revokeConversation(channelId) {
@@ -6766,6 +7406,8 @@ export class ContactCenterStore {
         this.state.realtime = "online";
         this.startConsistencySynchronization();
         this.scheduleSynchronization(true, true);
+        this.connectionHealthBusRevision += 1;
+        this.connectionHealthInvalidationRevision += 1;
         this.scheduleConnectionHealthRefresh();
     }
 
@@ -7255,17 +7897,29 @@ export class ContactCenterStore {
         if (this.handleRetentionNotification(payload)) {
             return;
         }
-        if (!SYNCHRONIZING_EVENTS.has(payload.event_type)) {
+        if (
+            payload.event_type === "member_seen" &&
+            (!this.currentUserId || payload.user_id !== this.currentUserId)
+        ) {
             return;
         }
-        if (conversationUpdateScope(payload) === "identity_avatar") {
+        const scope = conversationUpdateScope(payload);
+        if (scope === "identity_avatar") {
             this.scheduleAvatarSynchronization(payload.channel_id);
+            return;
+        }
+        if (["identity_name", "identity_aliases", "group_metadata"].includes(scope)) {
+            this.scheduleMetadataSynchronization(payload.channel_id);
             return;
         }
         this.hideMutedElsewhere(payload);
         const refreshTimeline =
-            payload.channel_id === this.state.selectedChannelId &&
+            Boolean(this.state.selectedChannelId) &&
+            (payload.channel_id === this.state.selectedChannelId ||
+                !Number.isSafeInteger(payload.channel_id) ||
+                !SYNCHRONIZING_EVENTS.has(payload.event_type)) &&
             payload.event_type !== "conversation_preference_updated" &&
+            payload.event_type !== "member_seen" &&
             (payload.event_type !== "delivery_updated" || payload.refresh === true);
         this.scheduleSynchronization(false, refreshTimeline);
     }
@@ -7323,6 +7977,16 @@ export class ContactCenterStore {
             return;
         }
         for (const payload of notifications) {
+            if (
+                payload.event_type !== CONNECTION_HEALTH_EVENT_TYPE &&
+                (!Number.isSafeInteger(payload.channel_id) || payload.channel_id <= 0)
+            ) {
+                this.scheduleSynchronization(
+                    false,
+                    Boolean(this.state.selectedChannelId)
+                );
+                continue;
+            }
             if (payload.event_type === "conversation_deleted") {
                 this.forgetDeletedConversation(payload.channel_id);
                 this.scheduleSynchronization(false, false);
@@ -7345,14 +8009,167 @@ export class ContactCenterStore {
         }
     }
 
-    scheduleSynchronization(reconnect, refreshTimeline = false, {urgent = false} = {}) {
+    scheduleSynchronization(
+        reconnect,
+        refreshTimeline = false,
+        {urgent = false, metadataOnly = false} = {}
+    ) {
         if (this.destroyed) {
             return false;
         }
+        this.syncMetadataOnly =
+            metadataOnly &&
+            !reconnect &&
+            !refreshTimeline &&
+            (!this.syncFullRequested || this.syncMetadataOnly);
         this.syncFullRequested = true;
+        this.syncDeltaChannels.clear();
+        this.syncRequestGeneration += 1;
         this.syncReconnect = this.syncReconnect || reconnect;
         this.syncTimeline = this.syncTimeline || refreshTimeline;
         return this.syncRefresh.schedule({urgent});
+    }
+
+    metadataWindowEligible() {
+        const ids = this.state.conversations.map((row) => row.channel_id);
+        return (
+            ids.length > 0 &&
+            ids.length <= DELTA_LIMIT &&
+            new Set(ids).size === ids.length &&
+            ids.every((id) => Number.isSafeInteger(id) && id > 0) &&
+            this.state.listPhase === "ready" &&
+            !this.listLoadsInFlight &&
+            this.listWindowFilterRevision === this.filterRevision &&
+            !this.state.filters.query.trim() &&
+            !this.state.filters.unreadOnly &&
+            !this.listTailStale &&
+            !this.bulkReadUncertain &&
+            !this.state.bulkReadPending &&
+            !this.preservedConversationChannelId
+        );
+    }
+
+    scheduleMetadataSynchronization(channelId) {
+        if (this.destroyed) {
+            return false;
+        }
+        if (this.syncFullRequested || this.syncReconnect || this.syncTimeline) {
+            return this.syncRefresh.schedule();
+        }
+        if (
+            !Number.isSafeInteger(channelId) ||
+            channelId <= 0 ||
+            !this.metadataWindowEligible()
+        ) {
+            return this.scheduleSynchronization(false, false, {metadataOnly: true});
+        }
+        this.syncDeltaChannels.add(channelId);
+        this.syncRequestGeneration += 1;
+        if (this.syncDeltaChannels.size > DELTA_LIMIT) {
+            return this.scheduleSynchronization(false, false, {metadataOnly: true});
+        }
+        return this.syncRefresh.schedule();
+    }
+
+    async reconcileMetadataWindow(channelIds) {
+        if (!this.metadataWindowEligible()) {
+            return "refresh";
+        }
+        const epoch = this.ensureDetailContext();
+        const windowIds = this.state.conversations.map((row) => row.channel_id);
+        const request = this.listRequest;
+        const revision = this.filterRevision;
+        const generation = this.syncRequestGeneration;
+        const before = new Map(
+            windowIds.map((id) => [id, this.snapshotGenerations(id)])
+        );
+        const expectedIds = windowIds.filter((id) => channelIds.includes(id));
+        try {
+            const payload = await this.call(
+                "reconcile_conversations",
+                [channelIds, windowIds],
+                {
+                    filters: this.conversationFilters(),
+                    projection: LIST_PROJECTION,
+                },
+                {silent: true, automatic: true}
+            );
+            if (this.destroyed || this.ensureDetailContext() !== epoch) {
+                return false;
+            }
+            if (
+                request !== this.listRequest ||
+                revision !== this.filterRevision ||
+                generation !== this.syncRequestGeneration ||
+                this.syncFullRequested ||
+                !this.metadataWindowEligible() ||
+                windowIds.some(
+                    (id, index) =>
+                        this.state.conversations[index].channel_id !== id ||
+                        before.get(id).changes !== this.conversationGeneration(id) ||
+                        before.get(id).ownReads !==
+                            (this.ownReadGenerations.get(id) || 0)
+                )
+            ) {
+                return "refresh";
+            }
+            validateEnvelope(payload);
+            if (
+                payload.refresh_required === true &&
+                Array.isArray(payload.items) &&
+                !payload.items.length
+            ) {
+                return "refresh";
+            }
+            if (
+                payload.refresh_required !== false ||
+                !Array.isArray(payload.window_ids) ||
+                payload.window_ids.length !== windowIds.length ||
+                payload.window_ids.some((id, index) => id !== windowIds[index]) ||
+                !Array.isArray(payload.items) ||
+                payload.items.length !== expectedIds.length ||
+                new Set(payload.items.map((row) => row && row.channel_id)).size !==
+                    expectedIds.length ||
+                payload.items.some(
+                    (row) =>
+                        !validDeltaRow(row) || !expectedIds.includes(row.channel_id)
+                ) ||
+                typeof payload.has_more !== "boolean" ||
+                !Number.isSafeInteger(payload.total) ||
+                payload.total < windowIds.length ||
+                (payload.next_cursor !== false &&
+                    (!isPlainRecord(payload.next_cursor) ||
+                        payload.next_cursor.channel_id !==
+                            windowIds[windowIds.length - 1] ||
+                        Object.keys(payload.next_cursor).length !== 3 ||
+                        (payload.next_cursor.segment === "pinned"
+                            ? typeof payload.next_cursor.pinned_at !== "string" ||
+                              !payload.next_cursor.pinned_at
+                            : typeof payload.next_cursor.last_activity_at !==
+                                  "string" || !payload.next_cursor.last_activity_at) ||
+                        !normalizedConversationCursor(
+                            this.state.conversations[windowIds.length - 1],
+                            payload.next_cursor
+                        ))) ||
+                (payload.has_more && !payload.next_cursor)
+            ) {
+                return "refresh";
+            }
+            this.rememberPagePreferences(payload.items);
+            for (const item of payload.items) {
+                this.replaceConversation(item);
+            }
+            this.state.conversationTotal = payload.total;
+            this.state.conversationsHaveMore = payload.has_more;
+            this.state.nextConversationCursor = payload.next_cursor;
+            if (channelIds.includes(this.state.selectedChannelId)) {
+                await this.refreshSelectedConversation({silent: true, automatic: true});
+            }
+            return !this.syncCycleFailed && !this.syncFullRequested;
+        } catch (_error) {
+            // One ordinary full fallback in this cycle; no delta retry loop.
+            return this.destroyed ? false : "refresh";
+        }
     }
 
     scheduleAvatarSynchronization(channelId) {
@@ -7470,19 +8287,52 @@ export class ContactCenterStore {
     }
 
     async runSynchronization() {
-        const avatarOnly =
-            this.syncAvatarChannels.size &&
-            !this.syncFullRequested &&
-            !this.syncReconnect &&
-            !this.syncTimeline;
-        const ids = [...this.syncAvatarChannels];
+        const avatarIds = [...this.syncAvatarChannels];
+        const deltaIds = [...this.syncDeltaChannels];
         this.syncAvatarChannels.clear();
+        this.syncDeltaChannels.clear();
         this.syncCycleStopped = false;
         this.syncCycleFailed = false;
-        if (avatarOnly) {
+        if (
+            deltaIds.length &&
+            !this.syncFullRequested &&
+            !this.syncReconnect &&
+            !this.syncTimeline
+        ) {
+            this.syncDeltaActive = true;
+            let delta = false;
+            try {
+                delta = await this.reconcileMetadataWindow(deltaIds);
+            } finally {
+                this.syncDeltaActive = false;
+            }
+            if (delta === true && !this.syncFullRequested) {
+                if (!avatarIds.length) {
+                    return true;
+                }
+                this.syncAvatarActive = true;
+                try {
+                    return await this.refreshConversationAvatars(avatarIds);
+                } finally {
+                    this.syncAvatarActive = false;
+                }
+            }
+            if (delta !== "refresh") {
+                return false;
+            }
+            if (!this.syncFullRequested) {
+                this.syncMetadataOnly = true;
+            }
+            this.syncFullRequested = true;
+        } else if (
+            avatarIds.length &&
+            !this.syncFullRequested &&
+            !this.syncReconnect &&
+            !this.syncTimeline
+        ) {
             this.syncAvatarActive = true;
             try {
-                return await this.refreshConversationAvatars(ids);
+                return await this.refreshConversationAvatars(avatarIds);
             } finally {
                 this.syncAvatarActive = false;
             }
@@ -7502,6 +8352,8 @@ export class ContactCenterStore {
     async runFullSynchronization() {
         const reconnect = this.syncReconnect;
         const timeline = this.syncTimeline;
+        const metadataOnly = this.syncMetadataOnly && !timeline && !reconnect;
+        this.syncMetadataOnly = false;
         this.syncReconnect = false;
         this.syncTimeline = false;
         this.syncCycleStopped = false;
@@ -7528,6 +8380,7 @@ export class ContactCenterStore {
             if (
                 !deferred() &&
                 this.state.selectedChannelId &&
+                !metadataOnly &&
                 (timeline || reconnect)
             ) {
                 await this.refreshLatestTimeline({automatic: true});
@@ -7542,6 +8395,6 @@ export class ContactCenterStore {
         }
         // Skipped history and superseded snapshots are neutral; caught read or
         // validation failures keep the backoff, including nested revalidation.
-        return !this.syncCycleFailed;
+        return !this.syncCycleFailed && !this.syncFullRequested;
     }
 }

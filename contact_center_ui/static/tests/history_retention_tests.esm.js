@@ -257,18 +257,36 @@ QUnit.module("contact_center_ui > history retention", (hooks) => {
     );
 
     QUnit.test(
-        "store validates confirmation and never updates another group's projection",
+        "preservation updates only the current authorized detail and survives compact refresh",
         async (assert) => {
             const store = new ContactCenterStore({
                 orm: {},
                 busService: new EventTarget(),
                 notification: false,
             });
-            store.state.conversations = [
-                {channel_id: 10, state: "open", retention: policy()},
-                {channel_id: 20, state: "open", retention: policy()},
-            ];
-            store.state.selectedChannelId = 20;
+            const row = (channelId) => ({
+                projection: "list_v1",
+                channel_id: channelId,
+                conversation_type: "group",
+                name: `Grupo ${channelId}`,
+                state: "open",
+                account: {id: 1, name: "Comercial", platform: "whatsapp"},
+                identity: false,
+                group: {display_name: `Grupo ${channelId}`},
+                preference: {},
+                capabilities: {delete_conversation: true, ignore_conversation: true},
+            });
+            const otherGroup = row(20);
+            const otherGroupBefore = JSON.parse(JSON.stringify(otherGroup));
+            store.state.conversations = [row(10), otherGroup];
+            store.state.selectedChannelId = 10;
+            const detail = {...row(10), retention: policy(), can_send: true};
+            delete detail.projection;
+            store.replaceConversation(detail, {insert: true});
+            assert.ok(
+                store.selectedDetailReady,
+                "the selected group has a full authorized snapshot"
+            );
             store.scheduleSynchronization = () => undefined;
             const calls = [];
             store.call = async (...args) => {
@@ -278,15 +296,43 @@ QUnit.module("contact_center_ui > history retention", (hooks) => {
                 );
             };
             assert.ok((await store.setRetentionPreserve(10, true)).policy.preserve);
-            assert.ok(store.loadedConversation(10).retention.preserve);
-            assert.notOk(store.loadedConversation(20).retention.preserve);
-            assert.strictEqual(store.state.selectedChannelId, 20);
+            assert.ok(store.state.selectedDetail.snapshot.retention.preserve);
+            assert.ok(store.selectedConversation.retention.preserve);
+            assert.notOk(
+                "retention" in store.loadedConversation(10),
+                "detail fields do not leak into the selected row"
+            );
+            assert.deepEqual(
+                store.loadedConversation(20),
+                otherGroupBefore,
+                "the other compact group is untouched"
+            );
+            assert.strictEqual(store.state.selectedChannelId, 10);
             assert.deepEqual(calls, [
                 ["set_retention_preserve", [10, true], {confirmation_token: false}],
             ]);
+            store.replaceConversation({...row(10), name: "Nome recente da listagem"});
+            assert.ok(store.selectedDetailReady);
+            assert.ok(
+                store.selectedConversation.retention.preserve,
+                "a list row refresh preserves the current policy"
+            );
+            assert.strictEqual(store.selectedConversation.retention.revision, 2);
+            assert.notOk("retention" in store.loadedConversation(10));
+            await assert.rejects(store.setRetentionPreserve(20, true));
+            assert.strictEqual(
+                calls.length,
+                1,
+                "another group's mutation is rejected before RPC"
+            );
             store.call = async () => ({...response(), channel_id: 20});
             await assert.rejects(store.setRetentionPreserve(10, false));
-            assert.ok(store.loadedConversation(10).retention.preserve);
+            assert.ok(
+                store.selectedConversation.retention.preserve,
+                "a mismatched response cannot replace the authorized policy"
+            );
+            assert.strictEqual(store.selectedConversation.retention.revision, 2);
+            assert.deepEqual(store.loadedConversation(20), otherGroupBefore);
             store.destroy();
         }
     );

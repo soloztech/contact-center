@@ -146,7 +146,7 @@
                                     <span t-esc="resolutionAction.label" />
                                 </button>
                                 <button
-                                    t-if="!selectedConversation.responsible"
+                                    t-if="selectedDetailReady &amp;&amp; !selectedConversation.responsible"
                                     type="button"
                                     class="cc-claim-button"
                                     t-on-click="() => store.claimConversation()"
@@ -177,14 +177,34 @@
                                     <i class="fa fa-cog" aria-hidden="true" />
                                 </button>
                                 <ConversationTags
-                                    t-if="store.capabilities.manage_tags"
+                                    t-if="selectedDetailReady &amp;&amp; store.capabilities.manage_tags"
                                     t-key="selectedConversation.channel_id"
                                     store="store"
                                     conversation="selectedConversation"
                                 />
                             </div>
                         </header>
-                        <ConversationTimeline store="store" state="store.state" />
+                        <section
+                            t-if="!selectedDetailReady"
+                            class="cc-selected-detail-status p-3"
+                            t-att-role="selectedDetailError ? 'alert' : 'status'"
+                            t-att-aria-busy="selectedDetailError ? 'false' : 'true'"
+                        >
+                            <t t-if="selectedDetailError">
+                                <p t-esc="selectedDetailError" />
+                                <button
+                                    type="button"
+                                    class="btn btn-link"
+                                    t-on-click="() => store.retrySelectedDetail()"
+                                >Tentar novamente</button>
+                            </t>
+                            <p t-else="">Carregando detalhes da conversa…</p>
+                        </section>
+                        <ConversationTimeline
+                            t-if="selectedDetailReady"
+                            store="store"
+                            state="store.state"
+                        />
                         <MessageComposer
                             t-if="canShowComposer"
                             store="store"
@@ -192,7 +212,7 @@
                             conversation="selectedConversation"
                         />
                         <footer
-                            t-else=""
+                            t-elif="selectedDetailReady"
                             class="cc-read-only-composer"
                             role="status"
                             aria-live="polite"
@@ -221,7 +241,7 @@
                 </main>
 
                 <ContactPanel
-                    t-if="selectedConversation &amp;&amp; contactPanelSelected"
+                    t-if="selectedConversation &amp;&amp; selectedDetailReady &amp;&amp; contactPanelSelected"
                     store="store"
                     state="store.state"
                     conversation="selectedConversation"

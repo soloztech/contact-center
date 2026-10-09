@@ -973,9 +973,15 @@ export function normalizeConversationGroup(conversation) {
         return conversation;
     }
     const item = copySafeOwnProperties(conversation);
-    item.group = isGroupConversation(conversation)
+    const metadata = isGroupConversation(conversation)
         ? normalizeGroupMetadata(conversation)
         : false;
+    // The seven list fields are normalized for rendering. An authorized full
+    // snapshot also owns detail fields that a later compact row must not erase.
+    item.group =
+        metadata && conversation.projection !== "list_v1"
+            ? Object.assign(copySafeOwnProperties(conversation.group), metadata)
+            : metadata;
     return item;
 }
 
@@ -1842,7 +1848,12 @@ export function conversationUpdateScope(payload) {
         !Number.isSafeInteger(payload.channel_id) ||
         payload.channel_id <= 0 ||
         payload.update_scope_version !== 1 ||
-        !["identity_avatar", "group_metadata"].includes(payload.update_scope) ||
+        ![
+            "identity_avatar",
+            "group_metadata",
+            "identity_name",
+            "identity_aliases",
+        ].includes(payload.update_scope) ||
         !Array.isArray(payload.changed_fields) ||
         payload.changed_fields.length !== 1 ||
         payload.changed_fields[0] !== payload.update_scope
@@ -1850,6 +1861,20 @@ export function conversationUpdateScope(payload) {
         return false;
     }
     return payload.update_scope;
+}
+
+/**
+ * Extension fixtures and third-party full callers predate the detail state.
+ *
+ * @param {Object} store current store or a legacy fixture
+ * @param {Object|Boolean} conversation selected projection
+ * @returns {Boolean} whether a current detail snapshot authorizes sensitive UI
+ */
+export function hasAuthorizedConversationDetail(store, conversation) {
+    if (store && store.permissionReady !== undefined) {
+        return store.permissionReady === true;
+    }
+    return Boolean(conversation && conversation.projection !== "list_v1");
 }
 
 export function contactCenterNotifications(detail) {
@@ -1887,6 +1912,15 @@ export function contactCenterNotifications(detail) {
             !Number.isSafeInteger(payload.channel_id) ||
             payload.channel_id <= 0
         ) {
+            // Without a channel, an event can only invalidate the scoped list.
+            // Never retain its item, metadata, attention or read/delivery fields.
+            if (!["member_seen", "delivery_updated"].includes(payload.event_type)) {
+                events.push({
+                    schema_version: payload.schema_version,
+                    event_type: payload.event_type,
+                    channel_id: false,
+                });
+            }
             continue;
         }
         events.push(payload);

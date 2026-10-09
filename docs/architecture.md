@@ -58,6 +58,73 @@ não descrevem os campos atuais de concessão de acesso. A migração é documen
 Atendimento é contexto de negócio e não constitui uma segunda concessão de acesso à
 conversa.
 
+## Listagem, detalhe e invalidações
+
+A listagem da UI usa a projeção opt-in `list_v1`; integrações que omitem a projeção
+continuam recebendo o DTO completo. O serializer compacto e seu prefetch dedicados
+mantêm nome resolvido, foto, preview, preferência, contadores, tags, responsável e os
+sete campos leves de grupo. Os únicos capabilities da linha são os dois booleanos dos
+menus de excluir/ignorar. Os endpoints reautorizam cada operação.
+
+O store mantém o detalhe autorizado apenas para a seleção/operação de abertura atual.
+Clique em linha inicia `get_conversation` e timeline em paralelo; abertura dirigida,
+chat, restauração e início de conversa reutilizam o fullitem autorizado da mesma
+operação. Fechar/trocar a seleção encerra a validade do detalhe; reabrir uma linha exige
+nova autorização. A linha jamais recebe partner, aliases, retenção ou políticas de
+envio.
+
+`selectedConversation` combina os escalares leves recentes da linha com o snapshot de
+detalhe. Identity/account conservam seus campos adicionais quando os IDs coincidem;
+mudança de ID invalida o detalhe. Group conserva campos adicionais; capabilities de
+ações vêm do detalhe e os dois capabilities de menu vêm da linha. Retenção e os demais
+campos omitidos na lista têm autoridade exclusiva no detalhe. Apenas atualizações do
+detalhe reconciliam atribuição/linkers. Refresh da linha não reinicia forms, drafts ou o
+painel CRM.
+
+No primeiro loading/error, composição e painéis sensíveis aguardam detalhe. Um erro
+transiente conserva seleção e timeline, tem erro visível e retry somente de detalhe, com
+uma tentativa automática adicional limitada. Durante revalidação, o último snapshot
+autorizado e suas permissões continuam utilizáveis, conforme a regra anterior da UI; o
+servidor reautoriza as ações. Negação atual remove detalhe, permissões e painel.
+Respostas de outra seleção, epoch ou geração não revogam uma seleção posterior. Mudanças
+auth/company limpam os detalhes antes da aplicação de respostas.
+
+A matriz em [event-taxonomy.md](event-taxonomy.md) distingue avatar, três escopos de
+metadata e os caminhos completos. Nome/aliases/grupo nunca são patches locais de bus:
+`reconcile_conversations` recompõe a janela autorizada e só serializa os afetados na
+interseção da janela. Mudanças de ordem/acesso/filtro retornam fallback sem IDs
+invisíveis. Search, unread-only, janela vazia ou maior que 100, paginação em voo,
+tail/bulk incertos, revisão de filtros divergente ou seleção preservada fora do domínio
+usam refresh completo. Metadata estrita da seleção também renova seu detalhe; metadata
+isolada não recarrega timeline. Mensagens, identity/reaction/media e eventos
+desconhecidos mantêm o caminho completo. O reparo de conversas de 30s e o reparo de
+resumo de 5min continuam independentes do bus.
+
+## Reads de saúde compartilhados na aba
+
+O serviço opcional `contact_center_ui.shared_reads` compartilha somente transportes
+`contact.center.ui.api/get_connection_health` idênticos ainda em andamento entre os
+stores reais de inbox e janelas de chat. A chave inclui modelo/método/args/kwargs,
+usuário, empresa principal, empresas ativas na ordem original, idioma/fuso e contexto
+RPC completo. Valores não JSON plain não entram no compartilhamento. Cada consumidor
+recebe promise abortable e clone próprios. Abortar um consumidor não afeta os demais; o
+último abort cancela o transporte. Cada `AutomaticReadOwner` mantém deadline de 30s. O
+pool remove entradas ao settle, sem cache de resultado ou TTL.
+
+Gerações causais de saúde são invalidadas pelo listener central antes dos stores
+agendarem reads após `connection_health_updated` e reconnect. Settle de
+`check_connection_health`, sucesso ou erro, invalida a geração antes do próximo GET; GET
+e `refreshConnectionHealth` não invalidam por si. Reads anteriores podem terminar sob
+seus guards nativos, mas novos consumidores não podem se juntar ao transporte anterior.
+Epochs de auth/company são conferidos ao admitir e entregar resposta e cancelam
+consumidores antigos. Componentes sem esse serviço usam o ORM diretamente.
+
+Há um único SystraySummary real por aba e ele conserva seu próprio coalescing. O ganho
+verificável desta entrega é a RPC inflight intratab entre stores, sem alegar uma segunda
+instância de systray. SharedWorker/BroadcastChannel cross-tab foram avaliados e adiados:
+exigem outro protocolo de ACL/lifecycle e não há evidência de ganho que justifique esse
+protocolo nesta entrega. Não há identidade por IP, cache persistente ou cross-tab.
+
 ## Entrada, saída e filas
 
 ```mermaid

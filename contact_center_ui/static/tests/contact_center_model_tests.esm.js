@@ -22,12 +22,14 @@ import {
     conversationResponsibility,
     conversationStateMeta,
     conversationUiPolicy,
+    conversationUpdateScope,
     deliveryMeta,
     filterConversationsByResponsibility,
     formatFileSize,
     groupMetadataStateMeta,
     groupMetadataUi,
     groupRoleMeta,
+    hasAuthorizedConversationDetail,
     initials,
     isGroupConversation,
     isRenderableConversation,
@@ -969,6 +971,66 @@ QUnit.module("contact_center_ui > conversation lifecycle", (hooks) => {
 });
 
 QUnit.module("contact_center_ui > model", (hooks) => {
+    QUnit.test(
+        "metadata scope requires an exact versioned singleton and channel",
+        (assert) => {
+            const payload = {
+                schema_version: 1,
+                event_type: "conversation_updated",
+                channel_id: 10,
+                update_scope_version: 1,
+            };
+            for (const scope of [
+                "identity_avatar",
+                "group_metadata",
+                "identity_name",
+                "identity_aliases",
+            ]) {
+                const strict = {
+                    ...payload,
+                    update_scope: scope,
+                    changed_fields: [scope],
+                };
+                assert.strictEqual(conversationUpdateScope(strict), scope);
+                for (const invalid of [
+                    {channel_id: true},
+                    {channel_id: 0},
+                    {channel_id: "10"},
+                    {schema_version: 2},
+                    {event_type: "identity_updated"},
+                    {update_scope_version: undefined},
+                    {update_scope_version: 2},
+                    {changed_fields: []},
+                    {changed_fields: [scope, "access"]},
+                    {changed_fields: ["unknown"]},
+                    {update_scope: "membership"},
+                ]) {
+                    assert.notOk(conversationUpdateScope({...strict, ...invalid}));
+                }
+            }
+        }
+    );
+
+    QUnit.test(
+        "detail authorization is explicit with safe legacy full fallback",
+        (assert) => {
+            assert.notOk(
+                hasAuthorizedConversationDetail(
+                    {permissionReady: false},
+                    {can_send: true}
+                )
+            );
+            assert.ok(
+                hasAuthorizedConversationDetail(
+                    {permissionReady: true},
+                    {projection: "list_v1"}
+                )
+            );
+            assert.notOk(hasAuthorizedConversationDetail({}, {projection: "list_v1"}));
+            assert.ok(hasAuthorizedConversationDetail({}, {can_send: true}));
+            assert.notOk(hasAuthorizedConversationDetail({}, false));
+        }
+    );
     QUnit.test(
         "activity menu targets the inbox without changing native model groups",
         (assert) => {
@@ -3601,6 +3663,38 @@ QUnit.module("contact_center_ui > model", (hooks) => {
         );
     });
 
+    QUnit.test(
+        "full group detail survives normalization while compact stays seven fields",
+        (assert) => {
+            const group = canonicalGroup({
+                syncdiagnostics: {last_error: false, retry_count: 1},
+                roster: [{id: 12, name: "Authorized participant"}],
+                constructor: {unsafe: true},
+            });
+            const full = normalizeConversationGroup({
+                channel_id: 10,
+                conversation_type: "group",
+                group,
+            });
+            assert.deepEqual(full.group.syncdiagnostics, group.syncdiagnostics);
+            assert.deepEqual(full.group.roster, group.roster);
+            assert.notOk(
+                Object.prototype.hasOwnProperty.call(full.group, "constructor")
+            );
+            assert.notStrictEqual(full.group, group);
+            const compact = normalizeConversationGroup({
+                channel_id: 10,
+                conversation_type: "group",
+                projection: "list_v1",
+                group,
+            });
+            assert.deepEqual(compact.group, canonicalGroup());
+            assert.strictEqual(Object.keys(compact.group).length, 7);
+            assert.notOk("syncdiagnostics" in compact.group);
+            assert.notOk("roster" in compact.group);
+        }
+    );
+
     QUnit.test("renders only safe local conversation avatars", (assert) => {
         const direct = {
             conversation_type: "direct",
@@ -5622,6 +5716,47 @@ QUnit.module("contact_center_ui > model", (hooks) => {
         ]);
         assert.deepEqual(contactCenterNotifications({detail: []}), []);
     });
+
+    QUnit.test(
+        "missing event channel is a data-free full invalidation, never a read or delivery patch",
+        (assert) => {
+            for (const channelId of [undefined, false, 0, -1, "10", true]) {
+                const events = contactCenterNotifications(
+                    [
+                        "conversation_updated",
+                        "future_event",
+                        "message_created",
+                        "member_seen",
+                        "delivery_updated",
+                    ].map((eventType) => ({
+                        type: CONTACT_CENTER_NOTIFICATION_TYPE,
+                        payload: {
+                            schema_version: 1,
+                            event_type: eventType,
+                            channel_id: channelId,
+                            update_scope_version: 1,
+                            update_scope: "identity_name",
+                            changed_fields: ["identity_name"],
+                            user_id: 7,
+                            item: {channel_id: 99, can_send: true},
+                            personal_attention: true,
+                        },
+                    }))
+                );
+                assert.deepEqual(
+                    events,
+                    ["conversation_updated", "future_event", "message_created"].map(
+                        (eventType) => ({
+                            schema_version: 1,
+                            event_type: eventType,
+                            channel_id: false,
+                        })
+                    )
+                );
+                assert.notOk(conversationUpdateScope(events[0]));
+            }
+        }
+    );
 
     QUnit.test(
         "positive delivery reconciliation clears a stale dispatch warning",

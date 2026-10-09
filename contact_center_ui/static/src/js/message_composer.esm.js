@@ -9,6 +9,7 @@ import {
 import {
     conversationUiPolicy,
     formatFileSize,
+    hasAuthorizedConversationDetail,
     makeClientRequestId,
     mediaCapabilities,
     mediaCaptionAllowed,
@@ -516,11 +517,17 @@ export class MessageComposer extends Component {
     }
 
     get capabilities() {
-        return (this.conversation && this.conversation.capabilities) || {};
+        return this.detailReady
+            ? (this.conversation && this.conversation.capabilities) || {}
+            : {};
+    }
+
+    get detailReady() {
+        return hasAuthorizedConversationDetail(this.store, this.conversation);
     }
 
     get applicationCapabilities() {
-        return this.store.capabilities || {};
+        return this.detailReady ? this.store.capabilities || {} : {};
     }
 
     get noteMode() {
@@ -624,7 +631,7 @@ export class MessageComposer extends Component {
     }
 
     get conversationPolicy() {
-        return conversationUiPolicy(this.conversation);
+        return conversationUiPolicy(this.detailReady ? this.conversation : false);
     }
 
     get canAttach() {

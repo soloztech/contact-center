@@ -3,6 +3,7 @@
 import {AutomaticReadOwner, CoalescedRefresh} from "./contact_center_refresh.esm";
 import {browser} from "@web/core/browser/browser";
 import {
+    CONNECTION_HEALTH_EVENT_TYPE,
     contactCenterNotifications,
     conversationUpdateScope,
 } from "./contact_center_model.esm";
@@ -15,14 +16,15 @@ export const SYSTRAY_SAFETY_REFRESH = 5 * 60 * 1000;
 // counted set without a new message; an internal note or a completed
 // follow-up (message_updated, productivity_updated) advances the author's
 // read pointer without a member_seen event.
-const REFRESHING_EVENTS = new Set([
-    "message_created",
-    "message_updated",
-    "message_deleted",
-    "productivity_updated",
-    "conversation_updated",
-    "conversation_deleted",
-    "conversation_preference_updated",
+// Unknown event names keep the conservative recount path. Only known events
+// that cannot affect the current user's unread summary are excluded.
+const NON_REFRESHING_EVENTS = new Set([
+    CONNECTION_HEALTH_EVENT_TYPE,
+    "delivery_updated",
+    "identity_updated",
+    "reaction_updated",
+    "media_updated",
+    "attribution_updated",
 ]);
 
 /**
@@ -95,7 +97,8 @@ export class SystraySummary {
     handleNotifications(detail) {
         const relevant = contactCenterNotifications(detail).some(
             (payload) =>
-                (REFRESHING_EVENTS.has(payload.event_type) &&
+                (payload.event_type !== "member_seen" &&
+                    !NON_REFRESHING_EVENTS.has(payload.event_type) &&
                     !conversationUpdateScope(payload)) ||
                 (payload.event_type === "member_seen" &&
                     payload.user_id === this.userId)

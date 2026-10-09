@@ -1,7 +1,7 @@
 {
     "name": "Contact Center UI",
     "summary": "Standalone operational interface for Contact Center agents",
-    "version": "16.0.1.11.2",
+    "version": "16.0.1.11.3",
     "category": "Productivity/Discuss",
     "author": "Soloz Technologies",
     "website": "https://github.com/soloztech/contact-center",
@@ -15,6 +15,7 @@
         "web.assets_backend": [
             "contact_center_ui/static/src/js/contact_center_model.esm.js",
             "contact_center_ui/static/src/js/contact_center_refresh.esm.js",
+            "contact_center_ui/static/src/js/contact_center_shared_reads.esm.js",
             "contact_center_ui/static/src/js/structured_content.esm.js",
             "contact_center_ui/static/src/js/browser_attention.esm.js",
             "contact_center_ui/static/src/js/contact_center_store.esm.js",
@@ -66,6 +67,11 @@
             "contact_center_ui/static/tests/inbox_state_tests.esm.js",
             "contact_center_ui/static/tests/systray_tests.esm.js",
             "contact_center_ui/static/tests/refresh_tests.esm.js",
+            "contact_center_ui/static/tests/shared_reads_tests.esm.js",
+            "contact_center_ui/static/tests/e2_test_helpers.esm.js",
+            "contact_center_ui/static/tests/conversation_delta_tests.esm.js",
+            "contact_center_ui/static/tests/selected_detail_tests.esm.js",
+            "contact_center_ui/static/tests/detail_component_tests.esm.js",
             "contact_center_ui/static/tests/messaging_menu_tests.esm.js",
             "contact_center_ui/static/tests/attendance_report_tests.esm.js",
         ],

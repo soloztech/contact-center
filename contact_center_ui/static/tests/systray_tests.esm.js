@@ -167,6 +167,43 @@ QUnit.module("contact_center_ui > systray", () => {
         summary.destroy();
     });
 
+    QUnit.test(
+        "unknown and channel-free conversation invalidations recount conservatively",
+        async (assert) => {
+            const {summary, timer, calls} = summaryFixture();
+            for (const values of [
+                {event_type: "future_event"},
+                {channel_id: false},
+                {
+                    channel_id: "10",
+                    update_scope_version: 1,
+                    update_scope: "identity_name",
+                    changed_fields: ["identity_name"],
+                },
+            ]) {
+                assert.ok(
+                    summary.handleNotifications([
+                        notification("conversation_updated", values),
+                    ])
+                );
+                timer.flush();
+                await settle();
+            }
+            assert.strictEqual(calls.length, 3);
+            assert.notOk(
+                summary.handleNotifications([
+                    notification("member_seen", {channel_id: false, user_id: USER_ID}),
+                ])
+            );
+            assert.notOk(
+                summary.handleNotifications([
+                    notification("delivery_updated", {channel_id: false}),
+                ])
+            );
+            summary.destroy();
+        }
+    );
+
     QUnit.test("a failed request keeps the last counts", async (assert) => {
         const {summary, timer, changes} = summaryFixture([
             {enabled: true, mine_unread: 2, all_unread: 4},
@@ -289,10 +326,16 @@ QUnit.module("contact_center_ui > systray", () => {
         }
     );
     QUnit.test(
-        "known metadata skips recount while name, legacy and mixed messages still refresh",
+        "all four strict metadata scopes skip recount; legacy, unknown and mixed scopes refresh",
         async (assert) => {
             const {summary, timer, calls} = summaryFixture();
-            for (const scope of ["identity_avatar", "group_metadata"]) {
+            const metadataScopes = [
+                "identity_avatar",
+                "group_metadata",
+                "identity_name",
+                "identity_aliases",
+            ];
+            for (const scope of metadataScopes) {
                 assert.notOk(
                     summary.handleNotifications([
                         notification("conversation_updated", {
@@ -318,6 +361,16 @@ QUnit.module("contact_center_ui > systray", () => {
                     update_scope: "identity_avatar",
                     changed_fields: ["identity_avatar", "identity_aliases"],
                 },
+                {
+                    update_scope_version: 1,
+                    update_scope: "identity_name",
+                    changed_fields: ["identity_aliases"],
+                },
+                {
+                    update_scope_version: 1,
+                    update_scope: "membership",
+                    changed_fields: ["membership"],
+                },
             ]) {
                 assert.ok(
                     summary.handleNotifications([
@@ -327,8 +380,8 @@ QUnit.module("contact_center_ui > systray", () => {
                 timer.flush();
                 await settle();
             }
-            assert.strictEqual(calls.length, 4);
-            for (const scope of ["identity_avatar", "group_metadata"]) {
+            assert.strictEqual(calls.length, 6);
+            for (const scope of metadataScopes) {
                 const before = calls.length;
                 assert.ok(
                     summary.handleNotifications([

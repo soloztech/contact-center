@@ -1,7 +1,7 @@
 {
     "name": "Contact Center CRM",
     "summary": "Customer opportunities, quotations, orders and invoices in the inbox",
-    "version": "16.0.1.5.0",
+    "version": "16.0.1.5.1",
     "category": "Sales/CRM",
     "author": "Soloz Technologies",
     "website": "https://github.com/soloztech/contact-center",
@@ -26,6 +26,7 @@
         "web.qunit_suite_tests": [
             "contact_center_crm/static/tests/crm_panel_tests.esm.js",
             "contact_center_crm/static/tests/journey_tests.esm.js",
+            "contact_center_crm/static/tests/readiness_tests.esm.js",
         ],
     },
     "installable": True,

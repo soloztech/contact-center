@@ -82,6 +82,7 @@ function conversation(channelId, values = {}) {
         responsible: false,
         tags: [],
         unread_count: 0,
+        preference: {pinned: false, pinned_at: false, muted: false, revision: 0},
         account: {id: 1, name: "Comercial"},
         ...values,
     };
@@ -1171,6 +1172,9 @@ QUnit.module("contact_center_ui > inbox state", () => {
             });
             gate.release();
             await refreshing;
+            // Selection cancellation now releases its owner immediately. The
+            // uncancellable fake transport can still settle its preference.
+            await settleUntil(() => false, 50);
             realtime.flush();
             await settleUntil(() => false, 50);
             assert.notOk(
@@ -1359,6 +1363,9 @@ QUnit.module("contact_center_ui > inbox state", () => {
             await store.selectConversation(20);
             gate.release();
             await refreshing;
+            // Selection cancellation now releases its owner immediately. The
+            // uncancellable fake transport can still settle its preference.
+            await settleUntil(() => false, 50);
             realtime.flush();
             await settleUntil(() => false, 50);
             assert.notOk(
@@ -1538,6 +1545,9 @@ QUnit.module("contact_center_ui > inbox state", () => {
             await store.selectConversation(20);
             gate.release();
             await refreshing;
+            // Selection cancellation now releases its owner immediately. The
+            // uncancellable fake transport can still settle its preference.
+            await settleUntil(() => false, 50);
             realtime.flush();
             await settleUntil(() => false, 50);
             assert.ok(await pageUntil(store, 210), "no retained cursor skips it");
@@ -1680,6 +1690,9 @@ QUnit.module("contact_center_ui > inbox state", () => {
             // It only confirms the mute the list already applied.
             gate.release();
             await refreshing;
+            // Selection cancellation now releases its owner immediately. The
+            // uncancellable fake transport can still settle its preference.
+            await settleUntil(() => false, 50);
             realtime.flush();
             await settleUntil(() => false, 50);
             assert.ok(store.state.conversations.length > 200, "the tail is kept");
