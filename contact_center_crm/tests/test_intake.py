@@ -243,6 +243,7 @@ class TestCrmIntake(CrmIntakeCase):
                         "label",
                         "review_revision",
                         "review_candidates",
+                        "review_has_more",
                         "can_dismiss",
                     },
                 )
