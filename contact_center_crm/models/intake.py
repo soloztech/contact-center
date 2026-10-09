@@ -505,7 +505,7 @@ class ContactCenterChannelBinding(models.Model):
         """Optional cross-source adapter; standalone intake keeps its policy."""
         return None
 
-    def _crm_intake_native_candidates(self, actor):
+    def _crm_intake_native_candidates(self, actor, *, review_only=False):
         self.ensure_one()
         api_model = actor["contact.center.ui.api"]
         channel = api_model._crm_channel(self.channel_id.id, mutate=True)
@@ -539,27 +539,30 @@ class ContactCenterChannelBinding(models.Model):
                     else term
                     for term in open_domain
                 ],
-                limit=2,
+                limit=None if review_only else 2,
             )
             .mapped("lead_id")
         )
         if linked:
             candidates = linked
         else:
-            candidates = (
-                actor["crm.lead"]
-                .sudo()
-                .search(
-                    expression.AND(
-                        [
-                            open_domain,
-                            expression.OR(domains),
-                            [("company_id", "in", [False, self.company_id.id])],
-                        ]
-                    ),
-                    limit=2,
-                )
+            Lead = actor["crm.lead"] if review_only else actor["crm.lead"].sudo()
+            candidates = Lead.search(
+                expression.AND(
+                    [
+                        open_domain,
+                        expression.OR(domains),
+                        [("company_id", "in", [False, self.company_id.id])],
+                    ]
+                ),
+                limit=None if review_only else 2,
             )
+        if review_only:
+            # Human choices must obey native read rules before the UI bound.
+            candidates = actor["crm.lead"].search(
+                [("id", "in", candidates.ids), ("company_id", "=", self.company_id.id)]
+            )
+            return candidates, partner, False
         if len(candidates) > 1:
             return candidates, partner, "ambiguous"
         if candidates and candidates.company_id != self.company_id:

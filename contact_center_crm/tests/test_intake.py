@@ -247,6 +247,7 @@ class TestCrmIntake(CrmIntakeCase):
                         "can_dismiss",
                     },
                 )
+                self.assertFalse(projection["review_has_more"])
                 if kind in {"hidden", "global"}:
                     self.assertFalse(projection["review_candidates"])
                 self.assertNotIn("Candidate", projection["label"])

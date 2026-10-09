@@ -128,7 +128,9 @@ class Binding(models.Model):
     _inherit = "contact.center.channel.binding"
 
     def _crm_intake_review_candidates(self, actor):
-        candidates, _partner, _reason = self._crm_intake_native_candidates(actor)
+        candidates, _partner, _reason = self._crm_intake_native_candidates(
+            actor, review_only=True
+        )
         return candidates
 
     def _crm_intake_review_match(self, lead, actor):

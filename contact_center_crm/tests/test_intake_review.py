@@ -123,3 +123,43 @@ class TestCrmIntakeReview(CrmIntakeCase):
             ).resolve_crm_intake_review(
                 binding.channel_id.id, binding.crm_intake_revision, leads[0].id, True
             )
+
+    def test_human_probe_finds_accessible_candidate_after_hidden_search_bound(self):
+        visible = self.env["crm.lead"].create(
+            {
+                "name": "Accessible old candidate",
+                "user_id": self.agent.id,
+                "company_id": self.env.company.id,
+                "phone": "+5511998765432",
+            }
+        )
+        hidden = self.env["crm.lead"].create(
+            [
+                {
+                    "name": "Hidden newer candidate %s" % index,
+                    "user_id": self.other.id,
+                    "company_id": self.env.company.id,
+                    "phone": "+5511998765432",
+                }
+                for index in range(3)
+            ]
+        )
+        self.env.flush_all()
+        self.assertFalse(
+            hidden.with_user(self.agent).search([("id", "in", hidden.ids)])
+        )
+        binding = self._new()
+        self._message(binding)
+        self.assertFalse(self._run(binding))
+        page = self.api.get_customer_records(binding.channel_id.id)["intake"]
+        self.assertEqual(
+            [item["id"] for item in page["review_candidates"]], visible.ids
+        )
+        self.assertFalse(page["review_has_more"])
+        self.assertTrue(page["can_dismiss"])
+        with trap_jobs():
+            self.api.resolve_crm_intake_review(
+                binding.channel_id.id, binding.crm_intake_revision, visible.id, True
+            )
+        self.assertEqual(binding.crm_intake_state, "resolved")
+        self.assertEqual(binding.crm_intake_lead_snapshot, visible.id)

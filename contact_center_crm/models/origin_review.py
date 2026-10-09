@@ -248,8 +248,14 @@ class OriginReview(models.TransientModel):
         action = self.lead_id.action_contact_center_scope(channel.id)
         action["context"].update(
             default_origin_review_evidence_key=self.evidence_key,
-            default_scope_start=link.scope_start,
-            default_scope_end=occurred_at,
+            default_scope_start=(
+                occurred_at
+                if occurred_at and occurred_at <= link.scope_start
+                else link.scope_start
+            ),
+            default_scope_end=(
+                occurred_at if occurred_at and occurred_at > link.scope_start else False
+            ),
         )
         return action
 
