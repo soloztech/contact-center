@@ -239,3 +239,6 @@ class TestCrmAutoOrigin(CrmIntakeCase):
         self.assertEqual(
             lead._conversation_links().origin_review_reason, "anchor_unavailable"
         )
+        self._message(binding)
+        self.assertFalse(binding.crm_origin_first_source_id)
+        self.assertEqual(lead._conversation_links().scope_state, "context")

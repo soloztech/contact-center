@@ -190,8 +190,26 @@ class Binding(models.Model):
         self.env.cr.execute(
             "SELECT id FROM contact_center_channel_binding WHERE id=%s FOR UPDATE NOWAIT",
             [row.id],
+            log_exceptions=False,
         )
         row.invalidate_recordset()
+        first = (
+            self.env["contact.center.message.binding"]
+            .sudo()
+            .search(
+                [
+                    ("channel_binding_id", "=", row.id),
+                    ("direction", "=", "inbound"),
+                    ("origin", "=", "provider"),
+                ],
+                order="id",
+                limit=1,
+            )
+        )
+        if first != source:
+            # A deferred first marker never promotes a later received message
+            # into acquisition evidence for the existing business.
+            return
         if not row.crm_origin_first_source_id:
             row.with_context(crm_intake_service=INTAKE_TOKEN).write(
                 {

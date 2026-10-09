@@ -29,6 +29,15 @@ class Decision(models.Model):
 class ConversationLink(models.Model):
     _inherit = "contact.center.crm.conversation.link"
 
+    def _crm_origin_is_return(self, occurred_at):
+        self.ensure_one()
+        return bool(
+            self.automatic_lineage
+            and self.origin_first_closed_at
+            and occurred_at
+            and occurred_at >= self.origin_first_closed_at
+        )
+
     def _crm_origin_pending_reason(self, occurred_at):
         self.ensure_one()
         if not occurred_at:
@@ -195,9 +204,9 @@ class OriginReview(models.TransientModel):
         channel, link, occurred_at = lead._journey_origin_review_context(
             channel.id, self.evidence_key
         )
-        reason = link._crm_origin_pending_reason(occurred_at) or "business"
+        link._crm_origin_pending_reason(occurred_at) or "business"
         if self.decision == "include":
-            if reason == "after_closed" and not lead_is_open(lead):
+            if link._crm_origin_is_return(occurred_at) and not lead_is_open(lead):
                 raise ValidationError(
                     _(
                         "Reopen the business explicitly before accepting a return interaction."
@@ -286,7 +295,7 @@ class BusinessScopeOriginReview(models.TransientModel):
             self.scope_start <= occurred_at
             and (not self.scope_end or occurred_at < self.scope_end)
             and not lead_is_open(lead)
-            and old._crm_origin_pending_reason(occurred_at) == "after_closed"
+            and old._crm_origin_is_return(occurred_at)
         ):
             raise ValidationError(
                 _("Reopen the business before including its return origin.")
