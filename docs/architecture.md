@@ -89,16 +89,39 @@ servidor reautoriza as ações. Negação atual remove detalhe, permissões e pa
 Respostas de outra seleção, epoch ou geração não revogam uma seleção posterior. Mudanças
 auth/company limpam os detalhes antes da aplicação de respostas.
 
+Respostas de mutações conservam os guards de epoch, lifetime da seleção e revisão do
+detalhe aplicado. Se somente a revisão avançou na mesma seleção/contexto, a resposta não
+sobrescreve o detalhe mais recente e agenda sincronização urgente, inclusive na
+preservação de retenção. Mutações sobrepostas e refresh entre request/answer convergem
+ao estado atual do servidor sem depender de bus ou repair. Resposta de seleção/contexto
+encerrado não agenda refresh da seleção nova.
+
 A matriz em [event-taxonomy.md](event-taxonomy.md) distingue avatar, três escopos de
 metadata e os caminhos completos. Nome/aliases/grupo nunca são patches locais de bus:
 `reconcile_conversations` recompõe a janela autorizada e só serializa os afetados na
 interseção da janela. Mudanças de ordem/acesso/filtro retornam fallback sem IDs
 invisíveis. Search, unread-only, janela vazia ou maior que 100, paginação em voo,
 tail/bulk incertos, revisão de filtros divergente ou seleção preservada fora do domínio
-usam refresh completo. Metadata estrita da seleção também renova seu detalhe; metadata
-isolada não recarrega timeline. Mensagens, identity/reaction/media e eventos
-desconhecidos mantêm o caminho completo. O reparo de conversas de 30s e o reparo de
-resumo de 5min continuam independentes do bus.
+usam refresh completo. Nome/aliases estritos da seleção também renovam seu detalhe, sem
+timeline. O label de autor inbound após rename pode conservar o nome anterior até o
+reparo nativo de 30s, quando a aba está visível e as leituras funcionam; esse atraso
+cosmético é aceito. `group_metadata` também altera roster/own-participant e permissões
+das ações de mensagens: na seleção exige lista compacta, detalhe autorizado e timeline;
+fora da seleção permanece na lane delta. Falha de delta após aplicação parcial agenda
+fallback completo de metadata pelo owner existente, recupera detalhe/avatar coalescido e
+preserva flags concorrentes mais fortes, sem loop externo e com deadline/backoff
+nativos. Mensagens, identity/reaction/media e eventos desconhecidos mantêm o caminho
+completo. O reparo de conversas de 30s e o reparo de resumo de 5min continuam
+independentes do bus.
+
+`member_seen` próprio ou de terceiros e `member_fetched` atualizam somente os guards de
+leitura/bulk aplicáveis, sem refresh rotineiro do Store. O próprio eco de leitura
+durante bulk incerto conserva a conferência existente. A systray ignora `member_fetched`
+e leituras de terceiros; leitura própria conserva seu recount anterior. Effects de
+timeline/chat dependem de IDs/booleanos estáveis e dos campos unread/estado existentes,
+evitando reiniciar retry de `mark_seen` por um render sem mudança relevante. Memoização
+do snapshot combinado e otimização de contexto em render ficam adiadas; os getters
+mantêm a barreira auth/company, sem alegação de ganho de CPU.
 
 ## Reads de saúde compartilhados na aba
 

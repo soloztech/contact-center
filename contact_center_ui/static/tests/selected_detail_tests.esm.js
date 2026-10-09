@@ -6,6 +6,248 @@ import {e2Deferred, e2Full, e2Store} from "./e2_test_helpers.esm";
 
 QUnit.module("contact_center_ui > E2 selected authorized detail", () => {
     QUnit.test(
+        "overlapping mutation answers converge urgently without overwriting a newer detail or waiting for bus",
+        async (assert) => {
+            for (const reverseAnswers of [false, true]) {
+                const {store, server, calls, timer} = e2Store();
+                await store.selectConversation(10);
+                calls.length = 0;
+                const first = e2Deferred(),
+                    second = e2Deferred();
+                let writes = 0;
+                server.respond = (method) =>
+                    method === "update_conversation"
+                        ? ++writes === 1
+                            ? first.promise
+                            : second.promise
+                        : undefined;
+                const firstItem = e2Full(10, {
+                        tags: [{id: 5, name: "First", color: 1}],
+                    }),
+                    latestItem = e2Full(10, {
+                        tags: [{id: 6, name: "Latest", color: 2}],
+                    });
+                const firstWrite = store.updateConversation({tag_ids: [5]});
+                const secondWrite = store.updateConversation({tag_ids: [6]});
+                server.items = [latestItem];
+                if (reverseAnswers) {
+                    second.resolve({schema_version: 1, item: latestItem});
+                    await secondWrite;
+                    first.resolve({schema_version: 1, item: firstItem});
+                    await firstWrite;
+                } else {
+                    first.resolve({schema_version: 1, item: firstItem});
+                    await firstWrite;
+                    second.resolve({schema_version: 1, item: latestItem});
+                    await secondWrite;
+                }
+                assert.strictEqual(
+                    store.selectedConversation.tags[0].id,
+                    reverseAnswers ? 6 : 5,
+                    "guarded answer does not replace already applied detail"
+                );
+                await timer.advance(119);
+                assert.strictEqual(
+                    calls.filter((call) => call.method === "list_conversations").length,
+                    0
+                );
+                await timer.advance(1);
+                assert.deepEqual(
+                    calls.map((call) => call.method),
+                    [
+                        "update_conversation",
+                        "update_conversation",
+                        "list_conversations",
+                        "get_conversation",
+                    ]
+                );
+                assert.strictEqual(
+                    store.selectedConversation.tags[0].id,
+                    6,
+                    "urgent read converges to latest server commit in both answer orders"
+                );
+                assert.ok(store.permissionReady);
+                store.destroy();
+            }
+        }
+    );
+    QUnit.test(
+        "detail refresh between mutation request and answer triggers urgent convergence within owner interval",
+        async (assert) => {
+            for (const retention of [false, true]) {
+                const {store, server, calls, timer} = e2Store();
+                await store.selectConversation(10);
+                // A recent ordinary cycle would otherwise delay synchronization by 2s.
+                store.scheduleSynchronization(false);
+                await timer.advance(120);
+                calls.length = 0;
+                const pending = e2Deferred();
+                const policy = {
+                    supported: true,
+                    enabled: true,
+                    effective: true,
+                    preserve: false,
+                    can_manage: true,
+                    days: 7,
+                    revision: 2,
+                };
+                const latest = retention
+                    ? e2Full(10, {retention: policy})
+                    : e2Full(10, {responsible: {id: 7, name: "Agent"}});
+                const method = retention
+                    ? "set_retention_preserve"
+                    : "update_conversation";
+                server.respond = (name) =>
+                    name === method ? pending.promise : undefined;
+                const writing = retention
+                    ? store.setRetentionPreserve(10, false)
+                    : store.updateConversation({responsible_id: 7});
+                await store.refreshSelectedConversation({silent: true});
+                server.items = [latest];
+                pending.resolve(
+                    retention
+                        ? {schema_version: 1, channel_id: 10, policy}
+                        : {schema_version: 1, item: latest}
+                );
+                await writing;
+                assert.ok(
+                    retention
+                        ? store.selectedConversation.retention.preserve
+                        : !store.selectedConversation.responsible,
+                    "answer cannot overwrite the intervening detail"
+                );
+                assert.ok(store.permissionReady);
+                await timer.advance(120);
+                assert.deepEqual(
+                    calls.map((call) => call.method),
+                    [
+                        method,
+                        "get_conversation",
+                        "list_conversations",
+                        "get_conversation",
+                    ],
+                    "urgent read bypasses the ordinary interval without bus/repair"
+                );
+                assert.deepEqual(
+                    retention
+                        ? store.selectedConversation.retention
+                        : store.selectedConversation.responsible,
+                    retention ? policy : latest.responsible
+                );
+                store.destroy();
+            }
+        }
+    );
+    QUnit.test(
+        "mutation answer from an obsolete selection never refreshes another or reopened selection",
+        async (assert) => {
+            for (const [retention, reselect] of [
+                [false, false],
+                [true, false],
+                [false, true],
+                [true, true],
+            ]) {
+                const {store, server, calls, timer} = e2Store({
+                    items: [e2Full(), e2Full(20)],
+                });
+                await store.selectConversation(10);
+                const pending = e2Deferred();
+                const method = retention
+                    ? "set_retention_preserve"
+                    : "update_conversation";
+                server.respond = (name) =>
+                    name === method ? pending.promise : undefined;
+                const writing = retention
+                    ? store.setRetentionPreserve(10, false)
+                    : store.updateConversation({tag_ids: [5]});
+                await store.selectConversation(20);
+                if (reselect) {
+                    await store.selectConversation(10);
+                }
+                calls.length = 0;
+                pending.resolve(
+                    retention
+                        ? {
+                              schema_version: 1,
+                              channel_id: 10,
+                              policy: {
+                                  supported: true,
+                                  enabled: true,
+                                  effective: true,
+                                  preserve: false,
+                                  can_manage: true,
+                                  days: 7,
+                                  revision: 2,
+                              },
+                          }
+                        : {
+                              schema_version: 1,
+                              item: e2Full(10, {name: "Old selection answer"}),
+                          }
+                );
+                await writing;
+                await timer.advance(2000);
+                assert.deepEqual(
+                    calls,
+                    [],
+                    "obsolete selection answer creates no synchronization"
+                );
+                assert.strictEqual(store.state.selectedChannelId, reselect ? 10 : 20);
+                assert.ok(store.permissionReady);
+                store.destroy();
+            }
+        }
+    );
+    QUnit.test(
+        "mutation answers from an obsolete company epoch never schedule urgent synchronization",
+        async (assert) => {
+            for (const retention of [false, true]) {
+                const {store, server, user, calls, timer} = e2Store();
+                await store.selectConversation(10);
+                const pending = e2Deferred();
+                const method = retention
+                    ? "set_retention_preserve"
+                    : "update_conversation";
+                server.respond = (name) =>
+                    name === method ? pending.promise : undefined;
+                const writing = (
+                    retention
+                        ? store.setRetentionPreserve(10, false)
+                        : store.updateConversation({tag_ids: [5]})
+                ).catch((error) => error);
+                user.context = {...user.context, allowed_company_ids: [2]};
+                calls.length = 0;
+                pending.resolve(
+                    retention
+                        ? {
+                              schema_version: 1,
+                              channel_id: 10,
+                              policy: {
+                                  supported: true,
+                                  enabled: true,
+                                  effective: true,
+                                  preserve: false,
+                                  can_manage: true,
+                                  days: 7,
+                                  revision: 2,
+                              },
+                          }
+                        : {schema_version: 1, item: e2Full(10)}
+                );
+                await writing;
+                await timer.advance(2000);
+                assert.deepEqual(
+                    calls,
+                    [],
+                    "obsolete epoch cannot schedule reads for the new company"
+                );
+                assert.notOk(store.state.selectedChannelId);
+                assert.notOk(store.permissionReady);
+                store.destroy();
+            }
+        }
+    );
+    QUnit.test(
         "full action messages project only the native preview subset into rows",
         (assert) => {
             const full = e2Full();

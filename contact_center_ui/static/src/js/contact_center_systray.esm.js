@@ -25,6 +25,7 @@ const NON_REFRESHING_EVENTS = new Set([
     "reaction_updated",
     "media_updated",
     "attribution_updated",
+    "member_fetched",
 ]);
 
 /**

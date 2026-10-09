@@ -5686,6 +5686,13 @@ export class ContactCenterStore {
                 guard.revision !== this.detailAppliedRevision)
         ) {
             this.acceptPreferenceSnapshot(item);
+            if (
+                guard.epoch === this.detailEpoch &&
+                guard.lifetime === this.detailLifetime
+            ) {
+                // Keep the intervening detail and read the latest committed state.
+                this.scheduleSynchronization(false, false, {urgent: true});
+            }
             return true;
         }
         const selectedFull =
@@ -6222,10 +6229,11 @@ export class ContactCenterStore {
             channelId === this.state.selectedChannelId &&
             (!guard ||
                 (guard.epoch === this.detailEpoch &&
-                    guard.lifetime === this.detailLifetime &&
-                    guard.revision === this.detailAppliedRevision))
+                    guard.lifetime === this.detailLifetime))
         ) {
-            this.seedSelectedDetail({...current, retention: payload.policy});
+            if (!guard || guard.revision === this.detailAppliedRevision) {
+                this.seedSelectedDetail({...current, retention: payload.policy});
+            }
             this.scheduleSynchronization(false, false, {urgent: true});
         }
         return payload;
@@ -7911,20 +7919,26 @@ export class ContactCenterStore {
     synchronizeNotification(payload) {
         this.noteSnapshotInvalidation(payload);
         this.noteUncertainBulkRead(payload);
-        this.handleDeliveryNotification(payload);
-        if (this.handleRetentionNotification(payload)) {
-            return;
-        }
         if (
             payload.event_type === "member_fetched" ||
-            (payload.event_type === "member_seen" &&
-                (!this.currentUserId || payload.user_id !== this.currentUserId))
+            payload.event_type === "member_seen"
         ) {
+            return;
+        }
+        this.handleDeliveryNotification(payload);
+        if (this.handleRetentionNotification(payload)) {
             return;
         }
         const scope = conversationUpdateScope(payload);
         if (scope === "identity_avatar") {
             this.scheduleAvatarSynchronization(payload.channel_id);
+            return;
+        }
+        if (
+            scope === "group_metadata" &&
+            payload.channel_id === this.state.selectedChannelId
+        ) {
+            this.scheduleSynchronization(false, true);
             return;
         }
         if (["identity_name", "identity_aliases", "group_metadata"].includes(scope)) {
@@ -8337,6 +8351,8 @@ export class ContactCenterStore {
                 }
             }
             if (delta !== "refresh") {
+                // The full fallback also recovers this cycle's captured avatars.
+                this.scheduleSynchronization(false, false, {metadataOnly: true});
                 return false;
             }
             if (!this.syncFullRequested) {

@@ -155,6 +155,30 @@ QUnit.module("contact_center_ui > systray", () => {
         summary.destroy();
     });
 
+    QUnit.test(
+        "own and other fetched pointers never recount unread",
+        async (assert) => {
+            const {summary, timer, calls} = summaryFixture();
+            summary.start();
+            await settle();
+            assert.strictEqual(calls.length, 1);
+            for (const userId of [USER_ID, USER_ID + 1]) {
+                assert.notOk(
+                    summary.handleNotifications([
+                        notification("member_fetched", {
+                            user_id: userId,
+                            message_id: 5,
+                        }),
+                    ])
+                );
+            }
+            timer.flush(SYSTRAY_SUMMARY_DEBOUNCE);
+            await settle();
+            assert.strictEqual(calls.length, 1, "fetched hints add no summary RPC");
+            summary.destroy();
+        }
+    );
+
     QUnit.test("a burst of events is grouped into one request", async (assert) => {
         const {summary, timer, calls} = summaryFixture();
         summary.handleNotifications([notification("message_created")]);

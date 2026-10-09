@@ -318,7 +318,8 @@ export class ConversationTimeline extends Component {
                 this.ui.openMenuId,
                 this.ui.reactionPickerId,
                 this.ui.deletingId,
-                this.store.selectedConversation,
+                Boolean(this.store.selectedConversation),
+                this.state.selectedChannelId,
                 this.store.selectedConversation &&
                     this.store.selectedConversation.unread_count,
                 this.store.selectedConversation &&

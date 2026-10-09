@@ -1094,7 +1094,7 @@ QUnit.module("contact_center_ui > selective avatar refresh", () => {
     );
 
     QUnit.test(
-        "legacy and mixed events win; strict group fallback refreshes without timeline",
+        "legacy, mixed and selected group events refresh the selected timeline",
         async (assert) => {
             for (const values of [
                 {update_scope_version: undefined},
@@ -1110,10 +1110,9 @@ QUnit.module("contact_center_ui > selective avatar refresh", () => {
                 notify(10, values);
                 await timer.advance(120);
                 assert.ok(calls.some((call) => call.method === "list_conversations"));
-                assert.strictEqual(
+                assert.ok(
                     calls.some((call) => call.method === "get_timeline"),
-                    values.update_scope !== "group_metadata",
-                    "only strict metadata can skip the selected timeline"
+                    "selected group metadata revalidates per-message permissions"
                 );
                 assert.notOk(
                     calls.some((call) => call.method === "get_conversation_avatars")

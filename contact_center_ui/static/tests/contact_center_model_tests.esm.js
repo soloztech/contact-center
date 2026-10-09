@@ -144,7 +144,7 @@ import {
 import {BrowserAttention} from "@contact_center_ui/js/browser_attention.esm";
 import {ConnectionHealth} from "@contact_center_ui/js/connection_health.esm";
 import {conversationComposerAvailable} from "@contact_center_ui/js/contact_center_app.esm";
-import {e2Deferred, e2Full, e2Store} from "./e2_test_helpers.esm";
+import {e2Clock, e2Deferred, e2Full, e2Store} from "./e2_test_helpers.esm";
 import {reactive} from "@odoo/owl";
 import {hotkeyService} from "@web/core/hotkeys/hotkey_service";
 import {makeTestEnv} from "@web/../tests/helpers/mock_env";
@@ -6866,10 +6866,11 @@ QUnit.module("contact_center_ui > model", (hooks) => {
         (assert) => {
             const store = new ContactCenterStore({
                 orm: {},
-                busService: {},
+                busService: new EventTarget(),
                 notification: false,
             });
             const synchronizations = [];
+            store.state.bootstrap = {user: {id: 7}};
             store.state.selectedChannelId = 42;
             store.scheduleSynchronization = (reconnect, refreshTimeline) => {
                 synchronizations.push({reconnect, refreshTimeline});
@@ -6885,13 +6886,35 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 },
             });
 
-            store.onNotification({detail: [notification("member_seen")]});
+            store.onNotification({
+                detail: [notification("member_seen", 42, {user_id: 7})],
+            });
+            store.onNotification({
+                detail: [notification("member_seen", 42, {user_id: 8})],
+            });
             store.onNotification({detail: [notification("member_fetched")]});
             assert.strictEqual(
                 synchronizations.length,
                 0,
-                "read-pointer hints do not reload the timeline"
+                "own/other seen and fetched hints do not synchronize"
             );
+            assert.strictEqual(store.ownReadGenerations.get(42), 1);
+            store.bulkReadUncertain = true;
+            store.onNotification({
+                detail: [
+                    notification("member_seen", 42, {user_id: 8}),
+                    notification("member_fetched", 42, {user_id: 7}),
+                    notification("member_seen", 42, {user_id: 7}),
+                ],
+            });
+            assert.deepEqual(
+                synchronizations,
+                [{reconnect: false, refreshTimeline: undefined}],
+                "only the existing uncertain-bulk own-read check synchronizes"
+            );
+            assert.strictEqual(store.ownReadGenerations.get(42), 2);
+            store.bulkReadUncertain = false;
+            synchronizations.length = 0;
 
             store.onNotification({detail: [notification("message_created")]});
             store.onNotification({detail: [notification("message_updated", 99)]});
@@ -6911,6 +6934,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 {reconnect: false, refreshTimeline: false},
                 {reconnect: false, refreshTimeline: true},
             ]);
+            store.destroy();
         }
     );
 
@@ -7287,7 +7311,13 @@ QUnit.module("contact_center_ui > model", (hooks) => {
         }
     );
 
-    async function mountedUnreadTimeline({focused = true, hidden = false} = {}) {
+    async function mountedUnreadTimeline({
+        focused = true,
+        hidden = false,
+        realtimeTimer = undefined,
+        seenResponse = false,
+        authorizedDetail = false,
+    } = {}) {
         registry.category("services").add("ui", uiService);
         registry.category("services").add("orm", ormService);
         registry.category("services").add("action", {
@@ -7318,6 +7348,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             busService: new EventTarget(),
             notification: false,
             stateFactory: reactive,
+            realtimeTimer,
         });
         const message = {
             message_id: 100,
@@ -7347,9 +7378,15 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             ],
             messages: [message],
         });
+        if (authorizedDetail) {
+            store.seedSelectedDetail(store.state.conversations[0]);
+        }
         const calls = [];
         store.call = async (method, args) => {
             calls.push({method, args});
+            if (seenResponse) {
+                return seenResponse(method, args);
+            }
             return {channel_id: args[0], message_id: args[1]};
         };
         const timeline = await mount(ConversationTimeline, target, {
@@ -7380,6 +7417,60 @@ QUnit.module("contact_center_ui > model", (hooks) => {
         }
         return {store, timeline, target, calls, visibility, settle, close};
     }
+
+    QUnit.test(
+        "mounted timeline unrelated renders preserve failed seen retry delay and disposal",
+        async (assert) => {
+            const timer = e2Clock();
+            const fixture = await mountedUnreadTimeline({
+                focused: false,
+                realtimeTimer: timer,
+                authorizedDetail: true,
+                seenResponse: () => Promise.reject(new Error("temporary read failure")),
+            });
+            const {store, timeline, target, calls, visibility, settle, close} = fixture;
+            try {
+                await settle();
+                assert.ok(store.selectedDetailReady);
+                visibility.focused = true;
+                await timeline.markVisibleTailSeen();
+                await settle();
+                assert.strictEqual(calls.length, 1);
+                store.state.messages[0].body_text = "Updated bubble label";
+                await settle();
+                assert.ok(target.textContent.includes("Updated bubble label"));
+                assert.strictEqual(
+                    calls.length,
+                    1,
+                    "render does not reset read backoff"
+                );
+                await timer.advance(999);
+                assert.strictEqual(
+                    calls.length,
+                    1,
+                    "native first retry delay is honored"
+                );
+                await timer.advance(1);
+                assert.deepEqual(
+                    calls,
+                    [
+                        {method: "mark_seen", args: [10, 100]},
+                        {method: "mark_seen", args: [10, 100]},
+                    ],
+                    "the native timer still retries the failed read"
+                );
+                assert.ok(
+                    timer.tasks.size,
+                    "second backoff is pending before disposal"
+                );
+            } finally {
+                close();
+            }
+            assert.strictEqual(timer.tasks.size, 0, "disposal cancels the retry");
+            await timer.advance(10000);
+            assert.strictEqual(calls.length, 2, "no reads after disposal");
+        }
+    );
 
     QUnit.test(
         "a mounted short external-device conversation is read without a scroll event",

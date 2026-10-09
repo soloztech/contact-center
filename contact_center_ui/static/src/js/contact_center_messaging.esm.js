@@ -362,7 +362,7 @@ export class ContactCenterChat extends Component {
             },
             () => [
                 this.ui.loading,
-                this.conversation,
+                this.conversation && this.conversation.channel_id,
                 this.props.chatWindow.contactCenterDoFocus,
                 this.props.chatWindow.isFolded,
                 this.props.chatWindow.isVisible,
