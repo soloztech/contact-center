@@ -15,7 +15,7 @@ from odoo.osv import expression
 from odoo.addons.queue_job.exception import RetryableJobError
 
 from .intake_policy import (
-    GATE_NAMESPACE,
+    COMPANY_GATE_TOKEN,
     INTAKE_TOKEN,
     automation_guards_available,
     require_intake_admin,
@@ -55,12 +55,13 @@ EXCLUDED_CONTENT_TYPES = frozenset(
         "whatsapp.system",
     }
 )
-TERMINAL_STATES = {"created", "reused", "review"}
+TERMINAL_STATES = {"created", "reused", "review", "resolved"}
 INTAKE_STATES = [
     ("pending", "Na fila"),
     ("created", "Lead criado"),
     ("reused", "Negócio reutilizado"),
     ("review", "Revisão necessária"),
+    ("resolved", "Revisão resolvida"),
     ("policy_changed", "Regra alterada"),
 ]
 REASONS = [
@@ -73,6 +74,12 @@ REASONS = [
     "automation_guard_missing",
     "manual_unlink",
     "validation",
+    "human_resolved",
+    "human_dismissed",
+    "phone_variant_review",
+    "closed_business_review",
+    "business_scope_review",
+    "receipt_without_target",
 ]
 RECEIPT_FIELDS = {
     "crm_intake_state",
@@ -365,8 +372,10 @@ class ContactCenterChannelBinding(models.Model):
                     limit=1,
                 )
             )
-            if source:
-                binding._crm_intake_admit(source)
+            if source and binding._crm_intake_admit(source):
+                binding.with_context(crm_intake_service=INTAKE_TOKEN).write(
+                    {"crm_origin_recovered": True}
+                )
         return True
 
     def _crm_intake_projection(self):
@@ -434,18 +443,10 @@ class ContactCenterChannelBinding(models.Model):
         )
         if not gate:
             return binding._crm_intake_review("policy_invalid")
-        self.env.cr.execute(
-            "SELECT pg_try_advisory_xact_lock(%s, %s)",
-            [GATE_NAMESPACE, account.company_id.id],
-        )
-        if not self.env.cr.fetchone()[0]:
-            raise RetryableJobError(
-                "CRM intake company busy", seconds=2, ignore_retry=True
-            )
-        gate.flush_recordset()
-        self.env.cr.execute(
-            "UPDATE contact_center_crm_intake_gate SET write_date = write_date WHERE id = %s",
-            [gate.id],
+        gate = gate._acquire_company(account.company_id)
+        binding = binding.with_context(
+            crm_company_gate=COMPANY_GATE_TOKEN,
+            crm_company_gate_company=account.company_id.id,
         )
         self.env.cr.execute(
             "SELECT id FROM contact_center_account WHERE id = %s FOR SHARE NOWAIT",
@@ -474,7 +475,13 @@ class ContactCenterChannelBinding(models.Model):
             return binding._crm_intake_review("policy_invalid")
         executor = account.crm_intake_user_id
         actor = api.Environment(
-            self.env.cr, executor.id, {"allowed_company_ids": account.company_id.ids}
+            self.env.cr,
+            executor.id,
+            {
+                "allowed_company_ids": account.company_id.ids,
+                "crm_company_gate": COMPANY_GATE_TOKEN,
+                "crm_company_gate_company": account.company_id.id,
+            },
         )
         try:
             with self.env.cr.savepoint():
@@ -492,6 +499,13 @@ class ContactCenterChannelBinding(models.Model):
         )
 
     def _crm_intake_candidates(self, actor):
+        return self._crm_intake_native_candidates(actor)
+
+    def _crm_intake_prepare_comparison(self, actor):
+        """Optional cross-source adapter; standalone intake keeps its policy."""
+        return None
+
+    def _crm_intake_native_candidates(self, actor):
         self.ensure_one()
         api_model = actor["contact.center.ui.api"]
         channel = api_model._crm_channel(self.channel_id.id, mutate=True)
@@ -562,6 +576,7 @@ class ContactCenterChannelBinding(models.Model):
         return candidates, partner, False
 
     def _crm_intake_decide(self, actor, source):
+        self._crm_intake_prepare_comparison(actor)
         candidates, partner, reason = self._crm_intake_candidates(actor)
         if reason:
             return self._crm_intake_review(reason)
@@ -641,14 +656,17 @@ class ContactCenterChannelBinding(models.Model):
                     "A conversa permanece no Contact Center."
                 )
             )
-        actor["contact.center.crm.conversation.link"].with_context(
-            **graph.env.context
-        )._link(
-            actor["mail.channel"].browse(self.channel_id.id),
-            lead,
-            origin="created" if created else "linked",
-            writer="intake",
+        link = (
+            actor["contact.center.crm.conversation.link"]
+            .with_context(**graph.env.context)
+            ._link(
+                actor["mail.channel"].browse(self.channel_id.id),
+                lead,
+                origin="created" if created else "linked",
+                writer="intake",
+            )
         )
+        self._crm_origin_after_intake(actor, source, lead, link, created)
         return self._crm_intake_write(
             {
                 "crm_intake_state": "created" if created else "reused",
@@ -871,6 +889,24 @@ class ContactCenterMessageBinding(models.Model):
             if message.direction != "inbound" or message.origin != "provider":
                 continue
             binding = message.sudo().channel_binding_id
+            if (
+                binding.account_id.crm_origin_auto_enabled
+                and not binding.crm_origin_first_source_id
+                and binding.conversation_type == "direct"
+            ):
+                # Flush host ingress outside the optional marker's exception boundary.
+                self.env.flush_all()
+                try:
+                    with self.env.cr.savepoint():
+                        binding._crm_origin_note_first(message.sudo())
+                except OperationalError:
+                    raise
+                except Exception as error:
+                    _logger.warning(
+                        "CRM first inbound marker deferred for binding %s (%s)",
+                        binding.id,
+                        type(error).__name__,
+                    )
             if not binding.account_id.crm_intake_enabled:
                 continue
             # Host-ingress flush errors belong to the caller. Only optional

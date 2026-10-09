@@ -23,8 +23,10 @@ contrário, o vendedor fica vazio, aguardando a atribuição inicial elegível. 
 leads automáticos, **Criado por** fica vazio; o recibo de entrada e o vínculo da
 conversa preservam a auditoria do executor técnico. Os registros históricos não são
 reescritos. Reutilizar não modifica vendedor, equipe, etapa, descrição ou UTMs do
-negócio. O vínculo aparece na Jornada como **Entrada automática**, em **contexto**. A
-equipe confirma o período comercial depois.
+negócio. O vínculo aparece na Jornada como **Entrada automática**. Com a política
+separada de **Origem automática em novos leads** habilitada, uma entrada nova comprovada
+inicia o período comercial automaticamente. Reuso, histórico, recuperação e entrada
+ambígua continuam como contexto e exigem revisão.
 
 A primeira atribuição elegível posterior preenche o vendedor uma única vez. Depois,
 transferências e desatribuições da conversa não sincronizam o vendedor do CRM, que
@@ -109,3 +111,55 @@ composição opcional. Kanban não está instalado na produção desta entrega; 
 preserva o conjunto de módulos instalados. A prova de corrida com candidato ligado a
 caso fica como cobertura adicional futura. As provas de concorrência de entrada CRM e
 atribuição inicial executadas para este fluxo não afirmam cobrir essa composição.
+
+## Origem automática e reconciliação com Meta
+
+A política **Origem automática em novos leads** é independente da entrada CRM. Registra
+seu próprio corte, revisão e último binding. Só confirma o período de um lead criado por
+essa entrada, com primeira mensagem de provedor persistida e pertencente à nova coorte.
+A primeira mensagem recebida é registrada mesmo quando seu conteúdo não cria um lead;
+uma mensagem posterior não pode ocultar uma primeira entrada anterior ao corte. Falhar
+nessa confirmação conserva o lead, a mensagem e a associação como contexto.
+
+A revisão/data/âncora do período distinguem confirmação humana de automática. O primeiro
+encerramento, arquivamento ou ganho do negócio fica registrado e não desaparece ao
+reabrir. Evidência ocorrida antes do encerramento pode chegar atrasada; evidência de
+retorno após encerramento ou fora do período fica visível, aguardando decisão por
+origem. A Jornada permite incluir, excluir, voltar à revisão ou abrir o ajuste de
+períodos. Incluir após encerramento exige reabrir o negócio explicitamente. Uma decisão
+não migra para outro negócio ou geração de associação.
+
+Com Marketing Base e a ponte Contact CRM, a empresa pode habilitar **Reconciliar
+entradas Meta e WhatsApp**, com janela padrão de 24 horas e gerente CRM responsável pela
+fila. A configuração exige conjuntamente administração de Sistema, Marketing e Contact,
+além de acesso nativo à empresa. O gate comum serializa as duas entradas antes de
+decidir criar. Telefone completo, mesma empresa, negócio aberto único e origens
+compatíveis permitem reutilizar o mesmo ID nas duas ordens de chegada. O vínculo inicial
+não modifica campos comerciais já existentes. Um telefone brasileiro com/sem nono dígito
+é apenas candidato para confirmação nesta associação; não vira alias global.
+
+Recibos privados com HMAC impedem tratar a exclusão do lead como ausência de entrada.
+Múltiplos negócios, registros restritos, negócio encerrado, recibo sem alvo e origens
+incompatíveis vão para revisão. Meta sem telefone comparável ainda cria lead com
+identidade não verificada e atividade interna. Nenhuma destas decisões usa IP ou nome
+como identidade.
+
+O painel da conversa permite confirmar um candidato atual ou encerrar a entrada sem
+vínculo. A fila **CRM → Entradas a revisar** permite ao gerente CRM vincular, declarar
+nova demanda ou descartar uma entrada Meta, sem liberar o cofre de payloads do
+Marketing. Decisões terminais não são reabertas por edição da rota ou replay de job. Os
+avisos usam atividade/inbox internos; não enviam email nem WhatsApp ao cliente.
+
+Ponte indisponível com a proteção habilitada mantém a entrada Meta em pendência técnica:
+não cria às cegas e tenta recuperação a cada cinco minutos em lote limitado. Desligar a
+política preserva essas pendências. Administradores podem liberar uma entrada específica
+após desligá-la, com decisão auditada; não existe liberação geral implícita. O monitor
+avisa sobre qualquer pendência técnica ou fila comercial com dez entradas/24 horas e
+mantém lembretes diários e incidentes separados.
+
+As políticas permanecem desligadas por padrão. A operação Soloz habilita a origem apenas
+na caixa Comercial. A exclusão da conversa remove seus identificadores de comparação; a
+exclusão autenticada por privacidade de um touchpoint apaga as chaves associadas,
+conservando o recibo técnico de decisão. A retenção de grupos não expira recibos de
+conversas diretas. A janela comercial limita o uso das chaves, sem apagar auditoria;
+nenhum processamento recria chaves depois de uma exclusão por privacidade.

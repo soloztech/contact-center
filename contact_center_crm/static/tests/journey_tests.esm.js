@@ -59,6 +59,16 @@ async function setup(options = {}) {
                         has_more: offset + 20 < items.length,
                     };
                 }
+                if (args.method === "get_contact_center_origin_page") {
+                    return (
+                        options.originPage || {
+                            status: "ready",
+                            items: [],
+                            has_more: false,
+                            next_offset: 40,
+                        }
+                    );
+                }
                 if (args.method === "open_contact_center_journey_conversation") {
                     return options.openDeferred;
                 }
@@ -67,6 +77,7 @@ async function setup(options = {}) {
                         "action_website_journey_match",
                         "action_website_journey_matches",
                         "action_contact_center_scope",
+                        "action_contact_center_origin_review",
                     ].includes(args.method)
                 ) {
                     if (options.actionError) throw new Error("revoked");
@@ -110,6 +121,94 @@ async function setup(options = {}) {
     return {...result, calls};
 }
 QUnit.module("contact_center_crm > journey", () => {
+    QUnit.test(
+        "minimal origins show labels and append a bounded page without opening technical evidence",
+        async (assert) => {
+            const item = row(91);
+            item.scope = "confirmed";
+            item.scope_decision_mode = "automatic_intake";
+            item.origins = {
+                status: "scope_review",
+                has_more: true,
+                next_offset: 20,
+                items: [
+                    {
+                        type: "paid_ad_click",
+                        at: "2026-10-08 10:00:00",
+                        campaign_name: "Solar campaign",
+                        ad_name: "Solar ad",
+                        source_name: "Meta",
+                        medium_name: "Paid",
+                        scope: "pending",
+                        review_reason: "after_closed",
+                    },
+                ],
+            };
+            const {click, calls} = await setup({
+                items: [item],
+                originPage: {
+                    status: "ready",
+                    has_more: false,
+                    next_offset: 40,
+                    items: [
+                        {
+                            type: "website",
+                            campaign_name: "Search campaign",
+                            scope: "ineligible",
+                        },
+                    ],
+                },
+            });
+            assert.ok(document.body.textContent.includes("Solar campaign"));
+            assert.ok(document.body.textContent.includes("Solar ad"));
+            assert.ok(document.body.textContent.includes("após encerramento"));
+            await click(".cc-journey-more-origins");
+            assert.ok(document.body.textContent.includes("Search campaign"));
+            assert.ok(
+                document.body.textContent.includes("evidência permanece preservada")
+            );
+            assert.containsNone(document.body, ".cc-journey-more-origins");
+            assert.notOk(
+                calls.some((call) => call.method === "action_website_journey_matches")
+            );
+        }
+    );
+    QUnit.test(
+        "reviewing one captured origin passes only its opaque key and refreshes after closing",
+        async (assert) => {
+            const item = row(91);
+            const key = "a".repeat(64);
+            item.origins.items = [
+                {
+                    type: "paid_ad_click",
+                    evidence_key: key,
+                    scope: "pending",
+                    can_review: true,
+                },
+            ];
+            const {click, calls, env} = await setup({items: [item]});
+            let closed = null;
+            env.services.action.doAction = async (_action, settings) => {
+                closed = settings.onClose;
+            };
+            await click(".cc-journey-review-origin");
+            const call = calls.find(
+                (value) => value.method === "action_contact_center_origin_review"
+            );
+            assert.deepEqual(call.args, [[41], 91, key]);
+            assert.strictEqual(typeof closed, "function");
+            await closed();
+            await nextAnimationFrame();
+            assert.strictEqual(
+                calls.filter(
+                    (value) =>
+                        value.method === "get_contact_center_journey" &&
+                        value.kwargs.area === "linked"
+                ).length,
+                2
+            );
+        }
+    );
     QUnit.test("intake writer is explicit and never confirms scope", async (assert) => {
         await setup({items: [{...row(91), writer: "intake"}]});
         assert.ok(document.body.textContent.includes("Entrada automática"));
@@ -335,9 +434,15 @@ QUnit.module("contact_center_crm > journey", () => {
             assert.containsOnce(document.body, ".cc-journey-more-origins");
             await click(".cc-journey-more-origins");
             assert.ok(
-                calls.some((call) => call.method === "action_website_journey_matches")
+                calls.some(
+                    (call) =>
+                        call.method === "get_contact_center_origin_page" &&
+                        call.args[1] === 91 &&
+                        call.args[2] === 20
+                )
             );
-            assert.strictEqual(actions[0].type, "ir.actions.act_window");
+            assert.strictEqual(actions.length, 0);
+            assert.containsNone(document.body, ".cc-journey-more-origins");
             assert.notOk(document.body.textContent.includes("Não foi possível"));
         }
     );

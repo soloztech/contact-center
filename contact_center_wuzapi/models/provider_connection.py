@@ -86,6 +86,23 @@ def _is_header_safe_token(value, minimum_length=3):
     )
 
 
+def _has_wuzapi_configuration(field_name, value):
+    # ORM copy_data represents an empty many2many as a truthy set command.
+    # Accept only this exact empty form; commands containing records remain
+    # provider configuration and must never cross to another adapter.
+    if field_name == "wuzapi_webhook_event_ids" and isinstance(value, (list, tuple)):
+        if len(value) == 1 and isinstance(value[0], (list, tuple)):
+            command = value[0]
+            if (
+                len(command) == 3
+                and command[0] == 6
+                and command[1] == 0
+                and command[2] == []
+            ):
+                return False
+    return bool(value)
+
+
 class ContactCenterWuzapiWebhookEvent(models.Model):
     _name = "contact.center.wuzapi.webhook.event"
     _description = "WuzAPI Webhook Event"
@@ -412,7 +429,7 @@ class ContactCenterProviderConnection(models.Model):
                 configured_fields = [
                     field_name
                     for field_name in _WUZAPI_CONFIGURATION_FIELDS
-                    if values.get(field_name)
+                    if _has_wuzapi_configuration(field_name, values.get(field_name))
                 ]
                 if configured_fields:
                     raise ValidationError(
@@ -523,7 +540,8 @@ class ContactCenterProviderConnection(models.Model):
                 values["wuzapi_base_url"]
             )
         if any(connection.adapter_key != "wuzapi" for connection in self) and any(
-            values.get(field_name) for field_name in _WUZAPI_CONFIGURATION_FIELDS
+            _has_wuzapi_configuration(field_name, values.get(field_name))
+            for field_name in _WUZAPI_CONFIGURATION_FIELDS
         ):
             raise ValidationError(
                 _(

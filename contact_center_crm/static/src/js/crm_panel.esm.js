@@ -131,13 +131,40 @@ function normalizeTabs(values) {
 }
 
 function normalizeIntake(value, available) {
-    const states = ["pending", "created", "reused", "review", "policy_changed"];
-    return available &&
+    const states = [
+        "pending",
+        "created",
+        "reused",
+        "review",
+        "resolved",
+        "policy_changed",
+    ];
+    const result =
+        available &&
         record(value) &&
         states.includes(value.state) &&
         typeof value.label === "string"
-        ? {state: value.state, label: value.label}
-        : false;
+            ? {state: value.state, label: value.label}
+            : false;
+    if (
+        result &&
+        result.state === "review" &&
+        Number.isSafeInteger(value.review_revision) &&
+        value.review_revision > 0
+    ) {
+        result.reviewRevision = value.review_revision;
+        result.canDismiss = value.can_dismiss === true;
+        result.candidates = Array.isArray(value.review_candidates)
+            ? value.review_candidates
+                  .slice(0, 3)
+                  .map((item) => {
+                      const ref = reference(item);
+                      return ref ? {...ref, closed: item.closed === true} : false;
+                  })
+                  .filter(Boolean)
+            : [];
+    }
+    return result;
 }
 
 export function normalizeCustomerPage(payload, channelId, tabId) {
@@ -639,6 +666,55 @@ export class CrmPanelModel {
         } catch (_error) {
             if (this.current() && this.state.activeTab === tabId) {
                 this.state.operationError = "Não foi possível atualizar o vínculo.";
+            }
+            return false;
+        } finally {
+            this.state.linkBusy = false;
+        }
+    }
+
+    async resolveIntake(leadId = false) {
+        const intake = this.state.intake;
+        if (
+            !this.current() ||
+            this.state.linkBusy ||
+            !intake ||
+            !intake.reviewRevision ||
+            (leadId
+                ? !intake.candidates.some((item) => item.id === leadId)
+                : !intake.canDismiss)
+        ) {
+            return false;
+        }
+        const channelId = this.channelId;
+        this.state.linkBusy = true;
+        this.state.operationError = "";
+        try {
+            const response = await this.store.call("resolve_crm_intake_review", [
+                channelId,
+                intake.reviewRevision,
+                leadId,
+                Boolean(leadId),
+            ]);
+            validateEnvelope(response);
+            if (response.channel_id !== channelId || response.resolved !== true) {
+                throw new TypeError("Unexpected intake resolution response");
+            }
+            if (
+                !this.current() ||
+                this.channelId !== channelId ||
+                this.state.activeTab !== "opportunities"
+            ) {
+                return false;
+            }
+            this.state.operationStatus = leadId
+                ? "Vínculo inicial confirmado. O negócio e o vendedor podem ser alterados no CRM."
+                : "Entrada revisada e encerrada sem novo vínculo.";
+            return await this.load();
+        } catch (_error) {
+            if (this.current() && this.channelId === channelId) {
+                this.state.operationError =
+                    "Não foi possível resolver esta entrada. Atualize a conversa e confira seus acessos.";
             }
             return false;
         } finally {

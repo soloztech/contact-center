@@ -113,6 +113,138 @@ QUnit.module("contact_center_crm > customer records", (hooks) => {
     });
 
     QUnit.test(
+        "review candidates are bounded and invalid references are discarded",
+        (assert) => {
+            const intake = {
+                state: "review",
+                label: "Confirmar negócio",
+                review_revision: 3,
+                can_dismiss: true,
+                review_candidates: [
+                    {id: 11, name: "Current", closed: true},
+                    {id: -1, name: "Invalid"},
+                    {id: 12, name: "Other"},
+                    {id: 13, name: "Beyond limit"},
+                ],
+            };
+            const normalized = normalizeCustomerPage(
+                page([], {intake}),
+                404,
+                "opportunities"
+            ).intake;
+            assert.deepEqual(
+                normalized.candidates.map((value) => value.id),
+                [11, 12]
+            );
+            assert.strictEqual(normalized.reviewRevision, 3);
+            assert.strictEqual(normalized.candidates[0].closed, true);
+            assert.strictEqual(normalized.canDismiss, true);
+        }
+    );
+    QUnit.test(
+        "explicit intake confirmation uses the current receipt revision and reloads",
+        async (assert) => {
+            const calls = [];
+            let resolved = false;
+            const model = modelFor(async (method, args) => {
+                calls.push({method, args});
+                if (method === "resolve_crm_intake_review") {
+                    resolved = true;
+                    return {schema_version: 1, channel_id: 404, resolved: true};
+                }
+                return responseFor("opportunities", [], {
+                    intake: resolved
+                        ? {state: "resolved", label: "Confirmado"}
+                        : {
+                              state: "review",
+                              label: "Revisar",
+                              review_revision: 4,
+                              can_dismiss: true,
+                              review_candidates: [{id: 11, name: "Current"}],
+                          },
+                });
+            });
+            await model.load();
+            assert.strictEqual(await model.resolveIntake(999), false);
+            await model.resolveIntake(11);
+            assert.deepEqual(
+                calls.find((value) => value.method === "resolve_crm_intake_review")
+                    .args,
+                [404, 4, 11, true]
+            );
+            assert.strictEqual(model.state.intake.state, "resolved");
+            model.destroy();
+        }
+    );
+    QUnit.test(
+        "review panel renders candidates and resolves confirmation and dismissal",
+        async (assert) => {
+            for (const dismiss of [false, true]) {
+                const calls = [];
+                let resolved = false;
+                const store = modelFor(async (method, args) => {
+                    calls.push({method, args});
+                    if (method === "resolve_crm_intake_review") {
+                        resolved = true;
+                        return {schema_version: 1, channel_id: 404, resolved: true};
+                    }
+                    return responseFor("opportunities", [], {
+                        intake: resolved
+                            ? {state: "resolved", label: "Resolvido"}
+                            : {
+                                  state: "review",
+                                  label: "Revisar",
+                                  review_revision: 7,
+                                  can_dismiss: true,
+                                  review_candidates: dismiss
+                                      ? []
+                                      : [
+                                            {
+                                                id: 11,
+                                                name: "Closed candidate",
+                                                closed: true,
+                                            },
+                                        ],
+                              },
+                    });
+                }).store;
+                const target = document.createElement("div");
+                getFixture().appendChild(target);
+                await mount(CrmPanel, target, {
+                    env: {services: {action: {doAction: () => Promise.resolve()}}},
+                    props: {store, channelId: 404, onClose: () => false},
+                });
+                await nextTick();
+                const section = target.querySelector(".cc-crm-intake-review");
+                assert.ok(section, "real template renders review section");
+                assert.ok(
+                    section.textContent.includes(
+                        dismiss ? "Nenhum candidato disponível" : "Negócio encerrado"
+                    )
+                );
+                if (!dismiss)
+                    assert.ok(section.textContent.includes("Closed candidate"));
+                await click(
+                    target,
+                    dismiss
+                        ? ".cc-crm-intake-review .btn-link"
+                        : ".cc-crm-intake-review .btn-secondary"
+                );
+                await nextTick();
+                assert.deepEqual(
+                    calls.find((call) => call.method === "resolve_crm_intake_review")
+                        .args,
+                    [404, 7, dismiss ? false : 11, !dismiss]
+                );
+                assert.notOk(
+                    target.querySelector(".cc-crm-intake-review"),
+                    "resolved section disappears after reload"
+                );
+                assert.ok(target.textContent.includes("Resolvido"));
+            }
+        }
+    );
+    QUnit.test(
         "intake is optional, finite and clears on tab change or denial",
         async (assert) => {
             const intake = {state: "review", label: "Escolha o negócio manualmente."};

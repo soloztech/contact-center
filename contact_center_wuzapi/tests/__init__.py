@@ -10,3 +10,5 @@ from . import (
     test_webhook,
     test_wuzapi_config,
 )
+
+from . import test_provider_copy_guard

@@ -1,7 +1,7 @@
 {
     "name": "Contact Center CRM",
     "summary": "Customer opportunities, quotations, orders and invoices in the inbox",
-    "version": "16.0.1.4.1",
+    "version": "16.0.1.5.0",
     "category": "Sales/CRM",
     "author": "Soloz Technologies",
     "website": "https://github.com/soloztech/contact-center",
@@ -12,6 +12,7 @@
         "security/contact_center_crm_security.xml",
         "views/crm_lead_views.xml",
         "views/intake_views.xml",
+        "views/origin_review_views.xml",
         "data/intake_queue.xml",
     ],
     "assets": {

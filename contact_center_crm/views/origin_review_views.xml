@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="view_crm_origin_review_form" model="ir.ui.view">
+        <field name="name">contact.center.crm.origin.review.form</field>
+        <field name="model">contact.center.crm.origin.review</field>
+        <field name="arch" type="xml">
+            <form string="Revisar origem">
+                <group>
+                    <field name="lead_id" /><field name="channel_id" />
+                    <field name="evidence_key" invisible="1" /><field name="decision" />
+                    <field
+                        name="scope_start"
+                        attrs="{'invisible': [('decision', '!=', 'include')]}"
+                    />
+                    <field
+                        name="scope_end"
+                        attrs="{'invisible': [('decision', '!=', 'include')]}"
+                    />
+                </group>
+                <p
+                >A decisão vale somente para esta origem e este negócio. Excluir preserva a evidência sem dar crédito. Incluir exige período compatível; aceitar uma interação após encerramento exige reabertura explícita do negócio.</p>
+                <footer>
+                    <button
+                        name="action_confirm"
+                        string="Confirmar decisão"
+                        type="object"
+                        class="btn-primary"
+                    />
+                    <button
+                        name="action_split_period"
+                        string="Revisar ou repartir período"
+                        type="object"
+                    />
+                    <button string="Cancelar" special="cancel" />
+                </footer>
+            </form>
+        </field>
+    </record>
+</odoo>

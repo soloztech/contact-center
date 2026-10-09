@@ -3,3 +3,5 @@ access_crm_conversation_link_internal,Private CRM conversation link ledger,model
 access_crm_start_agent,Start CRM conversation,model_contact_center_crm_start,contact_center_base.group_contact_center_agent,1,1,1,1
 access_crm_scope_agent,Confirm business period,model_contact_center_crm_scope,contact_center_base.group_contact_center_agent,1,1,1,1
 access_crm_intake_gate_private,Private CRM intake fence,model_contact_center_crm_intake_gate,base.group_user,0,0,0,0
+access_crm_review_decision_private,Private CRM review decisions,model_contact_center_crm_review_decision,base.group_user,0,0,0,0
+access_crm_origin_review_agent,Review one business origin,model_contact_center_crm_origin_review,contact_center_base.group_contact_center_agent,1,1,1,1

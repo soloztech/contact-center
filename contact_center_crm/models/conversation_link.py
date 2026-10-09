@@ -342,12 +342,14 @@ class ContactCenterCrmConversationLink(models.Model):
         if end:
             domain.append(("scope_start", "<", end))
         if self.sudo().search_count(domain):
-            raise ValidationError(
+            error = ValidationError(
                 _(
                     "This period overlaps another business. "
                     "Ask an authorized CRM manager to review it."
                 )
             )
+            error.crm_scope_reason = "scope_overlap"
+            raise error
         values = row._successor_values(
             lead, "confirmed", scope_start=start, scope_end=end
         )

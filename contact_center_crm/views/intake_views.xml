@@ -18,9 +18,11 @@
                         <field name="crm_intake_user_id" />
                         <field name="crm_intake_team_id" />
                         <field name="crm_intake_enabled_at" />
+                        <field name="crm_origin_auto_enabled" />
+                        <field name="crm_origin_enabled_at" />
                     </group>
                     <p
-                    >Novas conversas diretas nesta caixa criam ou reutilizam um lead. Casos ambíguos exigem associação manual. A conversa permanece no Contact Center e o período comercial precisa ser confirmado na Jornada.</p>
+                    >Novas conversas diretas nesta caixa criam ou reutilizam um lead. Com a origem automática habilitada, somente leads novos com primeira entrada comprovada recebem um período comercial automático. Reutilizações e ambiguidades continuam em revisão na Jornada.</p>
                     <p
                     >Leads criados por esta entrada ficam excluídos das automações nativas e de Marketing e do enriquecimento IAP. Não há ativação automática posterior dessas automações.</p>
                 </page>

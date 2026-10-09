@@ -71,6 +71,9 @@
                                 </t>
                             </p>
                             <p t-if="row.scope === 'confirmed'">
+                                <span
+                                    t-if="row.scope_decision_mode === 'automatic_intake'"
+                                >Período inicial automático · </span>
                                 De
                                 <t t-esc="this.date(row.scope_start)" />
                                 até
@@ -168,7 +171,47 @@
                                     </t>
                                     <t t-else=""><t
                                             t-esc="this.origin(origin.type)"
-                                        /> · <t t-esc="this.date(origin.at)" /></t>
+                                        /> · <t t-esc="this.date(origin.at)" />
+                                        <p t-if="origin.campaign_name">Campanha: <strong
+                                                t-esc="origin.campaign_name"
+                                            /></p>
+                                        <p t-if="origin.ad_name">Anúncio: <t
+                                                t-esc="origin.ad_name"
+                                            /></p>
+                                        <p
+                                            t-if="origin.source_name || origin.medium_name"
+                                        >Origem: <t
+                                                t-esc="origin.source_name || 'Não identificada'"
+                                            /> · Meio: <t
+                                                t-esc="origin.medium_name || 'Não identificado'"
+                                            /></p>
+                                        <p t-if="origin.message_at">Visita: <t
+                                                t-esc="this.date(origin.visit_at)"
+                                            /> · Aquisição: <t
+                                                t-esc="this.date(origin.acquisition_at)"
+                                            /> · Clique: <t
+                                                t-esc="this.date(origin.clicked_at)"
+                                            /> · Mensagem: <t
+                                                t-esc="this.date(origin.message_at)"
+                                            /></p>
+                                        <p
+                                            t-if="origin.scope === 'pending'"
+                                            class="text-warning"
+                                        ><t
+                                                t-esc="origin.review_reason === 'after_closed' ? 'Nova interação após encerramento: revisar negócio e período.' : 'Origem capturada aguardando revisão do período.'"
+                                            /></p>
+                                        <p
+                                            t-if="origin.scope === 'ineligible'"
+                                            class="text-muted"
+                                        >Sem crédito para este negócio. A evidência permanece preservada.</p>
+                                    </t>
+                                    <button
+                                        t-if="origin.can_review"
+                                        type="button"
+                                        class="btn btn-link btn-sm cc-journey-review-origin"
+                                        t-att-disabled="state.opening"
+                                        t-on-click="() => this.reviewOrigin(row, origin)"
+                                    >Revisar origem</button>
                                 </li>
                             </ul>
                             <p
@@ -176,11 +219,11 @@
                                 class="text-muted"
                             >Outras origens Marketing exigem permissão adicional.</p>
                             <button
-                                t-if="area === 'linked' &amp;&amp; row.origins.website_has_more"
+                                t-if="area === 'linked' &amp;&amp; (row.origins.has_more || row.origins.website_has_more)"
                                 class="btn btn-link btn-sm cc-journey-more-origins"
                                 t-att-disabled="state.opening"
                                 t-on-click="() => this.moreOrigins(row)"
-                            >Há mais origens do site. Ver todas.</button>
+                            >Carregar mais origens</button>
                             <button
                                 class="btn btn-primary btn-sm me-2 cc-journey-open"
                                 t-att-disabled="state.opening"

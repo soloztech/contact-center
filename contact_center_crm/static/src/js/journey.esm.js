@@ -90,6 +90,7 @@ export class JourneyDialog extends Component {
                 paid_ad_click: "Clique em anúncio",
                 paid_ad_signal: "Sinal de anúncio",
                 unknown: "Origem não identificada",
+                website: "Site → WhatsApp",
             }[value] || "Origem de aquisição"
         );
     }
@@ -171,13 +172,13 @@ export class JourneyDialog extends Component {
         this.state.opening = true;
         this.state.error = "";
         try {
-            const action = await this.orm.call(
+            const page = await this.orm.call(
                 "crm.lead",
-                "action_website_journey_matches",
-                [[this.props.leadId], row.channel_id]
+                "get_contact_center_origin_page",
+                [[this.props.leadId], row.channel_id, row.origins.next_offset || 20]
             );
             if (this.isAlive()) {
-                await this.action.doAction(action);
+                row.origins = {...page, items: [...row.origins.items, ...page.items]};
             }
         } catch {
             if (this.isAlive()) {
@@ -187,6 +188,34 @@ export class JourneyDialog extends Component {
             if (this.isAlive()) {
                 this.state.opening = false;
             }
+        }
+    }
+    async reviewOrigin(row, origin) {
+        if (!this.isAlive() || this.state.opening || !origin.can_review) return;
+        this.state.opening = true;
+        this.state.error = "";
+        try {
+            const action = await this.orm.call(
+                "crm.lead",
+                "action_contact_center_origin_review",
+                [[this.props.leadId], row.channel_id, origin.evidence_key]
+            );
+            if (this.isAlive()) {
+                await this.action.doAction(action, {
+                    onClose: () => {
+                        if (this.isAlive()) {
+                            this.state.opening = false;
+                            this.load("linked", this.state.linked.offset);
+                        }
+                    },
+                });
+            }
+        } catch {
+            if (this.isAlive())
+                this.state.error =
+                    "Não foi possível revisar esta origem. Atualize a Jornada e confira seus acessos.";
+        } finally {
+            if (this.isAlive()) this.state.opening = false;
         }
     }
     scope(value) {

@@ -236,7 +236,18 @@ class TestCrmIntake(CrmIntakeCase):
                 projection = self.api.get_customer_records(binding.channel_id.id)[
                     "intake"
                 ]
-                self.assertEqual(set(projection), {"state", "label"})
+                self.assertEqual(
+                    set(projection),
+                    {
+                        "state",
+                        "label",
+                        "review_revision",
+                        "review_candidates",
+                        "can_dismiss",
+                    },
+                )
+                if kind in {"hidden", "global"}:
+                    self.assertFalse(projection["review_candidates"])
                 self.assertNotIn("Candidate", projection["label"])
 
     def test_archived_won_and_foreign_records_are_not_reused(self):

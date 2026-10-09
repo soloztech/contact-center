@@ -89,6 +89,18 @@ class CrmLead(models.Model):
         """Optional Marketing extension, never required to install CRM."""
         return {"status": "unavailable", "items": []}
 
+    def get_contact_center_origin_page(self, channel_id, offset=0):
+        self._journey_check()
+        if type(offset) is not int or offset < 0:
+            raise ValidationError(_("Invalid origin page."))
+        channel = self._journey_channel(channel_id)
+        link = self._journey_links().filtered(lambda row: row.channel_id == channel)
+        if len(link) != 1:
+            raise AccessError(_("The business association is unavailable."))
+        return self.with_context(crm_journey_origin_offset=offset)._journey_origins(
+            channel, link
+        )
+
     def get_contact_center_journey(self, area="linked", offset=0, limit=20):
         self._journey_check()
         if (
@@ -148,6 +160,7 @@ class CrmLead(models.Model):
                     "state": channel.contact_center_state,
                     "responsible": responsible.display_name if responsible else False,
                     "scope": link.scope_state if link else "customer_context",
+                    "scope_decision_mode": link.scope_decision_mode if link else "none",
                     "writer": link.writer if link else False,
                     "scope_start": fields.Datetime.to_string(link.scope_start)
                     if link and link.scope_start

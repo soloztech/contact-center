@@ -28,6 +28,43 @@
                     t-esc="state.intake.label"
                 />
                 <section
+                    t-if="state.intake &amp;&amp; state.intake.reviewRevision &amp;&amp; state.activeTab === 'opportunities'"
+                    class="cc-detail-section cc-crm-intake-review"
+                    aria-label="Revisar vínculo"
+                >
+                    <h3>Revisar vínculo</h3>
+                    <p
+                    >Confirme somente se esta conversa trata da mesma pessoa e do mesmo negócio.</p>
+                    <div
+                        t-foreach="state.intake.candidates"
+                        t-as="candidate"
+                        t-key="candidate.id"
+                    >
+                        <strong t-esc="candidate.name" />
+                        <p
+                            t-if="candidate.closed"
+                        >Negócio encerrado. O vínculo mantém apenas o contexto da conversa.</p>
+                        <button
+                            type="button"
+                            class="btn btn-secondary btn-sm my-2"
+                            t-att-disabled="state.linkBusy"
+                            t-on-click="() => model.resolveIntake(candidate.id)"
+                        >
+                            Confirmar mesma pessoa e negócio
+                        </button>
+                    </div>
+                    <p
+                        t-if="!state.intake.candidates.length"
+                    >Nenhum candidato disponível com seus acessos atuais.</p>
+                    <button
+                        t-if="state.intake.canDismiss"
+                        type="button"
+                        class="btn btn-link btn-sm"
+                        t-att-disabled="state.linkBusy"
+                        t-on-click="() => model.resolveIntake(false)"
+                    >Encerrar entrada sem vincular</button>
+                </section>
+                <section
                     class="cc-detail-section cc-crm-panel__customer"
                     t-if="state.partner"
                 >

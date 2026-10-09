@@ -1,13 +1,22 @@
+# Cooperative ORM policy and projection extensions have separate responsibilities.
+# pylint: disable=consider-merging-classes-inherited
 """Explicit, per-inbox CRM intake policy. No implicit historical activation."""
 
 import datetime
+import hashlib
+import hmac
+import secrets
 
 import psycopg2
 
 from odoo import SUPERUSER_ID, _, api, fields, models
 from odoo.exceptions import AccessError, ValidationError
 
+from odoo.addons.contact_center_base.services.phone import normalize_start_phone
+from odoo.addons.queue_job.exception import RetryableJobError
+
 INTAKE_TOKEN = object()
+COMPANY_GATE_TOKEN = object()
 ADMIN = "contact_center_base.group_contact_center_admin"
 POLICY_FIELDS = {"crm_intake_enabled", "crm_intake_user_id", "crm_intake_team_id"}
 POLICY_AUDIT = {
@@ -16,6 +25,29 @@ POLICY_AUDIT = {
     "crm_intake_binding_watermark",
 }
 GATE_NAMESPACE = 1135593801
+
+
+def brazil_mobile_pair(phone):
+    """Conservative comparison hint only; never establishes identity."""
+    if not isinstance(phone, str) or not phone.startswith("55"):
+        return False
+    subscriber = phone[4:]
+    if len(phone) == 12 and subscriber[:1] in "6789":
+        other = phone[:4] + "9" + subscriber
+        canonical = phone
+    elif len(phone) == 13 and subscriber[:1] == "9" and subscriber[1:2] in "6789":
+        other = phone[:4] + subscriber[1:]
+        canonical = other
+    else:
+        return False
+    try:
+        if normalize_start_phone("+" + phone, "BR") != phone:
+            return False
+        if normalize_start_phone("+" + other, "BR") != other:
+            return False
+    except ValueError:
+        return False
+    return canonical
 
 
 def require_intake_admin(env):
@@ -38,6 +70,11 @@ class ContactCenterCrmIntakeGate(models.Model):
     _description = "Private CRM Intake Company Fence"
 
     company_id = fields.Many2one("res.company", required=True, ondelete="cascade")
+    comparison_secret = fields.Char(
+        readonly=True,
+        copy=False,
+        groups=ADMIN,
+    )
     _sql_constraints = [
         ("company_unique", "unique(company_id)", "One intake gate per company.")
     ]
@@ -68,10 +105,108 @@ class ContactCenterCrmIntakeGate(models.Model):
                 with self.env.cr.savepoint():
                     gate = service.create({"company_id": company.id})
             except psycopg2.IntegrityError as error:
-                raise ValidationError(
-                    _("Another intake policy changed. Please retry.")
+                raise RetryableJobError(
+                    "CRM company fence bootstrap contention",
+                    seconds=2,
+                    ignore_retry=True,
                 ) from error
         return gate
+
+    @api.model
+    def _acquire_company(self, company):
+        """Common admission fence, before source configuration or claim locks."""
+        gate = self._ensure_company(company)
+        self.env.cr.execute(
+            "SELECT pg_try_advisory_xact_lock(%s, %s)",
+            [GATE_NAMESPACE, company.id],
+        )
+        if not self.env.cr.fetchone()[0]:
+            raise RetryableJobError("CRM company busy", seconds=2, ignore_retry=True)
+        gate.flush_recordset()
+        self.env.cr.execute(
+            "UPDATE contact_center_crm_intake_gate SET write_date=write_date WHERE id=%s",
+            [gate.id],
+        )
+        gate.invalidate_recordset()
+        return gate.with_context(
+            crm_company_gate=COMPANY_GATE_TOKEN, crm_company_gate_company=company.id
+        )
+
+    @api.model
+    def _acquire_company_ui(self, company):
+        """Interactive callers receive an actionable retry instead of a job error."""
+        try:
+            return self._acquire_company(company)
+        except RetryableJobError as error:
+            raise ValidationError(
+                _("Commercial intake is busy. Please retry in a few seconds.")
+            ) from error
+
+    def _comparison_keys(self, phone, country="BR"):
+        self.ensure_one()
+        if self.env.context.get("crm_company_gate") is not COMPANY_GATE_TOKEN:
+            raise AccessError(_("Phone comparison requires the admission fence."))
+        try:
+            normalized = normalize_start_phone(phone, country)
+        except ValueError:
+            return {"exact": False, "variant": False, "version": 1}
+        if not self.comparison_secret:
+            self.sudo().with_context(crm_intake_service=INTAKE_TOKEN).write(
+                {"comparison_secret": secrets.token_hex(32)}
+            )
+
+        def digest(kind, value):
+            if not value:
+                return False
+            material = "%s/1/%s/%s" % (self.company_id.id, kind, value)
+            return hmac.new(
+                bytes.fromhex(self.comparison_secret), material.encode(), hashlib.sha256
+            ).hexdigest()
+
+        return {
+            "exact": digest("phone", normalized),
+            "variant": digest("br-mobile-pair", brazil_mobile_pair(normalized)),
+            "version": 1,
+        }
+
+    def _phone_candidates(self, phone, country="BR", *, review_only=False):
+        """Private, complete-number probe shared by both admission adapters.
+
+        Include closed and company-less records so neither becomes a false
+        zero. The caller still has to prove business scope and native rights.
+        A structural BR pair is always a review hint, never an identity alias.
+        """
+        self.ensure_one()
+        if (
+            not review_only
+            and self.env.context.get("crm_company_gate") is not COMPANY_GATE_TOKEN
+        ):
+            raise AccessError(_("Candidate search requires the admission fence."))
+        Lead = self.env["crm.lead"].sudo().with_context(active_test=False)
+        try:
+            normalized = normalize_start_phone(phone, country)
+        except ValueError:
+            return Lead.browse(), Lead.browse()
+        pair = brazil_mobile_pair(normalized)
+        alternate = False
+        if pair:
+            alternate = pair if normalized != pair else pair[:4] + "9" + pair[4:]
+
+        def find(numbers):
+            return Lead.search(
+                [
+                    ("company_id", "in", [False, self.company_id.id]),
+                    "|",
+                    ("contact_center_phone_normalized", "in", numbers),
+                    ("contact_center_mobile_normalized", "in", numbers),
+                ],
+                order="id",
+                limit=3,
+            )
+
+        exact = find([normalized])
+        weak = find([alternate]) - exact if alternate else Lead.browse()
+        return exact, weak
 
 
 class ContactCenterAccount(models.Model):
