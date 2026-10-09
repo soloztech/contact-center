@@ -56,6 +56,9 @@
                     <p
                         t-if="!state.intake.candidates.length"
                     >Nenhum candidato disponível com seus acessos atuais.</p>
+                    <p
+                        t-if="state.intake.hasMoreCandidates"
+                    >Há outros negócios disponíveis. Consulte o CRM para escolher o vínculo correto.</p>
                     <button
                         t-if="state.intake.canDismiss"
                         type="button"

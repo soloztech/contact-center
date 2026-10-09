@@ -31,19 +31,28 @@ class ConversationLink(models.Model):
 
     def _crm_origin_pending_reason(self, occurred_at):
         self.ensure_one()
+        if not occurred_at:
+            return False
         if self.automatic_lineage:
+            if self.scope_decision_mode == "human" and not self._scope_contains(
+                occurred_at
+            ):
+                return False
             if (
                 self.origin_first_closed_at
                 and occurred_at >= self.origin_first_closed_at
             ):
                 return "after_closed"
-            if not self._scope_contains(occurred_at):
+            if (
+                self.scope_decision_mode == "automatic_intake"
+                and not self._scope_contains(occurred_at)
+            ):
                 return "outside_window"
         return False
 
     def _crm_origin_evidence_scope(self, occurred_at, evidence_key):
         self.ensure_one()
-        if self.state != "active" or self.scope_state != "confirmed":
+        if not occurred_at or self.state != "active" or self.scope_state != "confirmed":
             return "pending"
         reason = self._crm_origin_pending_reason(occurred_at)
         decision = (
@@ -156,6 +165,7 @@ class OriginReview(models.TransientModel):
 
     def onchange(self, values, field_name, field_onchange):
         self.check_access_rights("read")
+        self.check_access_rule("read")
         self._validate_references(
             dict(self.default_get(["lead_id", "channel_id", "evidence_key"]), **values)
         )
@@ -231,7 +241,17 @@ class OriginReview(models.TransientModel):
 
     def action_split_period(self):
         self.ensure_one()
-        return self.lead_id.action_contact_center_scope(self.channel_id.id)
+        self.check_access_rule("read")
+        channel, link, occurred_at = self.lead_id._journey_origin_review_context(
+            self.channel_id.id, self.evidence_key
+        )
+        action = self.lead_id.action_contact_center_scope(channel.id)
+        action["context"].update(
+            default_origin_review_evidence_key=self.evidence_key,
+            default_scope_start=link.scope_start,
+            default_scope_end=occurred_at,
+        )
+        return action
 
 
 class DecisionHooks(models.Model):
@@ -239,3 +259,59 @@ class DecisionHooks(models.Model):
 
     def _crm_origin_decision_changed(self, decision):
         return None
+
+
+class BusinessScopeOriginReview(models.TransientModel):
+    _inherit = "contact.center.crm.scope"
+
+    origin_review_evidence_key = fields.Char(readonly=True)
+
+    def action_confirm(self):
+        self.ensure_one()
+        key = self.origin_review_evidence_key
+        if not key:
+            return super().action_confirm()
+        self.check_access_rule("read")
+        lead = self.lead_id
+        channel, _old, occurred_at = lead._journey_origin_review_context(
+            self.channel_id.id, key
+        )
+        if (
+            self.scope_start <= occurred_at
+            and (not self.scope_end or occurred_at < self.scope_end)
+            and not lead_is_open(lead)
+        ):
+            raise ValidationError(
+                _("Reopen the business before including its return origin.")
+            )
+        result = super().action_confirm()
+        # The scope wizard created a successor. Decisions belong to that new
+        # generation, never to the retired predecessor or a different lead.
+        link = lead._journey_links().filtered(lambda row: row.channel_id == channel)
+        if len(link) != 1 or link.scope_state != "confirmed":
+            raise ValidationError(_("The resulting business period is unavailable."))
+        binding = (
+            self.env["contact.center.channel.binding"]
+            .sudo()
+            .with_context(active_test=False)
+            .search(
+                [
+                    ("channel_id", "=", channel.id),
+                    ("company_id", "=", link.company_id.id),
+                ],
+                order="id desc",
+                limit=1,
+            )
+        )
+        decision = self.env["contact.center.crm.review.decision"]._record(
+            binding,
+            kind="origin",
+            decision="include" if link._scope_contains(occurred_at) else "exclude",
+            revision=link.origin_policy_revision or 1,
+            lead=lead,
+            link=link,
+            evidence_key=key,
+            origin_reason=link._crm_origin_pending_reason(occurred_at) or "business",
+        )
+        link._crm_origin_decision_changed(decision)
+        return result

@@ -296,8 +296,14 @@ class TestConversationCrm(ConversationCrmCase):
             {"name": "Other Sales Team", "company_id": company.id, "user_id": False}
         )
         unlinked = self._lead("Unlinked company recomputation", self.person)
-        unlinked.write({"team_id": team.id, "user_id": False})
-        self.assertEqual(unlinked.company_id, company)
+        # Complete fixture recomputations with both companies visible; a dirty
+        # foreign-company Properties field must not poison the next savepoint.
+        foreign = unlinked.with_context(
+            allowed_company_ids=[self.env.company.id, company.id]
+        )
+        foreign.write({"team_id": team.id, "user_id": False})
+        foreign.env.flush_all()
+        self.assertEqual(foreign.company_id, company)
         previous_team = self.lead.team_id
         with self.assertRaises(ValidationError), self.env.cr.savepoint():
             self.lead.write({"team_id": team.id, "user_id": False})

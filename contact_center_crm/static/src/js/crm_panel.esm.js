@@ -154,6 +154,7 @@ function normalizeIntake(value, available) {
     ) {
         result.reviewRevision = value.review_revision;
         result.canDismiss = value.can_dismiss === true;
+        result.hasMoreCandidates = value.review_has_more === true;
         result.candidates = Array.isArray(value.review_candidates)
             ? value.review_candidates
                   .slice(0, 3)

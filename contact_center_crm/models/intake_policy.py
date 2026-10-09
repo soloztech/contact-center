@@ -169,7 +169,9 @@ class ContactCenterCrmIntakeGate(models.Model):
             "version": 1,
         }
 
-    def _phone_candidates(self, phone, country="BR", *, review_only=False):
+    def _phone_candidates(
+        self, phone, country="BR", *, review_only=False, review_actor=None
+    ):
         """Private, complete-number probe shared by both admission adapters.
 
         Include closed and company-less records so neither becomes a false
@@ -193,16 +195,56 @@ class ContactCenterCrmIntakeGate(models.Model):
             alternate = pair if normalized != pair else pair[:4] + "9" + pair[4:]
 
         def find(numbers):
-            return Lead.search(
-                [
-                    ("company_id", "in", [False, self.company_id.id]),
-                    "|",
-                    ("contact_center_phone_normalized", "in", numbers),
-                    ("contact_center_mobile_normalized", "in", numbers),
-                ],
+            phone_domain = [
+                "|",
+                ("contact_center_phone_normalized", "in", numbers),
+                ("contact_center_mobile_normalized", "in", numbers),
+            ]
+            if review_actor is not None:
+                # The human display probe applies native read rules before any
+                # presentation bound; inaccessible old rows cannot hide a target.
+                return (
+                    review_actor["crm.lead"]
+                    .with_context(active_test=False)
+                    .search(
+                        [("company_id", "=", self.company_id.id)] + phone_domain,
+                        order="active desc, id",
+                    )
+                )
+            open_domain = [
+                ("active", "=", True),
+                "|",
+                ("probability", "=", False),
+                ("probability", "<", 100),
+                "|",
+                ("stage_id", "=", False),
+                ("stage_id.is_won", "=", False),
+            ]
+            # Separate indexed probes: history never consumes the open bound.
+            own = Lead.search(
+                [("company_id", "=", self.company_id.id)] + open_domain + phone_domain,
                 order="id",
                 limit=3,
             )
+            unknown = Lead.search(
+                [("company_id", "=", False)] + open_domain + phone_domain,
+                order="id",
+                limit=3,
+            )
+            history = Lead.search(
+                [
+                    ("company_id", "=", self.company_id.id),
+                    "|",
+                    "|",
+                    ("active", "=", False),
+                    ("stage_id.is_won", "=", True),
+                    ("probability", ">=", 100),
+                ]
+                + phone_domain,
+                order="id",
+                limit=3,
+            )
+            return own | unknown | history
 
         exact = find([normalized])
         weak = find([alternate]) - exact if alternate else Lead.browse()
@@ -338,7 +380,7 @@ class ContactCenterAccount(models.Model):
         account = self.sudo()
         values = {"crm_intake_revision": account.crm_intake_revision + 1}
         if account.crm_intake_enabled:
-            self.env["contact.center.crm.intake.gate"]._ensure_company(
+            self.env["contact.center.crm.intake.gate"]._acquire_company_ui(
                 account.company_id
             )
             newest = (

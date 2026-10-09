@@ -77,7 +77,10 @@ class Account(models.Model):
         if POLICY.intersection(values):
             require_intake_admin(self.env)
         # Same company admission fence as both automatic creators, before account locks.
-        for company in self.sudo().mapped("company_id").sorted("id"):
+        companies = self.sudo().mapped("company_id")
+        if values.get("company_id"):
+            companies |= self.env["res.company"].browse(values["company_id"]).exists()
+        for company in companies.sorted("id"):
             self.env["contact.center.crm.intake.gate"]._acquire_company_ui(company)
         self.flush_recordset()
         self.env.cr.execute(
@@ -366,6 +369,18 @@ class ConversationLink(models.Model):
 
     @api.model_create_multi
     def create(self, vals_list):
+        protected = {
+            "scope_decision_mode",
+            "automatic_lineage",
+            "origin_first_closed_at",
+            "origin_anchor_source_id",
+            "origin_policy_revision",
+            "origin_review_reason",
+        }
+        if any("default_" + key in self.env.context for key in protected):
+            raise AccessError(
+                _("Business period provenance cannot be supplied as defaults.")
+            )
         values = []
         for incoming in vals_list:
             value = dict(incoming)

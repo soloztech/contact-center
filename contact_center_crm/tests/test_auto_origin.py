@@ -145,7 +145,9 @@ class TestCrmAutoOrigin(CrmIntakeCase):
         )
         binding = self._new(phone="5511988887777")
         with patch.object(
-            type(self.env.cr), "savepoint", wraps=self.env.cr.savepoint
+            type(binding),
+            "_crm_origin_note_first",
+            side_effect=AssertionError("unexpected marker"),
         ) as saved:
             self._message(binding)
         self.assertEqual(saved.call_count, 0)
@@ -171,3 +173,50 @@ class TestCrmAutoOrigin(CrmIntakeCase):
         )
         with self.assertRaises(ValidationError):
             self.account.write({"crm_origin_auto_enabled": True})
+
+    def test_bulk_lost_archive_and_stage_closure_only_stamp_lineage(self):
+        bindings = [
+            self._new(phone=number) for number in ("5511990011001", "5511990011002")
+        ]
+        leads = self.env["crm.lead"].browse()
+        for binding in bindings:
+            self._message(binding)
+            leads |= self._run(binding)
+        plain = self.env["crm.lead"].create(
+            {"name": "Unrelated plain business", "company_id": self.env.company.id}
+        )
+        links = leads._conversation_links()
+        self.assertEqual(len(links), 2)
+        with trap_jobs():
+            (leads | plain).action_set_lost()
+        first = {row.id: row.origin_first_closed_at for row in links}
+        self.assertTrue(all(first.values()))
+        with trap_jobs():
+            (leads | plain).write({"active": True, "probability": 10})
+            (leads | plain).write({"active": False})
+        self.assertEqual({row.id: row.origin_first_closed_at for row in links}, first)
+        self.assertFalse(plain._conversation_links())
+        with trap_jobs():
+            (leads | plain).write({"active": True, "probability": 10})
+            stage = self.env["crm.stage"].create(
+                {"name": "Mixed shared stage", "is_won": False}
+            )
+            (leads | plain).write({"stage_id": stage.id})
+            stage.write({"is_won": True})
+        self.assertEqual({row.id: row.origin_first_closed_at for row in links}, first)
+        self.assertFalse(plain._conversation_links())
+
+    def test_link_provenance_cannot_be_forged_by_rpc_defaults(self):
+        binding = self._new()
+        lead = self.env["crm.lead"].create(
+            {"name": "Manual business", "company_id": self.env.company.id}
+        )
+        for key, value in [
+            ("automatic_lineage", True),
+            ("origin_first_closed_at", "2000-01-01 00:00:00"),
+            ("origin_policy_revision", 44),
+        ]:
+            with self.assertRaises(AccessError):
+                self.env["contact.center.ui.api"].with_user(self.agent).with_context(
+                    **{"default_" + key: value}
+                ).link_crm_opportunity(binding.channel_id.id, lead.id)

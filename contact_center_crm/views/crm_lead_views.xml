@@ -74,7 +74,10 @@
                 >Confirme somente o período deste negócio. Origens anteriores ao início não recebem crédito. O fim é exclusivo; deixar vazio mantém o período aberto.</p>
             <group><field name="lead_id" /><field name="channel_id" /><field
                         name="scope_start"
-                    /><field name="scope_end" /></group>
+                    /><field name="scope_end" /><field
+                        name="origin_review_evidence_key"
+                        invisible="1"
+                    /></group>
             <footer><button
                         name="action_confirm"
                         type="object"

@@ -104,6 +104,8 @@ class ReviewDecision(models.Model):
             .with_context(crm_review_service=REVIEW_TOKEN)
             .create(
                 {
+                    "public_ref": str(uuid.uuid4()),
+                    "decided_at": fields.Datetime.now(),
                     "company_id": (link.company_id if link else binding.company_id).id,
                     "binding_id": binding.id,
                     "binding_ref": binding.id,
@@ -128,6 +130,9 @@ class Binding(models.Model):
     def _crm_intake_review_candidates(self, actor):
         candidates, _partner, _reason = self._crm_intake_native_candidates(actor)
         return candidates
+
+    def _crm_intake_review_match(self, lead, actor):
+        return "business"
 
     def _crm_intake_resolve_receipt(
         self, lead=False, *, kind="intake_resolution", comparison_mode="business"
@@ -177,7 +182,16 @@ class Binding(models.Model):
             # A display probe must not acquire the admission fence or write keys.
             candidates = self._crm_intake_review_candidates(actor)
             items = []
-            for candidate in candidates[:3]:
+            has_more = False
+            candidates = candidates.sorted(
+                lambda row: (
+                    not (
+                        row.active and not row.stage_id.is_won and row.probability < 100
+                    ),
+                    row.id,
+                )
+            )
+            for candidate in candidates:
                 native = (
                     actor["crm.lead"]
                     .with_context(active_test=False)
@@ -190,6 +204,9 @@ class Binding(models.Model):
                 except AccessError:
                     continue
                 if native.company_id == self.company_id:
+                    if len(items) == 3:
+                        has_more = True
+                        break
                     items.append(
                         {
                             "id": native.id,
@@ -202,6 +219,7 @@ class Binding(models.Model):
             result.update(
                 review_revision=self.sudo().crm_intake_revision,
                 review_candidates=items,
+                review_has_more=has_more,
                 can_dismiss=True,
             )
         except AccessError:
@@ -254,6 +272,7 @@ class UiApi(models.AbstractModel):
             channel_ids=channel.ids, touch_leads=True, touch_channels=True
         )
         self._crm_channel(channel.id, mutate=True)
+        self._lock_identity(binding.identity_id)
         binding.invalidate_recordset()
         current = binding._crm_intake_review_candidates(self.env)
         if binding.crm_intake_state != "review" or (
@@ -267,11 +286,11 @@ class UiApi(models.AbstractModel):
             self.env["contact.center.crm.conversation.link"].with_context(
                 **graph.env.context
             )._link(channel, lead, writer="manual", origin="linked")
-        weak = binding.sudo().crm_intake_reason == "phone_variant_review"
+        mode = binding._crm_intake_review_match(lead, self.env) if lead else "business"
         binding._crm_intake_resolve_receipt(
             lead,
-            kind="identity_confirmation" if weak and lead else "intake_resolution",
-            comparison_mode="br_pair" if weak and lead else "business",
+            kind="identity_confirmation" if mode == "br_pair" else "intake_resolution",
+            comparison_mode=mode,
         )
         return {"schema_version": 1, "channel_id": channel.id, "resolved": True}
 
@@ -282,6 +301,7 @@ class UiApi(models.AbstractModel):
         if binding.sudo().crm_intake_state == "review":
             # Exact-domain association still belongs to the existing endpoint.
             self.env["crm.lead"].check_access_rights("write")
+            opportunity_id = self._positive_id(opportunity_id, _("business ID"))
             lead = self.env["crm.lead"].browse(opportunity_id)
             lead.check_access_rule("write")
             self.env["contact.center.crm.intake.gate"]._acquire_company_ui(
