@@ -1730,26 +1730,28 @@ export class ContactCenterStore {
     get selectedConversation() {
         this.ensureDetailContext();
         const row = this.loadedConversation(this.state.selectedChannelId);
-        const detail = this.state.selectedDetail;
-        const snapshot = this.selectedDetailReady && detail.snapshot;
+        const snapshot = this.selectedDetailReady && this.state.selectedDetail.snapshot;
         if (!snapshot) {
             return row;
         }
         if (!row) {
             return snapshot;
         }
-        const combined = {...snapshot, ...row, projection: undefined};
-        combined.identity = sameNestedId(snapshot.identity, row.identity)
+        // Direct legacy callers can still supply full rows. Only their light
+        // fields may override the current authorized detail snapshot.
+        const light = conversationListRow(row);
+        const combined = {...snapshot, ...light, projection: undefined};
+        combined.identity = sameNestedId(snapshot.identity, light.identity)
             ? snapshot.identity
-                ? {...snapshot.identity, ...row.identity}
+                ? {...snapshot.identity, ...light.identity}
                 : false
-            : row.identity;
-        combined.account = sameNestedId(snapshot.account, row.account)
-            ? {...snapshot.account, ...row.account}
-            : row.account;
+            : light.identity;
+        combined.account = sameNestedId(snapshot.account, light.account)
+            ? {...snapshot.account, ...light.account}
+            : light.account;
         combined.group =
-            snapshot.group || row.group ? {...snapshot.group, ...row.group} : false;
-        combined.capabilities = {...snapshot.capabilities, ...row.capabilities};
+            snapshot.group || light.group ? {...snapshot.group, ...light.group} : false;
+        combined.capabilities = {...snapshot.capabilities, ...light.capabilities};
         return combined;
     }
 
@@ -1808,6 +1810,18 @@ export class ContactCenterStore {
 
     get permissionReady() {
         return this.selectedDetailReady;
+    }
+
+    captureLegacySelectedDetail() {
+        if (this.state.selectedDetail.status !== "idle") {
+            return;
+        }
+        const row = this.loadedConversation(this.state.selectedChannelId);
+        if (row && row.projection !== LIST_PROJECTION) {
+            // Preserve the already-selected legacy authorization when its row
+            // is about to become compact. Never authorize a compact row here.
+            this.seedSelectedDetail(row);
+        }
     }
 
     clearSelectedDetail() {
@@ -2275,6 +2289,7 @@ export class ContactCenterStore {
                 ? this.orm.silent
                 : this.orm;
         const epoch = this.ensureDetailContext();
+        this.captureLegacySelectedDetail();
         const answerGuard = {
             epoch,
             lifetime: this.detailLifetime,
@@ -3386,6 +3401,7 @@ export class ContactCenterStore {
     }
 
     applyConversationPage(payload, {reset, silent, previousConversation}) {
+        this.captureLegacySelectedDetail();
         // The personal filters are checked again when the page is committed:
         // a cached tail captured before a selection change must follow the
         // current selection.
@@ -6760,12 +6776,14 @@ export class ContactCenterStore {
         if (!channelId || this.destroyed) {
             return false;
         }
+        this.captureLegacySelectedDetail();
+        const authorized = this.selectedDetailReady;
         const request = ++this.detailRequest;
         const lifetime = this.detailLifetime;
         const applied = this.detailAppliedRevision;
         const generations = this.snapshotGenerations(channelId);
         const previous = this.state.selectedDetail;
-        const snapshot = this.selectedDetailReady
+        const snapshot = authorized
             ? previous.snapshot || this.loadedConversation(channelId)
             : false;
         this.state.selectedDetail = {
@@ -7898,8 +7916,9 @@ export class ContactCenterStore {
             return;
         }
         if (
-            payload.event_type === "member_seen" &&
-            (!this.currentUserId || payload.user_id !== this.currentUserId)
+            payload.event_type === "member_fetched" ||
+            (payload.event_type === "member_seen" &&
+                (!this.currentUserId || payload.user_id !== this.currentUserId))
         ) {
             return;
         }

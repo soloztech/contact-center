@@ -94,13 +94,25 @@ QUnit.module("contact_center_crm > authorized detail lifecycle", (hooks) => {
             });
             assert.notOk(await model.load());
             assert.deepEqual(calls, [], "no first-detail extension read");
+            model.destroy();
             store.selectedConversation = full();
             store.permissionReady = true;
-            assert.ok(await model.load());
+            // Production mounts the panel only after ready, binding its model
+            // to the authorized customer's key at that point.
+            const readyModel = new CrmPanelModel({
+                store,
+                channelId: 404,
+                action: {doAction: () => true},
+            });
+            assert.ok(await readyModel.load());
             assert.strictEqual(calls.length, 1);
             store.permissionReady = false;
-            assert.notOk(await model.load(), "a current denial stops extension reads");
-            model.destroy();
+            assert.notOk(
+                await readyModel.load(),
+                "a current denial stops extension reads"
+            );
+            assert.strictEqual(calls.length, 1, "denial admits no new customer read");
+            readyModel.destroy();
         }
     );
 
@@ -145,6 +157,7 @@ QUnit.module("contact_center_crm > authorized detail lifecycle", (hooks) => {
             class ReadyApp extends ContactCenterApp {
                 setup() {
                     this.store = this.props.store;
+                    this.store.state = useState(this.store.state);
                     this.ui = useState({sidePanel: "crm", stateChanging: false});
                 }
             }

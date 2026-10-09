@@ -212,9 +212,17 @@ QUnit.module("contact_center_ui > media presentation", () => {
         "read-only messages retain their download menu without mutation actions",
         (assert) => {
             const timeline = {
-                store: {capabilities: {}},
+                store: {
+                    capabilities: {},
+                    selectedConversation: {
+                        channel_id: 10,
+                        state: "resolved",
+                        can_send: false,
+                    },
+                },
                 messageActionAllowed: () => false,
             };
+            Object.setPrototypeOf(timeline, ConversationTimeline.prototype);
             const message = {media: [readyMedia()]};
             assert.ok(
                 ConversationTimeline.prototype.hasActions.call(timeline, message)

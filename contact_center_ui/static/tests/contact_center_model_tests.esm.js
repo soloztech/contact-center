@@ -59,6 +59,7 @@ import {
 import {
     ContactCenterStore,
     conversationFollowsCursor,
+    conversationListRow,
     formatOdooUtcDateTime,
     loadInboxDensityPreference,
     localDateTimeToOdooUtc,
@@ -143,6 +144,7 @@ import {
 import {BrowserAttention} from "@contact_center_ui/js/browser_attention.esm";
 import {ConnectionHealth} from "@contact_center_ui/js/connection_health.esm";
 import {conversationComposerAvailable} from "@contact_center_ui/js/contact_center_app.esm";
+import {e2Deferred, e2Full, e2Store} from "./e2_test_helpers.esm";
 import {reactive} from "@odoo/owl";
 import {hotkeyService} from "@web/core/hotkeys/hotkey_service";
 import {makeTestEnv} from "@web/../tests/helpers/mock_env";
@@ -227,6 +229,130 @@ function removeNeutralizedDatabaseBanner() {
 
 QUnit.module("contact_center_ui > conversation lifecycle", (hooks) => {
     hooks.beforeEach(removeNeutralizedDatabaseBanner);
+
+    QUnit.test(
+        "legacy selected full detail survives compact list and failed revalidation",
+        async (assert) => {
+            for (const refresh of ["list", "detail"]) {
+                const {store, server, calls} = e2Store();
+                const full = e2Full();
+                store.state.conversations = [full];
+                store.state.selectedChannelId = 10;
+                store.state.contactLinker.open = true;
+                store.state.attribution.phase = "ready";
+                assert.ok(
+                    store.permissionReady,
+                    "a selected legacy full DTO is authorized"
+                );
+                if (refresh === "list") {
+                    assert.ok(
+                        await store.loadConversations({reset: true, silent: true})
+                    );
+                    assert.strictEqual(
+                        store.state.conversations[0].identity.partner,
+                        undefined
+                    );
+                    assert.ok(store.state.contactLinker.open);
+                    assert.strictEqual(store.state.attribution.phase, "ready");
+                } else {
+                    assert.ok(await store.refreshSelectedConversation({silent: true}));
+                }
+                assert.ok(store.permissionReady);
+                assert.deepEqual(
+                    store.selectedConversation.identity.partner,
+                    full.identity.partner
+                );
+                server.respond = (method) =>
+                    method === "get_conversation"
+                        ? Promise.reject(new Error("temporary detail failure"))
+                        : undefined;
+                assert.notOk(await store.refreshSelectedConversation({silent: true}));
+                assert.ok(
+                    store.permissionReady,
+                    "failed revalidation keeps the authorized snapshot"
+                );
+                assert.ok(store.selectedConversation.can_send);
+                assert.notOk(calls.some((call) => call.method === "get_timeline"));
+                store.destroy();
+            }
+        }
+    );
+
+    QUnit.test(
+        "legacy rows only override light fields and never authorize a reopened selection",
+        async (assert) => {
+            const {store, server, calls} = e2Store();
+            await store.selectConversation(10);
+            const authorized = store.state.selectedDetail.snapshot;
+            store.state.conversations = [
+                e2Full(10, {
+                    name: "Recent list name",
+                    can_send: false,
+                    identity: {
+                        ...authorized.identity,
+                        partner: {id: 999, name: "Stale partner"},
+                    },
+                    account: {...authorized.account, can_start_conversation: false},
+                    retention: {preserve: false},
+                    capabilities: {view_attribution: false, delete_conversation: false},
+                }),
+            ];
+            assert.strictEqual(store.selectedConversation.name, "Recent list name");
+            assert.strictEqual(store.selectedConversation.identity.partner.id, 50);
+            assert.ok(store.selectedConversation.account.can_start_conversation);
+            assert.ok(store.selectedConversation.retention.preserve);
+            assert.ok(store.selectedConversation.can_send);
+            assert.ok(store.selectedConversation.capabilities.view_attribution);
+            assert.notOk(store.selectedConversation.capabilities.delete_conversation);
+            store.clearConversationSelection();
+            const pending = e2Deferred();
+            server.respond = (method) =>
+                method === "get_conversation" ? pending.promise : undefined;
+            calls.length = 0;
+            const reopening = store.selectConversation(10);
+            assert.notOk(
+                store.permissionReady,
+                "a closed full row has no current authorization"
+            );
+            assert.deepEqual(
+                calls.map((call) => call.method),
+                ["get_conversation", "get_timeline"]
+            );
+            pending.resolve({schema_version: SUPPORTED_SCHEMA_VERSION, item: e2Full()});
+            assert.ok(await reopening);
+            assert.ok(store.permissionReady);
+            store.destroy();
+        }
+    );
+
+    QUnit.test(
+        "legacy selected mutation answer survives an intervening compact list",
+        async (assert) => {
+            const {store, server} = e2Store();
+            const full = e2Full();
+            store.state.conversations = [full];
+            store.state.selectedChannelId = 10;
+            const pending = e2Deferred();
+            server.respond = (method) =>
+                method === "unlink_partner" ? pending.promise : undefined;
+            const unlinking = store.unlinkPartner();
+            assert.ok(await store.loadConversations({reset: true, silent: true}));
+            assert.ok(store.permissionReady);
+            pending.resolve({
+                schema_version: SUPPORTED_SCHEMA_VERSION,
+                identity: {...full.identity, partner: false},
+            });
+            assert.ok(await unlinking);
+            assert.strictEqual(store.selectedConversation.identity.partner, false);
+            assert.strictEqual(
+                store.state.conversations[0].identity.partner,
+                undefined
+            );
+            assert.ok(await store.loadConversations({reset: true, silent: true}));
+            assert.strictEqual(store.selectedConversation.identity.partner, false);
+            store.destroy();
+        }
+    );
 
     function lifecycleStore() {
         const store = new ContactCenterStore({
@@ -1579,8 +1705,12 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             );
             assert.strictEqual(store.state.conversations[0].name, "Leonardo Hirata");
             assert.deepEqual(
-                partnerCompanyForIdentity(store.state.conversations[0].identity),
+                partnerCompanyForIdentity(store.selectedConversation.identity),
                 linkedIdentity.partner.company
+            );
+            assert.strictEqual(
+                store.state.conversations[0].identity.partner,
+                undefined
             );
             assert.notOk(
                 store.openCompanyLinker("search"),
@@ -1633,6 +1763,12 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             const store = new ContactCenterStore({
                 orm: {
                     async call(_model, method) {
+                        if (method === "get_conversation") {
+                            return {
+                                schema_version: SUPPORTED_SCHEMA_VERSION,
+                                item: e2Full(31, {identity: createdIdentity}),
+                            };
+                        }
                         if (method !== "create_and_link_partner_company") {
                             throw new Error(`Unexpected method: ${method}`);
                         }
@@ -1663,6 +1799,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             );
             assert.strictEqual(createCalls, 1);
 
+            store.clearSelectedDetail();
             store.state.selectedChannelId = 32;
             store.closeCompanyLinker();
             assert.ok(store.openCompanyLinker("search"));
@@ -1674,11 +1811,21 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             assert.ok(await firstSubmit);
             assert.ok(store.state.companyLinker.open);
             assert.strictEqual(store.state.companyLinker.channelId, 32);
+            const originalRow = store.state.conversations.find(
+                (item) => item.channel_id === 31
+            );
+            assert.strictEqual(originalRow.identity.name, createdIdentity.name);
             assert.strictEqual(
-                store.state.conversations.find((item) => item.channel_id === 31)
-                    .identity.partner.company.id,
+                originalRow.identity.partner,
+                undefined,
+                "a completed background write never puts private detail into a row"
+            );
+            store.loadTimeline = async () => true;
+            assert.ok(await store.selectConversation(31));
+            assert.strictEqual(
+                store.selectedConversation.identity.partner.company.id,
                 27,
-                "the original conversation still receives the committed identity"
+                "reopening authorizes and receives the committed company detail"
             );
         }
     );
@@ -1770,7 +1917,11 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 identity: linkedFirstIdentity,
             });
             assert.ok(await pendingLink);
-            assert.strictEqual(store.state.conversations[0].identity.partner.id, 12);
+            assert.strictEqual(store.selectedConversation.identity.partner.id, 12);
+            assert.strictEqual(
+                store.state.conversations[0].identity.partner,
+                undefined
+            );
             assert.ok(store.state.companyLinker.open);
             assert.strictEqual(store.state.companyLinker.partnerId, 12);
             assert.notOk(store.companyOperationPending(31, 11));
@@ -1983,7 +2134,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 args: [31, 71],
             });
             assert.strictEqual(
-                store.state.conversations[0].identity.partner.is_company,
+                store.selectedConversation.identity.partner.is_company,
                 true
             );
             assert.notOk(store.state.contactLinker.open);
@@ -2299,7 +2450,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             });
             assert.ok(await pending, "the server completed the guarded unlink");
             assert.strictEqual(
-                store.state.conversations[0].identity.partner.id,
+                store.selectedConversation.identity.partner.id,
                 18,
                 "a late response cannot replace the newer linked partner"
             );
@@ -2975,6 +3126,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 hasActions: ConversationTimeline.prototype.hasActions,
                 cancelEdit: ConversationTimeline.prototype.cancelEdit,
             };
+            Object.setPrototypeOf(timeline, ConversationTimeline.prototype);
             ConversationTimeline.prototype.reconcileInteractionPolicy.call(timeline);
             assert.strictEqual(timeline.ui.reactionPickerId, 71);
             assert.strictEqual(timeline.ui.editingId, 71);
@@ -3024,6 +3176,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 hasActions: ConversationTimeline.prototype.hasActions,
                 cancelEdit: ConversationTimeline.prototype.cancelEdit,
             };
+            Object.setPrototypeOf(timeline, ConversationTimeline.prototype);
             assert.ok(
                 ConversationTimeline.prototype.hasActions.call(timeline, message),
                 "a diagnostic-only message still exposes its menu"
@@ -3100,6 +3253,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 cancelEdit: ConversationTimeline.prototype.cancelEdit,
                 closeActions: ConversationTimeline.prototype.closeActions,
             };
+            Object.setPrototypeOf(timeline, ConversationTimeline.prototype);
 
             assert.ok(
                 await ConversationTimeline.prototype.viewSourceWebhook.call(timeline, {
@@ -3315,6 +3469,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             },
             messageActionAllowed: ConversationTimeline.prototype.messageActionAllowed,
         };
+        Object.setPrototypeOf(timeline, ConversationTimeline.prototype);
         for (const contentType of [
             "call.offer",
             "call.accept",
@@ -4219,7 +4374,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             );
             assert.deepEqual(
                 store.state.conversations,
-                [valid],
+                [conversationListRow(valid)],
                 "duplicate channel IDs keep the first safe projection"
             );
             let selected = false;
@@ -4295,7 +4450,9 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 "a selection outside the new scope is cleared, not replaced"
             );
             assert.deepEqual(selections, []);
-            assert.deepEqual(store.responsibilityVisibleConversations, [mine]);
+            assert.deepEqual(store.responsibilityVisibleConversations, [
+                conversationListRow(mine),
+            ]);
             assert.deepEqual(requestedFilters.pop(), {
                 states: ["open"],
                 responsibility: "mine",
@@ -4418,7 +4575,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 previousSelected: 20,
             });
 
-            assert.deepEqual(store.state.conversations, [next]);
+            assert.deepEqual(store.state.conversations, [conversationListRow(next)]);
             assert.deepEqual(selections, [], "no other conversation is opened");
             assert.strictEqual(store.state.selectedChannelId, false);
         }
@@ -8026,6 +8183,11 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             assert.notOk(await store.selectConversation(20));
             assert.strictEqual(store.state.selectedChannelId, 10);
             unregister();
+            store.call = async (method, args) => {
+                assert.strictEqual(method, "get_conversation");
+                assert.deepEqual(args, [20]);
+                return {schema_version: SUPPORTED_SCHEMA_VERSION, item: e2Full(20)};
+            };
             store.loadTimeline = async () => true;
             assert.ok(await store.selectConversation(20));
             assert.strictEqual(store.state.selectedChannelId, 20);
@@ -9547,7 +9709,20 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             ];
             store.state.selectedChannelId = selected.channel_id;
             const requestedLimits = [];
-            store.call = async (_method, _args, kwargs) => {
+            const requestedDetails = [];
+            store.call = async (method, args, kwargs) => {
+                if (method === "get_conversation") {
+                    requestedDetails.push(args[0]);
+                    return {
+                        schema_version: SUPPORTED_SCHEMA_VERSION,
+                        item: e2Full(args[0], {
+                            name: store.loadedConversation(args[0]).name,
+                            last_activity_at: store.loadedConversation(args[0])
+                                .last_activity_at,
+                        }),
+                    };
+                }
+                assert.strictEqual(method, "list_conversations");
                 requestedLimits.push(kwargs.limit);
                 return {
                     schema_version: SUPPORTED_SCHEMA_VERSION,
@@ -9572,6 +9747,11 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             }
 
             assert.deepEqual(requestedLimits, [50, 50, 50]);
+            assert.deepEqual(
+                requestedDetails,
+                [999, 999, 999],
+                "each preserved selection is authorized again"
+            );
             assert.strictEqual(store.state.conversations.length, 51);
             assert.strictEqual(store.selectedConversation.channel_id, 999);
         }
@@ -9597,7 +9777,20 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             );
             store.state.selectedChannelId = 225;
             const requestedLimits = [];
-            store.call = async (_method, _args, kwargs) => {
+            const requestedDetails = [];
+            store.call = async (method, args, kwargs) => {
+                if (method === "get_conversation") {
+                    requestedDetails.push(args[0]);
+                    return {
+                        schema_version: SUPPORTED_SCHEMA_VERSION,
+                        item: e2Full(args[0], {
+                            name: store.loadedConversation(args[0]).name,
+                            last_activity_at: store.loadedConversation(args[0])
+                                .last_activity_at,
+                        }),
+                    };
+                }
+                assert.strictEqual(method, "list_conversations");
                 requestedLimits.push(kwargs.limit);
                 const start = requestedLimits.length === 1 ? 0 : 100;
                 return {
@@ -9621,6 +9814,11 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 true
             );
             assert.deepEqual(requestedLimits, [100, 100]);
+            assert.deepEqual(
+                requestedDetails,
+                [225],
+                "the cached tail selection is authorized again"
+            );
             assert.strictEqual(
                 store.state.conversations.length,
                 250,
@@ -9960,7 +10158,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             });
             assert.strictEqual(await staleLoad, false);
             assert.deepEqual(store.state.conversations, [
-                {channel_id: 20, name: "Current"},
+                conversationListRow({channel_id: 20, name: "Current"}),
             ]);
             assert.strictEqual(
                 store.state.selectedChannelId,
@@ -9988,8 +10186,8 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             };
             assert.strictEqual(await store.loadConversations({reset: false}), true);
             assert.deepEqual(store.state.conversations, [
-                {channel_id: 20, name: "Current updated"},
-                {channel_id: 30, name: "Next"},
+                conversationListRow({channel_id: 20, name: "Current updated"}),
+                conversationListRow({channel_id: 30, name: "Next"}),
             ]);
             assert.strictEqual(store.state.listPhase, "ready");
         }
@@ -11012,6 +11210,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
         "never merges a realtime refresh into the previous conversation",
         async (assert) => {
             const pending = [];
+            const detailCalls = [];
             const store = new ContactCenterStore({
                 orm: {},
                 busService: {},
@@ -11028,6 +11227,13 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 if (method === "mark_seen") {
                     return Promise.resolve({schema_version: SUPPORTED_SCHEMA_VERSION});
                 }
+                if (method === "get_conversation") {
+                    detailCalls.push(args);
+                    return Promise.resolve({
+                        schema_version: SUPPORTED_SCHEMA_VERSION,
+                        item: e2Full(args[0], {name: "Conversation B"}),
+                    });
+                }
                 assert.strictEqual(method, "get_timeline");
                 return new Promise((resolve) => pending.push({args, resolve}));
             };
@@ -11035,6 +11241,11 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             const initialB = store.selectConversation(20);
             assert.deepEqual(store.state.messages, [], "A is cleared immediately");
             const liveB = store.refreshLatestTimeline();
+            assert.deepEqual(
+                detailCalls,
+                [[20]],
+                "B has exactly one detail authorization"
+            );
             assert.deepEqual(
                 pending.map(({args}) => args),
                 [[20], [20]],

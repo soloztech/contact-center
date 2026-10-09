@@ -62,6 +62,7 @@ ComposerMarker.props = ["*"];
 class DetailApp extends ContactCenterApp {
     setup() {
         this.store = this.props.store;
+        this.store.state = useState(this.store.state);
         this.ui = useState({sidePanel: "contact", stateChanging: false});
     }
 }
