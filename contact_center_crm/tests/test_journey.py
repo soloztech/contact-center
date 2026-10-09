@@ -1,6 +1,7 @@
 import datetime
 import runpy
 from pathlib import Path
+from unittest.mock import patch
 
 from odoo.api import call_kw
 from odoo.exceptions import AccessError, ValidationError
@@ -567,3 +568,19 @@ class TestBusinessJourney(ConversationCrmCase):
         row = self._context()
         with self.assertRaises(ValidationError):
             self._confirm(row)
+
+    def test_journey_resets_untrusted_origin_page_context(self):
+        self._context()
+        lead = self.lead.with_user(self.agent)
+        observed = []
+
+        def origins(record, _channel, _link):
+            observed.append(record.env.context.get("crm_journey_origin_offset"))
+            return {"status": "unavailable", "items": []}
+
+        with patch.object(type(lead), "_journey_origins", origins):
+            for value in ("x", -1, True):
+                lead.with_context(
+                    crm_journey_origin_offset=value
+                ).get_contact_center_journey()
+        self.assertEqual(observed, [0, 0, 0])

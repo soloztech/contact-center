@@ -168,7 +168,9 @@ class CrmLead(models.Model):
                     "scope_end": fields.Datetime.to_string(link.scope_end)
                     if link and link.scope_end
                     else False,
-                    "origins": self._journey_origins(channel, link),
+                    "origins": self.with_context(
+                        crm_journey_origin_offset=0
+                    )._journey_origins(channel, link),
                 }
             )
         return {

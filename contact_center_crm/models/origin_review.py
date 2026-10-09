@@ -279,13 +279,14 @@ class BusinessScopeOriginReview(models.TransientModel):
             return super().action_confirm()
         self.check_access_rule("read")
         lead = self.lead_id
-        channel, _old, occurred_at = lead._journey_origin_review_context(
+        channel, old, occurred_at = lead._journey_origin_review_context(
             self.channel_id.id, key
         )
         if (
             self.scope_start <= occurred_at
             and (not self.scope_end or occurred_at < self.scope_end)
             and not lead_is_open(lead)
+            and old._crm_origin_pending_reason(occurred_at) == "after_closed"
         ):
             raise ValidationError(
                 _("Reopen the business before including its return origin.")

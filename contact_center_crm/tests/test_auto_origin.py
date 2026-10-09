@@ -1,6 +1,8 @@
 import datetime
 from unittest.mock import patch
 
+from psycopg2.errors import LockNotAvailable
+
 from odoo import fields
 from odoo.exceptions import AccessError, ValidationError
 from odoo.tests import tagged
@@ -220,3 +222,20 @@ class TestCrmAutoOrigin(CrmIntakeCase):
                 self.env["contact.center.ui.api"].with_user(self.agent).with_context(
                     **{"default_" + key: value}
                 ).link_crm_opportunity(binding.channel_id.id, lead.id)
+
+    def test_busy_optional_marker_preserves_received_message_and_context(self):
+        binding = self._new()
+        with patch.object(
+            type(binding),
+            "_crm_origin_note_first",
+            side_effect=LockNotAvailable("busy"),
+        ):
+            message = self._message(binding)
+        self.assertTrue(message.exists())
+        self.assertFalse(binding.crm_origin_first_source_id)
+        lead = self._run(binding)
+        self.assertTrue(lead.exists())
+        self.assertEqual(lead._conversation_links().scope_state, "context")
+        self.assertEqual(
+            lead._conversation_links().origin_review_reason, "anchor_unavailable"
+        )

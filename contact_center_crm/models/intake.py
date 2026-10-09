@@ -902,6 +902,12 @@ class ContactCenterMessageBinding(models.Model):
                 try:
                     with self.env.cr.savepoint():
                         binding._crm_origin_note_first(message.sudo())
+                except LockNotAvailable:
+                    # The optional origin marker cannot consume an ingress
+                    # attempt. A missing anchor keeps CRM attribution in context.
+                    _logger.info(
+                        "CRM first inbound marker busy for binding %s", binding.id
+                    )
                 except OperationalError:
                     raise
                 except Exception as error:
