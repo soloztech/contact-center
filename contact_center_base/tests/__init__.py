@@ -28,6 +28,7 @@ from . import (
     test_multi_access_ui,
     test_onboarding_recovery,
     test_partner_companies,
+    test_payload_expiry,
     test_phase1_concurrency,
     test_phase1_delivery,
     test_phase2_access_scope,

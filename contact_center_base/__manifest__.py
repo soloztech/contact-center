@@ -1,7 +1,7 @@
 {
     "name": "Contact Center Base",
     "summary": "Provider-neutral contact center foundation",
-    "version": "16.0.1.11.4",
+    "version": "16.0.1.11.5",
     "category": "Productivity/Discuss",
     "author": "Soloz Technologies",
     "website": "https://github.com/soloztech/contact-center",
@@ -19,6 +19,7 @@
         "data/connection_health_cron.xml",
         "data/onboarding_cron.xml",
         "data/media_cron.xml",
+        "data/payload_expiry_cron.xml",
         "views/account_views.xml",
         "views/onboarding_views.xml",
         "views/identity_views.xml",
