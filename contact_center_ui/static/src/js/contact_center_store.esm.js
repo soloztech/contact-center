@@ -5329,10 +5329,17 @@ export class ContactCenterStore {
         signal = undefined,
         metadata = {}
     ) {
-        const conversation = this.state.conversations.find(
-            (item) => item.channel_id === channelId
-        );
-        if (!conversationUiPolicy(conversation).allow_attachments || !file) {
+        // Compact inbox rows omit send permissions and media capabilities.
+        // The open conversation's authorized detail owns upload permission.
+        const conversation = this.selectedConversation;
+        if (
+            this.destroyed ||
+            !this.permissionReady ||
+            !conversation ||
+            conversation.channel_id !== channelId ||
+            !conversationUiPolicy(conversation).allow_attachments ||
+            !file
+        ) {
             throw new Error("Esta conversa não está disponível para anexos.");
         }
         this.activeUploads += 1;

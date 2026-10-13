@@ -231,6 +231,100 @@ QUnit.module("contact_center_ui > conversation lifecycle", (hooks) => {
     hooks.beforeEach(removeNeutralizedDatabaseBanner);
 
     QUnit.test(
+        "uploads using authorized detail after compact refresh",
+        async (assert) => {
+            const full = e2Full(10, {
+                capabilities: {media: {document: {enabled: true}}},
+            });
+            const {store} = e2Store({items: [full]});
+            const uploads = [];
+            store.uploadRequest = async (values) => {
+                uploads.push(values);
+                return {media_ref: "authorized-pdf"};
+            };
+            const file = {name: "catalog.pdf", type: "application/pdf", size: 1200};
+            try {
+                assert.ok(await store.selectConversation(10));
+                assert.ok(await store.loadConversations({reset: true, silent: true}));
+                assert.notOk(
+                    conversationUiPolicy(store.state.conversations[0])
+                        .allow_attachments,
+                    "compact rows omit attachment permissions"
+                );
+                assert.ok(
+                    conversationUiPolicy(store.selectedConversation).allow_attachments
+                );
+                const uploaded = await store.uploadMedia(file, "catalog-upload", 10);
+                assert.strictEqual(uploaded.media_ref, "authorized-pdf");
+                assert.strictEqual(uploads.length, 1);
+                assert.strictEqual(uploads[0].channelId, 10);
+                assert.strictEqual(uploads[0].file, file);
+                assert.notOk(store.state.uploading);
+                assert.strictEqual(store.activeUploads, 0);
+            } finally {
+                store.destroy();
+            }
+        }
+    );
+
+    QUnit.test("uploads require current selected detail permission", async (assert) => {
+        const full = e2Full(10, {
+            capabilities: {media: {document: {enabled: true}}},
+        });
+        for (const scenario of [
+            "loading",
+            "denied",
+            "error",
+            "different_channel",
+            "no_media",
+            "cannot_send",
+            "changed_context",
+            "destroyed",
+        ]) {
+            const {store, user} = e2Store({items: [full]});
+            let uploads = 0;
+            store.uploadRequest = async () => {
+                uploads += 1;
+                return {};
+            };
+            store.state.selectedChannelId = 10;
+            store.seedSelectedDetail(full);
+            let channelId = 10;
+            if (["loading", "denied", "error"].includes(scenario)) {
+                store.state.selectedDetail.status = scenario;
+                if (scenario === "loading") {
+                    store.state.selectedDetail.snapshot = false;
+                }
+            } else if (scenario === "different_channel") {
+                channelId = 11;
+            } else if (scenario === "no_media") {
+                store.seedSelectedDetail({...full, capabilities: {}});
+            } else if (scenario === "cannot_send") {
+                store.seedSelectedDetail({...full, can_send: false});
+            } else if (scenario === "changed_context") {
+                user.context.allowed_company_ids = [2];
+            } else {
+                store.destroy();
+            }
+            try {
+                await assert.rejects(
+                    store.uploadMedia(
+                        {name: "catalog.pdf"},
+                        "catalog-upload",
+                        channelId
+                    ),
+                    /Esta conversa não está disponível para anexos/,
+                    scenario
+                );
+                assert.strictEqual(uploads, 0, `${scenario}: no upload request`);
+                assert.strictEqual(store.activeUploads, 0);
+            } finally {
+                store.destroy();
+            }
+        }
+    });
+
+    QUnit.test(
         "legacy selected full detail survives compact list and failed revalidation",
         async (assert) => {
             for (const refresh of ["list", "detail"]) {
