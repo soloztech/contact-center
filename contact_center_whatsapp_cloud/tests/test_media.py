@@ -248,7 +248,7 @@ class TestWhatsAppCloudMedia(
         self.assertEqual(
             extension["sticker_max_bytes"], {"static": 100_000, "animated": 500_000}
         )
-        self.assertEqual(extension["inbound_media_max_bytes"]["document"], 50 * MiB)
+        self.assertEqual(extension["inbound_media_max_bytes"]["document"], 100_000_000)
         self.assertFalse(capabilities["media"]["audio"]["caption"])
         self.assertFalse(capabilities["edit_message"])
         self.assertFalse(capabilities["delete_message"])

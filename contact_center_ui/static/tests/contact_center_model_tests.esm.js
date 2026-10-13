@@ -5038,6 +5038,36 @@ QUnit.module("contact_center_ui > model", (hooks) => {
         }
     );
 
+    QUnit.test("validates decimal media limits and smaller provider caps", (assert) => {
+        assert.strictEqual(formatFileSize(100000000), "100 MB");
+        for (const [kind, type, name] of [
+            ["video", "video/mp4", "project.mp4"],
+            ["document", "application/pdf", "catalog.pdf"],
+        ]) {
+            const capabilities = {media: {[kind]: {enabled: true}}};
+            assert.ok(
+                validateMediaFile({name, type, size: 100000000}, capabilities).ok
+            );
+            assert.strictEqual(
+                validateMediaFile({name, type, size: 100000001}, capabilities).error,
+                "O arquivo excede o limite de 100 MB."
+            );
+        }
+        const cloud = {media: {video: {enabled: true, max_bytes: 16000000}}};
+        assert.ok(
+            validateMediaFile(
+                {name: "project.mp4", type: "video/mp4", size: 16000000},
+                cloud
+            ).ok
+        );
+        assert.notOk(
+            validateMediaFile(
+                {name: "project.mp4", type: "video/mp4", size: 16000001},
+                cloud
+            ).ok
+        );
+    });
+
     QUnit.test("validates composer files against provider capabilities", (assert) => {
         const capabilities = {
             media: {
@@ -5120,7 +5150,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 {name: "painel.jpg", type: "image/jpeg", size: 4097},
                 capabilities
             ).error,
-            "O arquivo excede o limite de 4.0 KB."
+            "O arquivo excede o limite de 4.1 KB."
         );
         assert.strictEqual(formatFileSize(1536), "1.5 KB");
         assert.ok(
@@ -5132,7 +5162,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 },
                 {media: {document: {enabled: true}}}
             ).ok,
-            "generic document limits match the backend 50 MB contract"
+            "generic document limits match the backend upload contract"
         );
         assert.strictEqual(
             messagePreviewText({media: [{kind: "audio", is_voice_note: true}]}),

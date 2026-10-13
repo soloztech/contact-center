@@ -548,7 +548,7 @@ class TestWuzapiAdapter(WuzapiCase):
             capabilities["media"]["video"],
             {
                 "enabled": True,
-                "max_bytes": 50 * 1024 * 1024,
+                "max_bytes": 100_000_000,
                 "mimetypes": ["video/3gpp", "video/mp4"],
             },
         )
@@ -568,6 +568,7 @@ class TestWuzapiAdapter(WuzapiCase):
             },
         )
         self.assertNotIn("mimetypes", capabilities["media"]["document"])
+        self.assertEqual(capabilities["media"]["document"]["max_bytes"], 100_000_000)
         self.assertEqual(
             capabilities["conversation_types"]["group"],
             {

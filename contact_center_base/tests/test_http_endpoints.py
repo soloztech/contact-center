@@ -313,6 +313,24 @@ class TestContactCenterHttpEndpoints(HttpCase):
             files={"file": ("pixel.png", _PNG, "image/png")},
         )
 
+    def test_document_upload_streams_above_default_form_memory_limit(self):
+        self.connection.write(
+            {"capabilities_json": {"send_message": True, "media": {
+                "document": {"enabled": True, "max_bytes": 100_000_000}
+            }}}
+        )
+        content = b"%PDF-1.3\n" + bytes(range(256)) * (12 * 1024 * 1024 // 256)
+        reference = str(uuid.uuid4())
+        response = self.url_open(
+            "/contact_center/media/upload",
+            data={"channel_id": str(self.channel.id), "client_upload_id": reference,
+                  "csrf_token": self._csrf_token()},
+            files={"file": ("synthetic.pdf", content, "application/pdf")},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["media_ref"], reference)
+        self.assertEqual(response.json()["media"]["size_bytes"], len(content))
+
     def test_native_discuss_and_chat_routes_reject_contact_center_channel(self):
         invitation = self.url_open("/chat/%s/%s" % (self.channel.id, self.channel.uuid))
         self.assertEqual(invitation.status_code, 404)

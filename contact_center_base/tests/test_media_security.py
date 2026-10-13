@@ -134,6 +134,15 @@ def _fragmented_recorded_mp4():
 
 
 class TestContactCenterMediaSecurity(SavepointCase):
+    def test_video_document_decimal_upload_boundary(self):
+        for kind, mimetype in [("video", "video/mp4"), ("document", "application/pdf")]:
+            with self.subTest(kind=kind):
+                self.assertEqual(
+                    validate_media_metadata(kind, mimetype, 100_000_000), mimetype
+                )
+                with self.assertRaisesRegex(ValidationError, "100.0 MB"):
+                    validate_media_metadata(kind, mimetype, 100_000_001)
+
     def test_recorded_audio_upload_metadata_is_strict(self):
         self.assertEqual(
             _audio_upload_metadata({"is_voice_note": "1", "duration_seconds": "12"}),

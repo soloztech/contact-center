@@ -69,7 +69,7 @@ def send_limit(kind):
 
 
 def receive_limit(kind):
-    """Inbound downloads are bounded by the core limit (document: 50 MiB)."""
+    """Inbound downloads are bounded by the core limit (document: 100 MB)."""
 
     return MEDIA_SIZE_LIMITS[kind]
 

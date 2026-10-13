@@ -6,8 +6,10 @@ from odoo.exceptions import UserError, ValidationError
 MEDIA_SIZE_LIMITS = {
     "image": 16 * 1024 * 1024,
     "audio": 16 * 1024 * 1024,
-    "video": 50 * 1024 * 1024,
-    "document": 50 * 1024 * 1024,
+    # Decimal 100 MB leaves multipart headroom under the 100 MiB proxy ceiling.
+    # Provider capabilities may impose a smaller limit (e.g. WhatsApp Cloud).
+    "video": 100_000_000,
+    "document": 100_000_000,
 }
 
 
@@ -592,7 +594,7 @@ def validate_media_metadata(kind, mimetype, size_bytes):
             _(
                 "The %(kind)s file exceeds the %(limit)s MB limit.",
                 kind=kind,
-                limit=MEDIA_SIZE_LIMITS[kind] // (1024 * 1024),
+                limit=round(MEDIA_SIZE_LIMITS[kind] / 1_000_000, 1),
             )
         )
     return normalized_mimetype

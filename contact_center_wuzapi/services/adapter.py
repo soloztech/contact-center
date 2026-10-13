@@ -302,8 +302,8 @@ _ATTRIBUTION_UTM_FIELDS = (
 _MAX_MEDIA_BYTES = {
     "image": 16 * 1024 * 1024,
     "audio": 16 * 1024 * 1024,
-    "video": 50 * 1024 * 1024,
-    "document": 50 * 1024 * 1024,
+    "video": 100_000_000,
+    "document": 100_000_000,
 }
 _MEDIA_FIELDS = {
     "image": ("imageMessage", "Image", "/chat/send/image", "/chat/downloadimage"),

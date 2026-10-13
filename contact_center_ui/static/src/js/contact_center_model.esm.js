@@ -88,8 +88,8 @@ const ODOO_DATETIME_PATTERN =
 const DEFAULT_MAX_MEDIA_BYTES = Object.freeze({
     image: 16 * 1024 * 1024,
     audio: 16 * 1024 * 1024,
-    video: 50 * 1024 * 1024,
-    document: 50 * 1024 * 1024,
+    video: 100000000,
+    document: 100000000,
 });
 const MESSAGE_ACTION_POLICY_KEYS = Object.freeze({
     reply: "allow_reply",
@@ -1274,13 +1274,13 @@ export function formatFileSize(value) {
     if (!Number.isFinite(value) || value < 0) {
         return "";
     }
-    if (value < 1024) {
+    if (value < 1000) {
         return `${Math.round(value)} B`;
     }
-    if (value < 1024 * 1024) {
-        return `${(value / 1024).toFixed(value < 10 * 1024 ? 1 : 0)} KB`;
+    if (value < 1000 * 1000) {
+        return `${(value / 1000).toFixed(value < 10 * 1000 ? 1 : 0)} KB`;
     }
-    return `${(value / (1024 * 1024)).toFixed(value < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+    return `${(value / (1000 * 1000)).toFixed(value < 100 * 1000 * 1000 ? 1 : 0)} MB`;
 }
 
 export function mediaKindFromFile(file) {
