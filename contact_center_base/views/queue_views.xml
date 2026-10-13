@@ -64,22 +64,6 @@
                             nolabel="1"
                         /></group>
                     <notebook>
-                        <page
-                            string="Sanitized Envelope"
-                            groups="contact_center_base.group_contact_center_admin"
-                        ><field
-                                name="raw_envelope_json"
-                                nolabel="1"
-                                widget="contact_center_json_viewer"
-                            /></page>
-                        <page
-                            string="Normalized DTO"
-                            groups="contact_center_base.group_contact_center_admin"
-                        ><field
-                                name="normalized_dto_json"
-                                nolabel="1"
-                                widget="contact_center_json_viewer"
-                            /></page>
                         <page string="Metadata"><field
                                 name="metadata_json"
                                 nolabel="1"

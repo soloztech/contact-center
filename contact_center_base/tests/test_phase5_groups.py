@@ -4052,7 +4052,11 @@ class TestContactCenterGroups(SavepointCase):
 
         self.assertEqual(inbox.state, "done")
         self.assertEqual(
-            inbox.metadata_json,
+            {
+                key: value
+                for key, value in inbox.metadata_json.items()
+                if key != "conversation_route"
+            },
             {
                 "group_receipt_partial": True,
                 "group_receipt_uncorrelated_count": 1,

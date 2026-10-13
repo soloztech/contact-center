@@ -322,11 +322,11 @@ class ContactCenterInboxPrivacy(models.Model):
 
     def _conversation_content_is_blocked(self):
         self.ensure_one()
-        self.invalidate_recordset(["metadata_json", "raw_envelope_json"])
+        self.invalidate_recordset(["metadata_json"])
         if (self.metadata_json or {}).get("content_erased"):
             return True
-        if self.env["contact.center.conversation.ignore"]._ignored_envelope(
-            self.provider_connection_id, self.raw_envelope_json
+        if self.env["contact.center.conversation.ignore"]._matches_route(
+            self.account_id, (self.metadata_json or {}).get("conversation_route")
         ):
             self.with_context(**_policy_context())._erase_conversation_content(
                 "ignored"
@@ -417,8 +417,7 @@ class ContactCenterConversationActions(models.AbstractModel):
         return True
 
     def _conversation_inbox_events(self, bindings, message_bindings):
-        """Include unprojected/unsupported payloads, scoped by their route headers."""
-        policy = self.env["contact.center.conversation.ignore"]
+        """Find events by the routing saved at admission, without rereading content."""
         account = bindings.account_id
         result = message_bindings.source_inbox_event_id
         event_model = self.env["contact.center.inbox.event"].sudo()
@@ -443,9 +442,7 @@ class ContactCenterConversationActions(models.AbstractModel):
             for event in batch - result:
                 if (event.metadata_json or {}).get("content_erased"):
                     continue
-                route = policy._route(
-                    event.provider_connection_id, event.raw_envelope_json
-                )
+                route = (event.metadata_json or {}).get("conversation_route")
                 if route and (
                     route.get("conversation_ref") in refs
                     or (
@@ -457,9 +454,7 @@ class ContactCenterConversationActions(models.AbstractModel):
                 ):
                     result |= event
             last_id = batch[-1].id
-            batch.invalidate_recordset(
-                ["raw_envelope_json", "normalized_dto_json", "metadata_json"]
-            )
+            batch.invalidate_recordset(["metadata_json"])
         return result
 
     @api.model

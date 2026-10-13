@@ -218,6 +218,24 @@ class ContactCenterRetentionDependencies(models.AbstractModel):
         return inbox.browse([row[0] for row in self.env.cr.fetchall()])
 
     def _retention_clean_quoted_event(self, event, external_ids):
+        if event.state == "done" and not (event.metadata_json or {}).get(
+            "attribution_capture_failure"
+        ):
+            # The message snapshot is the surviving business record. Completed
+            # receipts need no content to be inspected or surgically rewritten.
+            metadata = dict(event.metadata_json or {})
+            metadata.update(content_erased=True, reason="quoted_content_erased")
+            event.with_context(**{_INDEX_CONTEXT: _RETENTION_INDEX_TOKEN}).write(
+                {
+                    "raw_envelope_json": {"content_erased": True},
+                    "normalized_dto_json": False,
+                    "metadata_json": metadata,
+                    "retention_reply_id": False,
+                    "retention_multiple_quotes": False,
+                    "retention_reply_ids_json": [],
+                }
+            )
+            return
         adapter = event.provider_connection_id.get_adapter()
         cleaner = getattr(adapter, "retention_remove_quotes", None)
         if not cleaner:

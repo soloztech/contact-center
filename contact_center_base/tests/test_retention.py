@@ -16,6 +16,9 @@ from ..services.adapter import ProviderAdapter, adapter_registry
 
 @adapter_registry.register("test.retention")
 class RetentionTestAdapter(ProviderAdapter):
+    def prepare_request_snapshot(self, connection, command):
+        raise AssertionError("Retention must not prepare outbound messages")
+
     display_name = "Retention fixture"
 
     def authenticate_webhook(self, connection, headers, body):

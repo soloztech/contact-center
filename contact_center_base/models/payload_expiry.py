@@ -61,6 +61,7 @@ class ContactCenterInboxPayloadExpiry(models.Model):
                       FROM contact_center_inbox_event
                      WHERE state IN ('done', 'unsupported')
                        AND metadata_json ->> 'content_erased' IS NULL
+                       AND metadata_json -> 'attribution_capture_failure' IS NULL
                        AND processed_at < %s
                      ORDER BY processed_at
                      LIMIT %s

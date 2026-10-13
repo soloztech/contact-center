@@ -264,7 +264,7 @@ class ContactCenterAttributionPreview(models.Model):
             ["cc:ad-preview:%s" % touchpoint.id],
         )
         preview = self.sudo().search([("touchpoint_id", "=", touchpoint.id)], limit=1)
-        if preview and (preview.expired or preview.expires_at <= fields.Datetime.now()):
+        if preview and preview.expired:
             return preview
         values = normalize_creative(creative)
         if not values.get("public_url"):
@@ -321,14 +321,14 @@ class ContactCenterAttributionPreview(models.Model):
             or self.touchpoint_id._has_ad_identity()
         )
 
-    def _eligible(self):
+    def _eligible(self, *, temporary=False):
         self.ensure_one()
         point = self.touchpoint_id
         binding = point.channel_binding_id
         message = point.message_binding_id
         return bool(
             not self.expired
-            and self.expires_at > fields.Datetime.now()
+            and (not temporary or self.expires_at > fields.Datetime.now())
             and point.conflict_state == "clean"
             and point.account_id.active
             and point.provider_connection_id.active
@@ -368,7 +368,7 @@ class ContactCenterAttributionPreview(models.Model):
             return False
         self.invalidate_recordset()
         point.invalidate_recordset()
-        return self._eligible()
+        return self._eligible(temporary=True)
 
     def _needs_enrichment(self):
         self.ensure_one()
@@ -692,7 +692,7 @@ class ContactCenterAttributionPreview(models.Model):
             "source_url": presentable_source_url(self.source_public_url),
             "thumbnail_url": "/contact_center/attribution/%s/thumbnail"
             % self.public_ref
-            if self.thumbnail_attachment_id
+            if self.thumbnail_attachment_id and self.expires_at > fields.Datetime.now()
             else "",
             "media_type": self.media_type or "",
             "state": state,
@@ -703,7 +703,7 @@ class ContactCenterAttributionPreview(models.Model):
             else "",
         }
 
-    def _expire(self):
+    def _expire(self, *, content=True):
         # Retention locks jobs before previews; use the same order and do not
         # wait for running jobs. Their post-download fence sees expired content.
         jobs = (
@@ -738,20 +738,22 @@ class ContactCenterAttributionPreview(models.Model):
                 .sudo()
                 .search([("reference", "=", preview.thumbnail_ref)])
             )
-            preview.write(
-                {
-                    "title": False,
-                    "body": False,
-                    "source_public_url": False,
-                    "thumbnail_ref": False,
-                    "thumbnail_attachment_id": False,
-                    "width": 0,
-                    "height": 0,
-                    "expired": True,
-                    "state": "unavailable",
-                    "error_code": "expired",
-                }
-            )
+            values = {
+                "thumbnail_ref": False,
+                "thumbnail_attachment_id": False,
+                "width": 0,
+                "height": 0,
+                "state": "ready"
+                if not content
+                and (preview.title or preview.body or preview.source_public_url)
+                else "unavailable",
+                "error_code": "expired",
+            }
+            if content:
+                values.update(
+                    title=False, body=False, source_public_url=False, expired=True
+                )
+            preview.write(values)
             locators._consume()
             attachment.sudo().unlink()
         return True
@@ -759,8 +761,14 @@ class ContactCenterAttributionPreview(models.Model):
     @api.model
     def _cron_expire(self):
         self.sudo().search(
-            [("expired", "=", False), ("expires_at", "<=", fields.Datetime.now())],
+            [
+                ("expired", "=", False),
+                ("expires_at", "<=", fields.Datetime.now()),
+                "|",
+                ("thumbnail_ref", "!=", False),
+                ("thumbnail_attachment_id", "!=", False),
+            ],
             limit=100,
-        )._expire()
+        )._expire(content=False)
         self.env["contact.center.ad.preview.locator"]._cron_expire()
         return True

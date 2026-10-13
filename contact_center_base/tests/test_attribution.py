@@ -525,6 +525,12 @@ class TestContactCenterAttribution(SavepointCase):
             ),
         )
 
+        inbox.write(
+            {
+                "raw_envelope_json": {"content_erased": True},
+                "normalized_dto_json": False,
+            }
+        )
         self.assertTrue(pending._job_reconcile_projection())
         pending.invalidate_recordset(["channel_binding_id", "identity_id"])
         self.assertTrue(pending.channel_binding_id)

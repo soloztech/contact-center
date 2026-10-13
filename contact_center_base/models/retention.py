@@ -830,7 +830,6 @@ class ContactCenterRetention(models.AbstractModel):
         try:
             with self.env.cr.savepoint():
                 inbox = service.env["contact.center.inbox.event"]
-                inbox._retention_index_routes(binding.account_id, limit=500)
                 if inbox.search_count(
                     [
                         ("account_id", "=", binding.account_id.id),

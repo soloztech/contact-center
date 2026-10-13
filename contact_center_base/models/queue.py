@@ -1329,6 +1329,16 @@ class ContactCenterInboxEvent(models.Model):
         self.ensure_one()
         if not isinstance(event_dto, EventDTO):
             raise DTOValidationError("normalized inbox event must be an EventDTO")
+        metadata = dict(self.metadata_json or {})
+        metadata["conversation_route"] = {
+            "conversation_ref": event_dto.conversation_ref,
+            "conversation_type": event_dto.conversation.conversation_type,
+            "addresses": [
+                [address.namespace, address.value_normalized]
+                for address in event_dto.conversation.addresses
+            ],
+        }
+        self.write({"metadata_json": metadata})
         if attribution_touchpoints is None:
             attribution_touchpoints = self._capture_attribution(event_dto)
         projection = self.env["contact.center.application"]._process_event(

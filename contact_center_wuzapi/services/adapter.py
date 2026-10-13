@@ -2644,19 +2644,6 @@ class WuzapiAdapter(WuzapiDirectStartMixin, WuzapiGroupMetadataMixin, ProviderAd
 
         return clean(envelope)
 
-    def ad_origin_preview_from_history(self, payload, source_key):
-        """Recover bounded copy only, without fetching or recreating old images."""
-        # Only backfill of an existing paid touchpoint calls this; touchpoints
-        # recorded before the lone FB_Ads marker stopped counting keep their copy.
-        candidate = ad_origin_preview_candidate(payload, historical=True)
-        if not candidate or candidate["source_key"] != source_key:
-            return {}
-        return {
-            key: value
-            for key, value in candidate["creative"].items()
-            if key in {"title", "body", "public_url", "media_type"}
-        }
-
     def normalize_event(self, connection, envelope):
         if not isinstance(envelope, dict):
             raise AdapterError("WuzAPI webhook envelope must be a JSON object")

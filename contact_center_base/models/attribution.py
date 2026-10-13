@@ -9,7 +9,14 @@ from odoo.exceptions import AccessError, ValidationError
 
 from odoo.addons.queue_job.exception import RetryableJobError
 
-from ..services.dto import AttributionDTO, DTOValidationError, EventDTO
+from ..services.dto import (
+    ActorDTO,
+    AddressDTO,
+    AttributionDTO,
+    ConversationDTO,
+    DTOValidationError,
+    EventDTO,
+)
 from ..services.tokens import (
     CONTACT_CENTER_ATTRIBUTION_TOKEN,
     CONTACT_CENTER_DELETION_TOKEN,
@@ -902,18 +909,40 @@ class ContactCenterAttributionTouchpoint(models.Model):
         if not touchpoint or touchpoint.channel_binding_id:
             return True
         inbox_event = touchpoint.inbox_event_id
-        normalized = inbox_event.normalized_dto_json
-        if not isinstance(normalized, dict):
+        route = (inbox_event.metadata_json or {}).get("conversation_route")
+        if not isinstance(route, dict):
             raise ValidationError(
-                _("Attribution reconciliation requires a normalized source event.")
+                _("Attribution reconciliation requires saved conversation routing.")
             )
+        connection = touchpoint.provider_connection_id
         try:
-            event = EventDTO.from_dict(normalized)
+            event = EventDTO(
+                provider_schema_version="saved-routing",
+                event_id=touchpoint.source_external_key,
+                event_type="attribution.observed",
+                occurred_at=touchpoint.occurred_at.replace(
+                    tzinfo=datetime.timezone.utc
+                ),
+                account_ref=connection.account_id.external_ref,
+                connection_ref=connection.external_ref,
+                conversation_ref=route["conversation_ref"],
+                platform=connection.account_id.platform,
+                direction="inbound",
+                is_from_me=False,
+                origin="provider",
+                actor=ActorDTO(),
+                conversation=ConversationDTO(
+                    conversation_type=route["conversation_type"],
+                    addresses=tuple(
+                        AddressDTO(namespace, value, value)
+                        for namespace, value in route.get("addresses", [])
+                    ),
+                ),
+            )
         except DTOValidationError as error:
             raise ValidationError(
                 _("Attribution reconciliation source is invalid.")
             ) from error
-        connection = touchpoint.provider_connection_id
         if (
             event.account_ref != connection.account_id.external_ref
             or event.connection_ref != connection.external_ref

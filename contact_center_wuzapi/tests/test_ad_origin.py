@@ -98,19 +98,6 @@ class TestWuzapiAdOrigin(WuzapiCase):
         event = self.adapter.normalize_event(self.connection, sanitized)
         self.assertNotIn("title", event.attribution[0].creative)
 
-    def test_history_recovers_copy_without_locators_and_checks_message_identity(self):
-        raw = sanitize_webhook_envelope(self._fixture())
-        source_key = raw["event"]["Info"]["ID"]
-        with mock.patch("requests.sessions.Session.request") as request:
-            preview = self.adapter.ad_origin_preview_from_history(raw, source_key)
-        request.assert_not_called()
-        self.assertEqual(preview["title"], "Solicite um orçamento gratuito!")
-        self.assertNotIn("thumbnail_ref", preview)
-        self.assertEqual(self.adapter.ad_origin_preview_from_history(raw, "other"), {})
-        self.assertFalse(
-            self.env["contact.center.ad.preview.locator"].sudo().search_count([])
-        )
-
     def _process_inbox(self, raw):
         sanitized = sanitize_webhook_envelope(raw)
         _capture_ad_origin_preview(self.connection, raw, sanitized)
@@ -193,7 +180,7 @@ class TestWuzapiAdOrigin(WuzapiCase):
         self.assertEqual(touchpoints.conversion_source, "fb_ads")
         self.assertTrue(touchpoints._has_ad_identity())
 
-    def test_backfill_recovers_copy_of_touchpoint_recorded_from_legacy_marker(self):
+    def test_legacy_copy_can_be_imported_once_without_replaying_message(self):
         raw = self.load_fixture("message_text_lid.json")
         raw["event"]["Info"]["ID"] = "3EB0LEGACYFBADS%017d" % 1
         raw["event"]["Message"]["extendedTextMessage"]["contextInfo"] = {
@@ -240,7 +227,11 @@ class TestWuzapiAdOrigin(WuzapiCase):
         self.assertEqual(point.touchpoint_type, "paid_ad_signal")
         self.assertFalse(previews.sudo().search([("touchpoint_id", "=", point.id)]))
 
-        previews.sudo()._backfill_account(self.account)
+        from ..services.adapter import ad_origin_preview_candidate
+
+        candidate = ad_origin_preview_candidate(sanitized, historical=True)
+        self.assertEqual(candidate["source_key"], point.source_external_key)
+        previews.sudo()._capture(point, candidate["creative"])
 
         preview = previews.sudo().search([("touchpoint_id", "=", point.id)])
         self.assertEqual((preview.title, preview.body), ("Legacy copy", "Legacy body"))

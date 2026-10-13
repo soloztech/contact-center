@@ -234,6 +234,13 @@ class ContactCenterRetentionInbox(models.Model):
                 .browse(values.get("provider_connection_id"))
             )
             envelope = values.get("raw_envelope_json") or {}
+            saved_route = self.env["contact.center.conversation.ignore"]._route(
+                connection, envelope
+            )
+            if saved_route:
+                values["metadata_json"] = dict(
+                    values.get("metadata_json") or {}, conversation_route=saved_route
+                )
             route = service._retention_route(connection, envelope)
             values.update(self._retention_index_values(connection, envelope))
             if service._retention_route_is_expired(connection, route):
@@ -263,32 +270,21 @@ class ContactCenterRetentionInbox(models.Model):
             raise AccessError(_("Retention routing is managed internally."))
         return super().write(values)
 
-    @api.model
-    def _retention_index_routes(self, account, limit=500):
-        """Bounded legacy indexing; never repeatedly scan already classified JSON."""
-        batch = self.sudo().search(
-            [
-                ("account_id", "=", account.id),
-                ("retention_route_indexed", "=", False),
-            ],
-            order="id",
-            limit=max(1, min(int(limit), 500)),
-        )
-        for event in batch:
-            values = self._retention_index_values(
-                event.provider_connection_id,
-                event.raw_envelope_json,
-                fallback=event.create_date,
-            )
-            event.with_context(**{_INDEX_CONTEXT: _RETENTION_INDEX_TOKEN}).write(values)
-        return len(batch)
-
     def _conversation_content_is_blocked(self):
         if super()._conversation_content_is_blocked():
             return True
         service = self.env["contact.center.retention"]
-        if service._retention_envelope_is_expired(
-            self.provider_connection_id, self.raw_envelope_json
+        if service._retention_route_is_expired(
+            self.provider_connection_id,
+            {
+                "conversation_type": "group",
+                "conversation_ref": self.retention_route_ref,
+                "kind": self.retention_event_kind,
+                "external_ids": self.retention_external_ids_json or [],
+                "occurred_at": self.retention_occurred_at,
+            }
+            if self.retention_route_ref
+            else None,
         ):
             self.with_context(
                 contact_center_deletion_token=CONTACT_CENTER_DELETION_TOKEN

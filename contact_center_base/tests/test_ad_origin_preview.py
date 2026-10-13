@@ -296,14 +296,12 @@ class TestContactCenterAdOriginPreview(SavepointCase):
             self._descriptor(preview, self.admin)["title"], "Provider title"
         )
 
-    def test_only_admin_can_enable_enrichment_or_backfill(self):
+    def test_only_admin_can_enable_enrichment_or_retry(self):
         for user in (self.agent, self.supervisor):
             with self.subTest(user=user.name), self.assertRaises(AccessError):
                 self.account.with_user(user).write(
                     {"ad_preview_enrichment_enabled": True}
                 )
-            with self.subTest(user=user.name), self.assertRaises(AccessError):
-                self.account.with_user(user).action_backfill_ad_previews()
             with self.subTest(user=user.name), self.assertRaises(AccessError):
                 self.account.with_user(user).action_retry_ad_previews()
             with self.subTest(user=user.name), self.assertRaises(AccessError):
@@ -457,7 +455,7 @@ class TestContactCenterAdOriginPreview(SavepointCase):
         with self.assertRaises(AccessError):
             self._descriptor(preview)
 
-    def test_ttl_cleanup_expires_previews_and_orphan_locators(self):
+    def test_ttl_cleanup_expires_media_but_preserves_ad_copy(self):
         preview = self._preview(image=True)
         self._perform(preview)
         past = fields.Datetime.now() - timedelta(days=1)
@@ -472,7 +470,9 @@ class TestContactCenterAdOriginPreview(SavepointCase):
             }
         )
         self.previews._cron_expire()
-        self.assertTrue(preview.expired)
+        self.assertFalse(preview.expired)
+        self.assertEqual(self._descriptor(preview)["title"], "Provider title")
+        self.assertFalse(self._descriptor(preview)["thumbnail_url"])
         self.assertFalse(preview.thumbnail_attachment_id)
         self.assertTrue(orphan.consumed)
         self.assertFalse(orphan.download_url)
@@ -495,39 +495,32 @@ class TestContactCenterAdOriginPreview(SavepointCase):
         self.assertEqual(second.state, "cancelled")
         self.assertEqual(first.state, "done")
 
-    def test_backfill_is_bounded_skips_complete_and_preserves_expired(self):
-        full = self._preview(
-            creative={
-                "title": "Complete",
-                "body": "Complete body",
-                "public_url": "https://www.instagram.com/p/complete/",
-            },
-            image=True,
+    def test_message_keeps_ad_copy_after_raw_payload_and_media_expire(self):
+        preview = self._preview(image=True)
+        self._perform(preview)
+        event = preview.touchpoint_id.inbox_event_id
+        past = fields.Datetime.now() - timedelta(days=40)
+        event.write({"state": "done", "processed_at": past})
+        _owned(preview).write({"expires_at": past})
+        self.env["ir.config_parameter"].sudo().set_param(
+            "contact_center.payload_retention_days", "30"
         )
-        expired = self._preview()
-        expired._expire()
-        awaiting_cleanup = self._preview()
-        _owned(awaiting_cleanup).write(
-            {"expires_at": fields.Datetime.now() - timedelta(days=1)}
+        self.env["contact.center.inbox.event"]._cron_expire_payloads()
+        self.previews._cron_expire()
+        self.assertEqual(event.raw_envelope_json, {"content_erased": True})
+        self.assertFalse(event.normalized_dto_json)
+        binding = preview.touchpoint_id.message_binding_id
+        result = (
+            self.env["contact.center.ui.api"]
+            .with_user(self.agent)
+            ._serialize_message(binding.message_id.sudo(), binding=binding.sudo())
         )
-        legacy = [self._preview() for _item in range(3)]
-        points = [preview.touchpoint_id for preview in legacy]
-        for preview in legacy:
-            _owned(preview).unlink()
-        self.account.write({"ad_preview_enrichment_enabled": True})
-        self.assertEqual(self.previews._backfill_account(self.account, limit=2), 2)
-        rebuilt = self.previews.sudo().search(
-            [("touchpoint_id", "in", [p.id for p in points])]
-        )
-        self.assertEqual(len(rebuilt), 2)
-        self.assertTrue(all(rebuilt.mapped("queue_job_uuid")))
-        self.assertFalse(expired.title)
-        self.assertTrue(expired.expired)
-        self.assertFalse(awaiting_cleanup.expired)
-        self.assertFalse(awaiting_cleanup.queue_job_uuid)
-        self.assertEqual(full.title, "Complete")
-        self.fetch.assert_not_called()
-        self.marketing.assert_not_called()
+        self.assertEqual(result["ad_origin_previews"][0]["title"], "Provider title")
+        self.assertFalse(result["ad_origin_previews"][0]["thumbnail_url"])
+        preview._expire()
+        self.assertFalse(preview.title)
+        with self.assertRaises(AccessError):
+            self._descriptor(preview)
 
     def test_retention_preparation_expires_derived_content_and_preserves_evidence(self):
         preview = self._preview(image=True)

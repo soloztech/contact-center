@@ -116,6 +116,15 @@ class TestPayloadExpiry(SavepointCase):
         self.assertEqual(oldest.raw_envelope_json, _EXPIRED)
         self.assertEqual(self.inbox._cron_expire_payloads(limit=2), 1)
 
+    def test_failed_attribution_capture_keeps_source_until_resolved(self):
+        self.parameters.set_param(_PARAMETER, "30")
+        event = self._event()
+        metadata = dict(event.metadata_json or {})
+        metadata["attribution_capture_failure"] = {"error_class": "ValidationError"}
+        event.write({"metadata_json": metadata})
+        self.assertEqual(self.inbox._cron_expire_payloads(), 0)
+        self.assertNotEqual(event.raw_envelope_json, _EXPIRED)
+
     def test_expired_receipt_still_dedupes_and_is_never_replayed(self):
         self.parameters.set_param(_PARAMETER, "30")
         done, unsupported = self._event("done"), self._event("unsupported")

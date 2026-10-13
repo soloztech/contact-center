@@ -35,28 +35,6 @@ class ContactCenterAccount(models.Model):
         if not self.env.su and not self.env.user.has_group(_ADMIN):
             raise AccessError(_("Only administrators can configure ad previews."))
 
-    def action_backfill_ad_previews(self):
-        self.ensure_one()
-        self._check_ad_preview_admin()
-        self.check_access_rights("write")
-        self.check_access_rule("write")
-        count = self.env["contact.center.attribution.preview"]._backfill_account(
-            self, limit=100
-        )
-        return {
-            "type": "ir.actions.client",
-            "tag": "display_notification",
-            "params": {
-                "title": _("Ad previews"),
-                "message": _(
-                    "%(count)s eligible origins examined. Repeat to process the next batch.",
-                    count=count,
-                ),
-                "type": "success",
-                "sticky": False,
-            },
-        }
-
     def action_retry_ad_previews(self):
         self.ensure_one()
         self._check_ad_preview_admin()
@@ -266,63 +244,3 @@ class ContactCenterRetention(models.AbstractModel):
                 [("touchpoint_id.message_binding_id", "in", message_bindings.ids)]
             )._expire()
         return result
-
-
-class ContactCenterAttributionPreview(models.Model):
-    _inherit = "contact.center.attribution.preview"
-
-    @api.model
-    def _backfill_account(self, account, *, limit=100):
-        account.ensure_one()
-        domain = [
-            ("account_id", "=", account.id),
-            ("provider_connection_id.active", "=", True),
-            ("channel_binding_id.active", "=", True),
-            ("channel_binding_id.channel_id.active", "=", True),
-            ("touchpoint_type", "in", ("paid_ad_click", "paid_ad_signal")),
-            ("conflict_state", "=", "clean"),
-            "|",
-            ("source_key_kind", "!=", "message"),
-            "&",
-            ("message_binding_id.message_id", "!=", False),
-            ("message_binding_id.message_state", "!=", "deleted"),
-        ]
-        if account.ad_preview_enrichment_enabled:
-            # Missing-field predicates belong only to existing previews; an
-            # origin with no preview must remain eligible on its own.
-            domain += [
-                "|",
-                ("ad_preview_ids", "=", False),
-                "&",
-                "&",
-                "&",
-                ("ad_preview_ids.expired", "=", False),
-                ("ad_preview_ids.expires_at", ">", fields.Datetime.now()),
-                ("ad_preview_ids.enrichment_attempted", "=", False),
-                "|",
-                "|",
-                "|",
-                ("ad_preview_ids.title", "=", False),
-                ("ad_preview_ids.body", "=", False),
-                ("ad_preview_ids.source_public_url", "=", False),
-                ("ad_preview_ids.thumbnail_ref", "=", False),
-            ]
-        else:
-            domain.append(("ad_preview_ids", "=", False))
-        points = (
-            self.env["contact.center.attribution.touchpoint"]
-            .sudo()
-            .search(domain, order="id", limit=max(1, min(int(limit), 100)))
-        )
-        for point in points:
-            creative = {}
-            adapter = point.provider_connection_id.get_adapter()
-            extractor = getattr(adapter, "ad_origin_preview_from_history", None)
-            if extractor and point.inbox_event_id.raw_envelope_json:
-                creative = extractor(
-                    point.inbox_event_id.raw_envelope_json, point.source_external_key
-                )
-            preview = self._capture(point, creative)
-            if preview:
-                preview._queue_work()
-        return len(points)

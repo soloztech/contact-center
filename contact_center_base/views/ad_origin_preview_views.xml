@@ -3,6 +3,7 @@
     <record id="view_contact_center_account_ad_origin" model="ir.ui.view">
         <field name="name">contact.center.account.ad.origin</field>
         <field name="model">contact.center.account</field>
+        <field name="active" eval="True" />
         <field name="inherit_id" ref="view_contact_center_account_form" />
         <field name="arch" type="xml">
             <xpath expr="//notebook" position="inside">
@@ -19,14 +20,6 @@
                     </group>
                     <p
                     >O cartão usa os dados recebidos com a mensagem. O enriquecimento preenche informações ausentes quando existe acesso autorizado ao anúncio no Marketing Center.</p>
-                    <button
-                        name="action_backfill_ad_previews"
-                        type="object"
-                        string="Buscar prévias no histórico"
-                        class="btn-secondary"
-                    />
-                    <p
-                    >Cada execução examina até 100 origens disponíveis. Conteúdo apagado não é recuperado; imagens antigas podem estar indisponíveis.</p>
                     <button
                         name="action_retry_ad_previews"
                         type="object"
