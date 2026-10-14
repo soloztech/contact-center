@@ -1,5 +1,6 @@
 """Private presentation authorization, queue ownership and content lifecycle."""
 
+import dataclasses
 import hashlib
 import json
 import uuid
@@ -24,7 +25,13 @@ from ..services.ad_origin_preview import (
     public_source_url,
 )
 from ..services.adapter import ProviderAdapter, adapter_registry
-from ..services.dto import AttributionDTO, EventDTO
+from ..services.dto import (
+    AttributionDTO,
+    DTOValidationError,
+    EventDTO,
+    MediaDownloadResult,
+    MediaDTO,
+)
 from ..services.tokens import CONTACT_CENTER_DELETION_TOKEN
 from . import test_attribution as attribution_fixtures
 
@@ -521,6 +528,103 @@ class TestContactCenterAdOriginPreview(SavepointCase):
         self.assertFalse(preview.title)
         with self.assertRaises(AccessError):
             self._descriptor(preview)
+
+    def test_zero_retention_keeps_message_ad_and_later_media_download(self):
+        self.env["ir.config_parameter"].sudo().set_param(
+            "contact_center.payload_retention_days", "0"
+        )
+        normalized = self._event(
+            attribution=self._attribution(
+                creative={"title": "Saved ad title", "body": "Saved ad text"}
+            ),
+            text="Message with a document",
+        )
+        content = b"Synthetic document content"
+        locator = {"url": "https://example.invalid/document"}
+        normalized = dataclasses.replace(
+            normalized,
+            message=dataclasses.replace(
+                normalized.message,
+                content_type="document",
+                media=(
+                    MediaDTO(
+                        kind="document",
+                        external_media_id=normalized.message.external_message_id,
+                        remote_locator=locator,
+                        mime_type="text/plain",
+                        file_name="fixture.txt",
+                        size_bytes=len(content),
+                    ),
+                ),
+            ),
+        )
+        inbox = self._process_job(normalized)
+        self.assertEqual(inbox.state, "done")
+        self.assertEqual(inbox.raw_envelope_json, {"content_erased": True})
+        self.assertFalse(inbox.normalized_dto_json)
+        point = self.env["contact.center.attribution.touchpoint"].search(
+            [("inbox_event_id", "=", inbox.id)]
+        )
+        preview = self.previews.search([("touchpoint_id", "=", point.id)])
+        self.assertEqual(preview.title, "Saved ad title")
+        self.assertEqual(preview.body, "Saved ad text")
+        message = point.message_binding_id.message_id
+        self.assertIn("Message with a document", message.body)
+        media = self.env["contact.center.media.binding"].search(
+            [("message_binding_id", "=", point.message_binding_id.id)]
+        )
+        self.assertEqual(media.remote_locator_json, locator)
+        self.assertEqual(media.state, "pending")
+        self.connection.write(
+            {
+                "last_state_observed_at": fields.Datetime.now(),
+                "last_health_at": fields.Datetime.now(),
+            }
+        )
+        media._enqueue_download()
+        self.assertTrue(media.queue_job_uuid)
+        with mock.patch.object(
+            AdPreviewTransportFixture,
+            "download_media",
+            return_value=MediaDownloadResult(content=content, mime_type="text/plain"),
+        ):
+            self.assertTrue(
+                media.with_context(job_uuid=media.queue_job_uuid)._job_download()
+            )
+        self.assertEqual(media.state, "ready")
+        self.assertEqual(media.attachment_id.raw, content)
+        self.assertIn(media.attachment_id, message.attachment_ids)
+        self.assertEqual(preview.title, "Saved ad title")
+
+    def test_zero_retention_discards_after_direct_processing(self):
+        self.env["ir.config_parameter"].sudo().set_param(
+            "contact_center.payload_retention_days", "0"
+        )
+        inbox = self._inbox(self._event())
+        self.assertTrue(inbox._process_one())
+        self.assertEqual(inbox.state, "done")
+        self.assertEqual(inbox.raw_envelope_json, {"content_erased": True})
+        self.assertFalse(inbox.normalized_dto_json)
+
+    def test_zero_retention_keeps_source_if_ad_capture_fails(self):
+        self.env["ir.config_parameter"].sudo().set_param(
+            "contact_center.payload_retention_days", "0"
+        )
+        event = self._event()
+        with mock.patch.object(
+            type(self.env["contact.center.attribution.touchpoint"]),
+            "_capture_event",
+            side_effect=DTOValidationError("Synthetic attribution failure"),
+        ):
+            inbox = self._process_job(event)
+        self.assertEqual(inbox.state, "done")
+        self.assertTrue(inbox.metadata_json.get("attribution_capture_failure"))
+        self.assertNotEqual(inbox.raw_envelope_json, {"content_erased": True})
+        self.assertTrue(inbox.normalized_dto_json)
+        binding = self.env["contact.center.message.binding"].search(
+            [("source_inbox_event_id", "=", inbox.id)]
+        )
+        self.assertIn(event.message.text, binding.message_id.body)
 
     def test_retention_preparation_expires_derived_content_and_preserves_evidence(self):
         preview = self._preview(image=True)

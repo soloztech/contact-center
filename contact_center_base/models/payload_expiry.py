@@ -1,12 +1,8 @@
 import datetime
-import logging
 
 from odoo import api, fields, models
 
-_logger = logging.getLogger(__name__)
-
 _RETENTION_PARAMETER = "contact_center.payload_retention_days"
-_MINIMUM_RETENTION_DAYS = 7
 
 
 class ContactCenterInboxPayloadExpiry(models.Model):
@@ -32,19 +28,12 @@ class ContactCenterInboxPayloadExpiry(models.Model):
 
         parameters = self.env["ir.config_parameter"].sudo()
         try:
-            days = int(parameters.get_param(_RETENTION_PARAMETER, 0))
+            days = int(parameters.get_param(_RETENTION_PARAMETER, -1))
             cutoff = fields.Datetime.now() - datetime.timedelta(days=days)
         except (TypeError, ValueError, OverflowError):
             # Not a number, or a window no date can represent: stay off.
             return 0
-        if days < _MINIMUM_RETENTION_DAYS:
-            if days > 0:
-                _logger.warning(
-                    "Ignored %s=%s: the minimum is %s days.",
-                    _RETENTION_PARAMETER,
-                    days,
-                    _MINIMUM_RETENTION_DAYS,
-                )
+        if days < 0:
             return 0
         self.flush_model()
         self.env.cr.execute(
@@ -74,3 +63,44 @@ class ContactCenterInboxPayloadExpiry(models.Model):
             ["raw_envelope_json", "normalized_dto_json", "metadata_json", "write_date"]
         )
         return expired
+
+    def _job_process(self):
+        result = super()._job_process()
+        self._discard_payload_if_zero()
+        return result
+
+    def _process_one(self):
+        result = super()._process_one()
+        self._discard_payload_if_zero()
+        return result
+
+    def _discard_payload_if_zero(self):
+        """Discard only after all message, media and attribution work is saved."""
+
+        self.ensure_one()
+        metadata = dict(self.metadata_json or {})
+        if (
+            self.state not in ("done", "unsupported")
+            or metadata.get("content_erased") is not None
+            or metadata.get("attribution_capture_failure") is not None
+        ):
+            return False
+        try:
+            days = int(
+                self.env["ir.config_parameter"]
+                .sudo()
+                .get_param(_RETENTION_PARAMETER, -1)
+            )
+        except (TypeError, ValueError):
+            return False
+        if days != 0:
+            return False
+        metadata.update(content_erased=True, reason="payload_expired")
+        self.write(
+            {
+                "raw_envelope_json": {"content_erased": True},
+                "normalized_dto_json": False,
+                "metadata_json": metadata,
+            }
+        )
+        return True

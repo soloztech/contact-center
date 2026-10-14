@@ -1,5 +1,6 @@
 import datetime
 import uuid
+from unittest import mock
 
 from psycopg2 import IntegrityError
 
@@ -8,11 +9,11 @@ from odoo.exceptions import ValidationError
 from odoo.tests.common import SavepointCase
 from odoo.tools import mute_logger
 
+from ..services.adapter import UnsupportedEventError
 from . import test_conversation_privacy as privacy
 
 _PARAMETER = "contact_center.payload_retention_days"
 _EXPIRED = {"content_erased": True}
-_EXPIRY_LOGGER = "odoo.addons.contact_center_base.models.payload_expiry"
 
 
 class TestPayloadExpiry(SavepointCase):
@@ -70,12 +71,72 @@ class TestPayloadExpiry(SavepointCase):
             self.assertEqual(event.normalized_dto_json, {"text": "Private copy"})
             self.assertEqual(event.metadata_json, {"event_type": "Message"})
 
-    def test_disabled_or_too_short_window_keeps_every_payload(self):
+    def test_missing_or_invalid_window_keeps_every_payload(self):
         event = self._event()
-        for value in (False, "0", "6", "not-a-number", "800000", "1000000000"):
+        for value in (False, "-1", "1.5", "not-a-number", "800000", "1000000000"):
             self.parameters.set_param(_PARAMETER, value)
-            with mute_logger(_EXPIRY_LOGGER):
-                self.assertEqual(self.inbox._cron_expire_payloads(), 0)
+            self.assertEqual(self.inbox._cron_expire_payloads(), 0)
+        self._assert_payload_kept(event)
+
+    def test_every_positive_day_count_is_accepted(self):
+        for days in range(1, 7):
+            with self.subTest(days=days):
+                self.parameters.set_param(_PARAMETER, str(days))
+                old = self._event(age_days=days + 1)
+                recent = self._event(age_days=0)
+                self.assertEqual(self.inbox._cron_expire_payloads(), 1)
+                self.assertEqual(old.raw_envelope_json, _EXPIRED)
+                self._assert_payload_kept(recent)
+
+    def test_zero_sweeps_terminal_receipts_and_protects_unfinished_work(self):
+        self.parameters.set_param(_PARAMETER, "0")
+        terminal = self._event("done", age_days=1) | self._event(
+            "unsupported", age_days=1
+        )
+        kept = self.inbox.browse()
+        for state in ("pending", "processing", "retry", "blocked", "dead"):
+            kept |= self._event(state, age_days=1)
+        protected = self._event("done", age_days=1)
+        protected.write(
+            {"metadata_json": {"attribution_capture_failure": {"error_class": "Test"}}}
+        )
+        self.assertEqual(self.inbox._cron_expire_payloads(), 2)
+        for event in terminal:
+            self.assertEqual(event.raw_envelope_json, _EXPIRED)
+            self.assertFalse(event.normalized_dto_json)
+        self._assert_payload_kept(kept)
+        self.assertNotEqual(protected.raw_envelope_json, _EXPIRED)
+
+    def test_zero_discards_unsupported_before_processing_job_returns(self):
+        self.parameters.set_param(_PARAMETER, "0")
+        event = self._event("pending", age_days=0)
+        dedupe_key = event.inbox_dedupe_key
+        job_uuid = str(uuid.uuid4())
+        event.write({"queue_job_uuid": job_uuid, "processed_at": False})
+        adapter = self.connection.get_adapter()
+        with mock.patch.object(
+            type(adapter),
+            "normalize_event",
+            side_effect=UnsupportedEventError("Technical event without a message"),
+        ):
+            self.assertTrue(event.with_context(job_uuid=job_uuid)._job_process())
+        self.assertEqual(event.state, "unsupported")
+        self.assertEqual(event.raw_envelope_json, _EXPIRED)
+        self.assertFalse(event.normalized_dto_json)
+        self.assertEqual(event.inbox_dedupe_key, dedupe_key)
+
+    def test_zero_preserves_payload_when_processing_fails(self):
+        self.parameters.set_param(_PARAMETER, "0")
+        event = self._event("pending", age_days=0)
+        job_uuid = str(uuid.uuid4())
+        event.write({"queue_job_uuid": job_uuid, "processed_at": False})
+        with mock.patch.object(
+            type(self.connection.get_adapter()),
+            "normalize_event",
+            side_effect=ValidationError("Synthetic processing failure"),
+        ):
+            self.assertTrue(event.with_context(job_uuid=job_uuid)._job_process())
+        self.assertEqual(event.state, "dead")
         self._assert_payload_kept(event)
 
     def test_expires_only_terminal_events_past_the_window(self):
