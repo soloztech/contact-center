@@ -107,7 +107,7 @@ class TestPayloadExpiry(SavepointCase):
         self._assert_payload_kept(kept)
         self.assertNotEqual(protected.raw_envelope_json, _EXPIRED)
 
-    def test_zero_discards_unsupported_before_processing_job_returns(self):
+    def test_zero_keeps_processed_payload_until_daily_cleanup(self):
         self.parameters.set_param(_PARAMETER, "0")
         event = self._event("pending", age_days=0)
         dedupe_key = event.inbox_dedupe_key
@@ -121,17 +121,21 @@ class TestPayloadExpiry(SavepointCase):
         ):
             self.assertTrue(event.with_context(job_uuid=job_uuid)._job_process())
         self.assertEqual(event.state, "unsupported")
+        self._assert_payload_kept(event)
+        self.assertEqual(self.inbox._cron_expire_payloads(), 1)
         self.assertEqual(event.raw_envelope_json, _EXPIRED)
         self.assertFalse(event.normalized_dto_json)
         self.assertEqual(event.inbox_dedupe_key, dedupe_key)
 
-    def test_zero_completion_discards_only_the_finished_event(self):
+    def test_zero_daily_cleanup_includes_events_processed_just_now(self):
         self.parameters.set_param(_PARAMETER, "0")
         older_receipt = self._event("done", age_days=10)
         current = self._event("pending", age_days=0)
         current.write({"state": "done", "processed_at": fields.Datetime.now()})
+        self._assert_payload_kept(current | older_receipt)
+        self.assertEqual(self.inbox._cron_expire_payloads(), 2)
         self.assertEqual(current.raw_envelope_json, _EXPIRED)
-        self._assert_payload_kept(older_receipt)
+        self.assertEqual(older_receipt.raw_envelope_json, _EXPIRED)
 
     def test_zero_preserves_payload_when_processing_fails(self):
         self.parameters.set_param(_PARAMETER, "0")
@@ -184,6 +188,22 @@ class TestPayloadExpiry(SavepointCase):
         self.assertEqual(middle.raw_envelope_json, _EXPIRED)
         self.assertEqual(oldest.raw_envelope_json, _EXPIRED)
         self.assertEqual(self.inbox._cron_expire_payloads(limit=2), 1)
+
+    def test_daily_pass_does_not_leave_a_two_thousand_event_backlog(self):
+        self.parameters.set_param(_PARAMETER, "30")
+        template = self._event()
+        values = {
+            "provider_connection_id": self.connection.id,
+            "provider_schema_version": "expiry-v1",
+            "raw_envelope_json": {"text": "Synthetic daily expiry payload"},
+            "state": "done",
+            "processed_at": template.processed_at,
+        }
+        self.inbox.create(
+            [dict(values, inbox_dedupe_key=str(uuid.uuid4())) for _ in range(2000)]
+        )
+        self.assertEqual(self.inbox._cron_expire_payloads(), 2001)
+        self.assertEqual(self.inbox._cron_expire_payloads(), 0)
 
     def test_failed_attribution_capture_keeps_source_until_resolved(self):
         self.parameters.set_param(_PARAMETER, "30")

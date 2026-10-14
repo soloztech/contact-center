@@ -560,6 +560,8 @@ class TestContactCenterAdOriginPreview(SavepointCase):
         )
         inbox = self._process_job(normalized)
         self.assertEqual(inbox.state, "done")
+        self.assertNotEqual(inbox.raw_envelope_json, {"content_erased": True})
+        self.env["contact.center.inbox.event"]._cron_expire_payloads()
         self.assertEqual(inbox.raw_envelope_json, {"content_erased": True})
         self.assertFalse(inbox.normalized_dto_json)
         point = self.env["contact.center.attribution.touchpoint"].search(
@@ -596,13 +598,15 @@ class TestContactCenterAdOriginPreview(SavepointCase):
         self.assertIn(media.attachment_id, message.attachment_ids)
         self.assertEqual(preview.title, "Saved ad title")
 
-    def test_zero_retention_discards_after_direct_processing(self):
+    def test_zero_retention_discards_direct_processing_at_daily_cleanup(self):
         self.env["ir.config_parameter"].sudo().set_param(
             "contact_center.payload_retention_days", "0"
         )
         inbox = self._inbox(self._event())
         self.assertTrue(inbox._process_one())
         self.assertEqual(inbox.state, "done")
+        self.assertNotEqual(inbox.raw_envelope_json, {"content_erased": True})
+        self.env["contact.center.inbox.event"]._cron_expire_payloads()
         self.assertEqual(inbox.raw_envelope_json, {"content_erased": True})
         self.assertFalse(inbox.normalized_dto_json)
 
@@ -617,6 +621,7 @@ class TestContactCenterAdOriginPreview(SavepointCase):
             side_effect=DTOValidationError("Synthetic attribution failure"),
         ):
             inbox = self._process_job(event)
+        self.env["contact.center.inbox.event"]._cron_expire_payloads()
         self.assertEqual(inbox.state, "done")
         self.assertTrue(inbox.metadata_json.get("attribution_capture_failure"))
         self.assertNotEqual(inbox.raw_envelope_json, {"content_erased": True})
