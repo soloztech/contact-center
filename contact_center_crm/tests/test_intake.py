@@ -309,7 +309,7 @@ class TestCrmIntake(CrmIntakeCase):
         for content in sorted(HUMAN_CONTENT_TYPES):
             with self.subTest(content=content):
                 binding = self._new(phone=None)
-                self._message(binding, content_type="identity.security.changed")
+                self._message(binding, content_type="call.offer")
                 self.assertFalse(binding.crm_intake_state)
                 self._message(
                     binding,

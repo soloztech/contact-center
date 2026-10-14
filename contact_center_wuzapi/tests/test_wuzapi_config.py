@@ -1,7 +1,9 @@
 import datetime
+import importlib.util
 import json
 import secrets
 import uuid
+from pathlib import Path
 from unittest import mock
 
 import requests
@@ -19,7 +21,11 @@ from odoo.addons.contact_center_base.services.job import provider_paused_retry_s
 from odoo.addons.queue_job.exception import RetryableJobError
 from odoo.addons.queue_job.tests.common import trap_jobs
 
-from ..services.adapter import WUZAPI_DEFAULT_WEBHOOK_EVENTS, WUZAPI_WEBHOOK_EVENT_TYPES
+from ..services.adapter import (
+    WUZAPI_DEFAULT_WEBHOOK_EVENTS,
+    WUZAPI_RETIRED_WEBHOOK_EVENTS,
+    WUZAPI_WEBHOOK_EVENT_TYPES,
+)
 from .common import WuzapiCase
 
 REQUEST_PATCH = "odoo.addons.contact_center_wuzapi.services.adapter.requests.request"
@@ -92,7 +98,7 @@ class TestWuzapiConfig(WuzapiCase):
         catalog = self.env["contact.center.wuzapi.webhook.event"].search([])
         self.assertEqual(
             set(catalog.mapped("technical_name")),
-            set(WUZAPI_WEBHOOK_EVENT_TYPES),
+            set(WUZAPI_WEBHOOK_EVENT_TYPES) - WUZAPI_RETIRED_WEBHOOK_EVENTS,
         )
         self.assertEqual(
             set(catalog.filtered("default_enabled").mapped("technical_name")),
@@ -100,11 +106,103 @@ class TestWuzapiConfig(WuzapiCase):
         )
         control_events = catalog.filtered(
             lambda event: event.technical_name
-            in {"CallAccept", "CallOffer", "CallTerminate", "IdentityChange"}
+            in {"CallAccept", "CallOffer", "CallTerminate"}
         )
-        self.assertEqual(len(control_events), 4)
+        self.assertEqual(len(control_events), 3)
         self.assertTrue(all(control_events.mapped("adapter_supported")))
         self.assertTrue(all(control_events.mapped("default_enabled")))
+        self.assertLessEqual(WUZAPI_RETIRED_WEBHOOK_EVENTS, WUZAPI_WEBHOOK_EVENT_TYPES)
+
+    def _retired_migration(self, module, version, stage):
+        path = (
+            Path(__file__).resolve().parents[2]
+            / module
+            / "migrations"
+            / version
+            / (stage + "-migrate.py")
+        )
+        spec = importlib.util.spec_from_file_location("retirement_" + stage, path)
+        migration = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(migration)
+        return migration.migrate
+
+    def test_retired_catalog_preflight_and_idempotent_cleanup(self):
+        event = self.env["contact.center.wuzapi.webhook.event"].create(
+            {
+                "name": "IdentityChange",
+                "technical_name": "IdentityChange",
+                "category": "privacy",
+            }
+        )
+        xmlid = self.env["ir.model.data"].create(
+            {
+                "module": "contact_center_wuzapi",
+                "name": "webhook_event_identity_change",
+                "model": event._name,
+                "res_id": event.id,
+                "noupdate": True,
+            }
+        )
+        pre = self._retired_migration("contact_center_base", "16.0.1.11.10", "pre")
+        post = self._retired_migration("contact_center_wuzapi", "16.0.1.3.6", "post")
+        unrelated = self.connection.wuzapi_webhook_event_ids
+        self.connection.write({"wuzapi_webhook_event_ids": [(4, event.id)]})
+        self.env.flush_all()
+        with self.assertRaises(ValidationError):
+            pre(self.env.cr, "old")
+        with self.assertRaises(ValidationError):
+            post(self.env.cr, "old")
+        self.assertTrue(event.exists())
+        self.assertTrue(xmlid.exists())
+        self.connection.write(
+            {"active": False, "wuzapi_webhook_event_ids": [(6, 0, event.ids)]}
+        )
+        self.env.flush_all()
+        with self.assertRaises(ValidationError):
+            pre(self.env.cr, "old")
+        self.connection.write({"wuzapi_webhook_event_ids": [(6, 0, unrelated.ids)]})
+        fields = [
+            "active",
+            "wuzapi_webhook_event_ids",
+            "wuzapi_webhook_sync_state",
+            "wuzapi_webhook_sync_revision",
+            "wuzapi_webhook_job_uuid",
+            "wuzapi_onboarding_job_uuid",
+        ]
+        before = self.connection.read(fields)
+        self.env.flush_all()
+        with mock.patch.object(
+            type(self.connection), "write", side_effect=AssertionError
+        ):
+            pre(self.env.cr, "old")
+            post(self.env.cr, "old")
+            post(self.env.cr, "old")
+        self.assertEqual(self.connection.read(fields), before)
+        self.assertFalse(event.exists())
+        self.assertFalse(xmlid.exists())
+
+    def test_retired_notice_preflight_preserves_the_existing_message(self):
+        event = self.connection.get_adapter().normalize_event(
+            self.connection, self.load_fixture("call_offer.json")
+        )
+        message = (
+            self.env["contact.center.application"]
+            .with_context(contact_center_skip_enqueue=True)
+            ._process_event(self.connection, event)
+        )
+        binding = self.env["contact.center.message.binding"].search(
+            [("message_id", "=", message.id)]
+        )
+        binding.write({"content_type": "identity.security.changed"})
+        self.env.flush_all()
+        pre = self._retired_migration("contact_center_base", "16.0.1.11.10", "pre")
+        with self.assertRaises(ValidationError):
+            pre(self.env.cr, "old")
+        self.assertTrue(message.exists())
+        self.assertEqual(binding.content_type, "identity.security.changed")
+        binding.write({"content_type": "call.offer"})
+        self.env.flush_all()
+        pre(self.env.cr, "old")
 
     @mock.patch(REQUEST_PATCH)
     def test_hmac_rotation_is_fenced_and_does_not_put_secret_in_job(self, request):
@@ -392,36 +490,41 @@ class TestWuzapiConfig(WuzapiCase):
     @mock.patch(REQUEST_PATCH)
     def test_refresh_webhook_reports_drift_without_overwriting_desired(self, request):
         desired_before = self.connection.wuzapi_webhook_event_ids
-        request.return_value = WebhookResponse(
-            200,
-            {
-                "success": True,
-                "data": {
-                    "webhook": self.connection.wuzapi_webhook_url,
-                    "subscribe": ["Message"],
+        for observed in (
+            ["Message"],
+            sorted(WUZAPI_DEFAULT_WEBHOOK_EVENTS | WUZAPI_RETIRED_WEBHOOK_EVENTS),
+        ):
+            request.reset_mock()
+            request.return_value = WebhookResponse(
+                200,
+                {
+                    "success": True,
+                    "data": {
+                        "webhook": self.connection.wuzapi_webhook_url,
+                        "subscribe": observed,
+                    },
                 },
-            },
-        )
-
-        with trap_jobs() as trap:
-            action = self.connection.action_wuzapi_refresh_webhook()
-            request.assert_not_called()
-            trap.assert_jobs_count(1)
-            queued_job = trap.enqueued_jobs[0]
-
-        self.assertEqual(action["params"]["type"], "info")
-        self.assertFalse(
-            self.connection.with_context(
-                job_uuid=queued_job.uuid
-            )._job_wuzapi_sync_webhook(
-                self.connection.wuzapi_webhook_sync_revision, "refresh"
             )
-        )
-        self.assertEqual(self.connection.wuzapi_webhook_sync_state, "drift")
-        self.assertEqual(self.connection.wuzapi_webhook_event_ids, desired_before)
-        self.assertEqual(
-            self.connection.wuzapi_webhook_observed_events_json, ["Message"]
-        )
+
+            with trap_jobs() as trap:
+                action = self.connection.action_wuzapi_refresh_webhook()
+                request.assert_not_called()
+                trap.assert_jobs_count(1)
+                queued_job = trap.enqueued_jobs[0]
+
+            self.assertEqual(action["params"]["type"], "info")
+            self.assertFalse(
+                self.connection.with_context(
+                    job_uuid=queued_job.uuid
+                )._job_wuzapi_sync_webhook(
+                    self.connection.wuzapi_webhook_sync_revision, "refresh"
+                )
+            )
+            self.assertEqual(self.connection.wuzapi_webhook_sync_state, "drift")
+            self.assertEqual(self.connection.wuzapi_webhook_event_ids, desired_before)
+            self.assertEqual(
+                self.connection.wuzapi_webhook_observed_events_json, observed
+            )
 
     @mock.patch(REQUEST_PATCH)
     def test_apply_webhook_reports_provider_discard_as_verified_drift(self, request):

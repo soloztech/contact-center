@@ -884,43 +884,18 @@ class TestWuzapiAdapter(WuzapiCase):
         with self.assertRaises(UnsupportedEventError):
             self.adapter.normalize_event(self.connection, own_remote)
 
-    def test_identity_change_is_a_direct_provider_neutral_security_event(self):
-        envelope = self.load_fixture("identity_change.json")
-
-        event = self.adapter.normalize_event(self.connection, envelope)
-        equivalent = self.adapter.normalize_event(
-            self.connection, copy.deepcopy(envelope)
-        )
-
-        self.assertEqual(event.event_id, equivalent.event_id)
-        self.assertNotIn("5511999999999", event.event_id)
-        self.assertEqual(event.event_type, "identity.security.changed")
-        self.assertEqual(event.direction, "inbound")
-        self.assertFalse(event.is_from_me)
-        self.assertEqual(event.origin, "provider")
-        self.assertIsNone(event.message)
-        self.assertEqual(event.conversation_ref, "5511999999999@s.whatsapp.net")
-        self.assertEqual(event.conversation.conversation_type, "direct")
-        self.assertEqual(
-            event.extensions["identity_security"],
-            {"change_kind": "primary_device", "implicit": True},
-        )
-        self.assertEqual(
-            [address.role for address in event.conversation.addresses], ["primary"]
-        )
-        self.assertEqual(
-            [address.role for address in event.actor.addresses], ["sender"]
-        )
-
-        group = copy.deepcopy(envelope)
-        group["event"]["JID"] = "120363000000000000@g.us"
-        with self.assertRaises(UnsupportedEventError):
-            self.adapter.normalize_event(self.connection, group)
-
-        invalid = copy.deepcopy(envelope)
-        invalid["event"].pop("Implicit")
-        with self.assertRaises(AdapterError):
-            self.adapter.normalize_event(self.connection, invalid)
+    def test_retired_callbacks_do_not_interpret_their_payload(self):
+        for key in ("type", "typeª"):
+            for event in (
+                None,
+                "invalid",
+                {"Timestamp": "2026-10-14T12:00:00.123456789Z"},
+            ):
+                with self.subTest(key=key, event=event):
+                    with self.assertRaises(UnsupportedEventError):
+                        self.adapter.normalize_event(
+                            self.connection, {key: "IdentityChange", "event": event}
+                        )
 
     def test_normalize_inbound_text_preserves_pn_lid_and_reply(self):
         envelope = self.load_fixture("message_text_lid.json")

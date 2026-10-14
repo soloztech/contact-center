@@ -119,7 +119,6 @@ class ContactCenterWuzapiWebhookEvent(models.Model):
             ("sync", "Synchronization and State"),
             ("call", "Calls"),
             ("presence", "Presence and Activity"),
-            ("identity", "Identity"),
             ("error", "Errors"),
             ("newsletter", "WhatsApp Channels"),
             ("meta", "Facebook and Meta Bridge"),

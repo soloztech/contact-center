@@ -342,17 +342,6 @@
         <field name="sequence">81</field>
     </record>
     <record
-        id="webhook_event_identity_change"
-        model="contact.center.wuzapi.webhook.event"
-    >
-        <field name="name">IdentityChange</field>
-        <field name="technical_name">IdentityChange</field>
-        <field name="category">identity</field>
-        <field name="sequence">90</field>
-        <field name="adapter_supported" eval="True" />
-        <field name="default_enabled" eval="True" />
-    </record>
-    <record
         id="webhook_event_cat_refresh_error"
         model="contact.center.wuzapi.webhook.event"
     >

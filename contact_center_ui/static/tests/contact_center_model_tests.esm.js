@@ -3313,7 +3313,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             const actions = [];
             const message = {
                 message_id: 82,
-                content_type: "identity.security.changed",
+                content_type: "call.accept",
                 actions: {reply: false, react: false, edit: false, delete: false},
                 source_inbox_event_id: 346,
             };
@@ -3464,12 +3464,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
     QUnit.test(
         "renders provider-neutral control events outside message runs",
         (assert) => {
-            const supportedTypes = [
-                "call.offer",
-                "call.accept",
-                "call.terminate",
-                "identity.security.changed",
-            ];
+            const supportedTypes = ["call.offer", "call.accept", "call.terminate"];
             for (const contentType of supportedTypes) {
                 assert.ok(
                     isControlTimelineMessage({content_type: contentType}),
@@ -3485,9 +3480,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
                 "object prototype keys never select a control presentation"
             );
             assert.notOk(
-                isControlTimelineMessage(
-                    Object.create({content_type: "identity.security.changed"})
-                ),
+                isControlTimelineMessage(Object.create({content_type: "call.accept"})),
                 "inherited values never select the control presentation"
             );
 
@@ -3564,12 +3557,7 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             messageActionAllowed: ConversationTimeline.prototype.messageActionAllowed,
         };
         Object.setPrototypeOf(timeline, ConversationTimeline.prototype);
-        for (const contentType of [
-            "call.offer",
-            "call.accept",
-            "call.terminate",
-            "identity.security.changed",
-        ]) {
+        for (const contentType of ["call.offer", "call.accept", "call.terminate"]) {
             message.content_type = contentType;
             assert.ok(
                 ConversationTimeline.prototype.hasActions.call(timeline, message),

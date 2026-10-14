@@ -20,7 +20,6 @@ _CONTROL_CONTENT_TYPES = (
     "call.offer",
     "call.accept",
     "call.terminate",
-    "identity.security.changed",
 )
 
 # The application and UI API are intentionally split by cohesive service lane. Odoo

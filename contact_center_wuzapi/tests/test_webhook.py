@@ -239,7 +239,7 @@ class TestWuzapiWebhook(HttpCase):
         envelope = self._load_fixture("message_text_lid.json")
         envelope["event"]["Info"].pop("SenderAlt")
         envelopes = [envelope]
-        for fixture in ("read_receipt.json", "identity_change.json", "call_offer.json"):
+        for fixture in ("read_receipt.json", "call_offer.json"):
             envelopes.append(self._load_fixture(fixture))
         picture = self._load_fixture("picture_direct_webhook.json")
         picture["event"].update(
@@ -252,6 +252,35 @@ class TestWuzapiWebhook(HttpCase):
                 self.assertEqual(response.status_code, 200, response.text)
                 self.assertTrue(response.json()["ignored"])
         self.assertFalse(self._connection_inboxes())
+
+    def test_retired_callbacks_are_authenticated_and_never_persisted(self):
+        models = (
+            "mail.message",
+            "contact.center.identity",
+            "contact.center.inbox.event",
+        )
+        before = [self.env[name].sudo().search_count([]) for name in models]
+        jobs_before = self._inbox_job_count()
+        with mock.patch.object(
+            webhook_controller, "sanitize_webhook_envelope", side_effect=AssertionError
+        ), mock.patch.object(
+            webhook_controller, "_capture_ad_origin_preview", side_effect=AssertionError
+        ):
+            for key in ("type", "typeª"):
+                for event in (None, {"Timestamp": "2026-10-14T12:00:00.123456789Z"}):
+                    body = json.dumps({key: "IdentityChange", "event": event}).encode()
+                    for _replay in range(2):
+                        response = self._post(body)
+                        self.assertEqual(response.status_code, 200, response.text)
+                        self.assertTrue(response.json()["ignored"])
+                        self.assertNotIn("event_id", response.json())
+                    self.assertEqual(
+                        self._post(body, signature="0" * 64).status_code, 401
+                    )
+        self.assertEqual(
+            before, [self.env[name].sudo().search_count([]) for name in models]
+        )
+        self.assertEqual(self._inbox_job_count(), jobs_before)
 
     def test_ignored_group_drops_messages_and_group_metadata(self):
         group_ref = "120363000000901@g.us"

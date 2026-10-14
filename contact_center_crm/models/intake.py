@@ -51,7 +51,6 @@ EXCLUDED_CONTENT_TYPES = frozenset(
         "call.offer",
         "call.accept",
         "call.terminate",
-        "identity.security.changed",
         "whatsapp.system",
     }
 )
