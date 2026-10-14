@@ -51,12 +51,6 @@ const CONTROL_TIMELINE_MESSAGE_META = Object.freeze({
         label: "Evento de chamada",
         fallback: "Chamada encerrada",
     }),
-    "identity.security.changed": Object.freeze({
-        family: "identity",
-        icon: "fa fa-shield",
-        label: "Segurança da conversa",
-        fallback: "A segurança desta conversa foi atualizada",
-    }),
 });
 
 let activeAudioElement = null;

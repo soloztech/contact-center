@@ -1,4 +1,3 @@
-import hashlib
 import re
 
 from odoo import _, api, models
@@ -12,7 +11,6 @@ _CONTROL_CONTENT_TYPES = frozenset(
         "call.offer",
         "call.accept",
         "call.terminate",
-        "identity.security.changed",
         # Projected by the WhatsApp Cloud adapter; listed here so every reader of
         # control cards (guards, attendance report) treats it the same way.
         "whatsapp.system",
@@ -104,32 +102,6 @@ class ContactCenterApplicationControlEvents(models.AbstractModel):
             )
         self._validate_control_actor_matches_conversation(event)
         return call
-
-    @api.model
-    def _validate_identity_security_event(self, event):
-        evidence = self._validate_direct_control_event(event, "identity_security")
-        if set(evidence) != {"change_kind", "implicit"}:
-            raise ValidationError(_("The identity security event shape is invalid."))
-        if evidence.get("change_kind") != "primary_device" or not isinstance(
-            evidence.get("implicit"), bool
-        ):
-            raise ValidationError(_("The identity security evidence is invalid."))
-        if not event.actor.addresses:
-            raise ValidationError(
-                _("Identity security events require a remote actor address.")
-            )
-        if not any(
-            address.role in ("primary", "routing")
-            for address in event.conversation.addresses
-        ):
-            raise ValidationError(
-                _(
-                    "Identity security events require a primary or routing "
-                    "conversation address."
-                )
-            )
-        self._validate_control_actor_matches_conversation(event)
-        return evidence
 
     @api.model
     def _call_card_body(self, state, direction):
@@ -260,48 +232,8 @@ class ContactCenterApplicationControlEvents(models.AbstractModel):
             inbox_event=inbox_event,
         )
 
-    @api.model
-    def _process_identity_security_control_event(
-        self, connection, event, inbox_event=None
-    ):
-        evidence = self._validate_identity_security_event(event)
-        binding = self._find_channel_binding(
-            connection.account_id,
-            event.conversation.addresses,
-            conversation_ref=event.conversation_ref,
-        )
-        if not binding:
-            return self.env["mail.channel"]
-        if binding.conversation_type != "direct" or not binding.identity_id:
-            raise ValidationError(
-                _("Identity security events require an existing direct conversation.")
-            )
-        digest = hashlib.sha256(event.event_id.encode("utf-8")).hexdigest()
-        return self._post_control_card(
-            connection,
-            event,
-            binding,
-            external_message_id="control:identity-security:%s" % digest,
-            content_type="identity.security.changed",
-            inbox_event=inbox_event,
-            body=(
-                _(
-                    "O provedor sinalizou uma possível alteração automática da "
-                    "identidade de segurança do dispositivo principal."
-                )
-                if evidence["implicit"]
-                else _(
-                    "A identidade de segurança do dispositivo principal foi "
-                    "alterada."
-                )
-            ),
-        )
-
     def _process_event(self, connection, event, inbox_event=None):
-        if event.event_type not in (
-            "conversation.call.updated",
-            "identity.security.changed",
-        ):
+        if event.event_type != "conversation.call.updated":
             return super()._process_event(connection, event, inbox_event=inbox_event)
         self._validate_event_scope(connection, event)
         if inbox_event:
@@ -316,11 +248,7 @@ class ContactCenterApplicationControlEvents(models.AbstractModel):
                 raise ValidationError(
                     _("The control source must be this exact normalized inbox event.")
                 )
-        if event.event_type == "conversation.call.updated":
-            return self._process_call_control_event(
-                connection, event, inbox_event=inbox_event
-            )
-        return self._process_identity_security_control_event(
+        return self._process_call_control_event(
             connection, event, inbox_event=inbox_event
         )
 

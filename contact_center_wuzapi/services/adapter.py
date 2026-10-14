@@ -141,6 +141,8 @@ WUZAPI_WEBHOOK_EVENT_TYPES = frozenset(
         "UserAbout",
     }
 )
+WUZAPI_RETIRED_WEBHOOK_EVENTS = frozenset({"IdentityChange"})
+
 WUZAPI_DEFAULT_WEBHOOK_EVENTS = frozenset(
     {
         "CallAccept",
@@ -151,7 +153,6 @@ WUZAPI_DEFAULT_WEBHOOK_EVENTS = frozenset(
         "Connected",
         "Disconnected",
         "GroupInfo",
-        "IdentityChange",
         "JoinedGroup",
         "KeepAliveRestored",
         "KeepAliveTimeout",
@@ -400,6 +401,12 @@ def _lookup(values, *field_names):
         if _normalized_key(key) in expected:
             return value
     return None
+
+
+def is_retired_webhook_event(envelope):
+    """Recognize retired callbacks without interpreting their payload."""
+    event_type = _lookup(envelope, "type")
+    return isinstance(event_type, str) and event_type in WUZAPI_RETIRED_WEBHOOK_EVENTS
 
 
 def _is_hmac_configuration_ack(payload):
@@ -2501,7 +2508,6 @@ class WuzapiAdapter(WuzapiDirectStartMixin, WuzapiGroupMetadataMixin, ProviderAd
         # Control event normalizers read routing headers without persistence.
         # Account lifecycle events above deliberately remain admitted.
         if event_type in _CALL_EVENT_STATES or event_type in (
-            "IdentityChange",
             "GroupInfo",
             "JoinedGroup",
             "Picture",
@@ -2647,6 +2653,8 @@ class WuzapiAdapter(WuzapiDirectStartMixin, WuzapiGroupMetadataMixin, ProviderAd
     def normalize_event(self, connection, envelope):
         if not isinstance(envelope, dict):
             raise AdapterError("WuzAPI webhook envelope must be a JSON object")
+        if is_retired_webhook_event(envelope):
+            raise UnsupportedEventError("WuzAPI event type is retired")
         event_type = _lookup(envelope, "type")
         raw_event = _lookup(envelope, "event")
         if event_type in WUZAPI_LIFECYCLE_EVENT_STATES:
@@ -2662,10 +2670,6 @@ class WuzapiAdapter(WuzapiDirectStartMixin, WuzapiGroupMetadataMixin, ProviderAd
         if event_type in _CALL_EVENT_STATES:
             return self._normalize_call_event(
                 connection, envelope, event_type, raw_event
-            )
-        if event_type == "IdentityChange":
-            return self._normalize_identity_security_change(
-                connection, envelope, raw_event
             )
         if event_type in ("GroupInfo", "JoinedGroup", "Picture"):
             return self._normalize_group_metadata_hint(
@@ -2763,58 +2767,6 @@ class WuzapiAdapter(WuzapiDirectStartMixin, WuzapiGroupMetadataMixin, ProviderAd
                     "ref": call_ref,
                     "state": call_state,
                     "direction": logical_direction,
-                },
-                "provider.wuzapi": _event_metadata(envelope),
-            },
-        )
-
-    def _normalize_identity_security_change(self, connection, envelope, raw_event):
-        remote = _lookup(raw_event, "JID", "Jid")
-        primary = _strict_direct_participant(remote, "primary", "event.JID")
-        own_identity = _configured_own_identity(connection)
-        if own_identity and _same_participant(remote, own_identity):
-            raise UnsupportedEventError(
-                "WuzAPI identity event participant resolves to the account identity"
-            )
-        implicit = _optional_boolean(_lookup(raw_event, "Implicit"))
-        if implicit is None:
-            raise AdapterError("WuzAPI IdentityChange event has invalid Implicit")
-        occurred_at = _parse_timestamp(_lookup(raw_event, "Timestamp"))
-        evidence = {
-            "connection_ref": connection.external_ref,
-            "conversation_ref": primary.value_normalized,
-            "occurred_at": occurred_at.isoformat(),
-            "implicit": implicit,
-        }
-        digest = hashlib.sha256(
-            json.dumps(
-                evidence, ensure_ascii=True, separators=(",", ":"), sort_keys=True
-            ).encode("utf-8")
-        ).hexdigest()
-        return EventDTO(
-            provider_schema_version=WUZAPI_VERSION,
-            event_id="IdentitySecurity:%s" % digest,
-            event_type="identity.security.changed",
-            occurred_at=occurred_at,
-            account_ref=connection.account_id.external_ref,
-            connection_ref=connection.external_ref,
-            conversation_ref=primary.value_normalized,
-            platform=connection.account_id.platform,
-            direction="inbound",
-            is_from_me=False,
-            origin="provider",
-            actor=ActorDTO(
-                addresses=_addresses(((remote, "sender", "event.JID"),)),
-                display_name="",
-            ),
-            conversation=ConversationDTO(
-                addresses=(primary,),
-                conversation_type="direct",
-            ),
-            extensions={
-                "identity_security": {
-                    "change_kind": "primary_device",
-                    "implicit": implicit,
                 },
                 "provider.wuzapi": _event_metadata(envelope),
             },
@@ -3237,7 +3189,11 @@ class WuzapiAdapter(WuzapiDirectStartMixin, WuzapiGroupMetadataMixin, ProviderAd
         normalized_events = tuple(sorted(set(events or ())))
         if not normalized_events:
             raise AdapterError("Select at least one WuzAPI webhook event")
-        if any(event not in WUZAPI_WEBHOOK_EVENT_TYPES for event in normalized_events):
+        if any(
+            event not in WUZAPI_WEBHOOK_EVENT_TYPES
+            or event in WUZAPI_RETIRED_WEBHOOK_EVENTS
+            for event in normalized_events
+        ):
             raise AdapterError("WuzAPI webhook event selection is invalid")
         if "All" in normalized_events and len(normalized_events) != 1:
             raise AdapterError("The WuzAPI All event must be selected alone")

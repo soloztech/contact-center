@@ -449,7 +449,7 @@ class TestSourceWebhookLink(SavepointCase):
         channel, channel_binding = self._channel_binding()
         source = self._empty_inbox_event()
         binding = self._manual_binding(channel, channel_binding, source)
-        for content_type in ("call.accept", "identity.security.changed"):
+        for content_type in ("call.offer", "call.accept", "call.terminate"):
             binding.write({"content_type": content_type})
             for user in (self.agent, self.contact_center_admin, self.system_admin):
                 ui = self.env["contact.center.ui.api"].with_user(user)

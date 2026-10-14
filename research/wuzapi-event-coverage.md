@@ -7,11 +7,13 @@ adapter before enabling new event names.
 ## Projection contract
 
 The selected webhook list belongs to each provider connection. The controller accepts
-traffic only from that account's active `primary` ingress. Every authenticated event is
-persisted as a sanitized Inbox Event before asynchronous normalization; an event that
-the adapter does not implement converges to `unsupported` and remains observable. The
-fleet panel shows the last 24 hours of unsupported events, while the administration
-ledger retains the lifetime count.
+traffic only from that account's active `primary` ingress. Provider events retired by
+the adapter are acknowledged after authentication and discarded without persistence;
+provider readback still reports their subscription as drift. Other admitted events are
+persisted as sanitized Inbox Events before asynchronous normalization; an event that the
+adapter does not implement converges to `unsupported` and remains observable. The fleet
+panel shows the last 24 hours of unsupported events, while the administration ledger
+retains the lifetime count.
 
 The account is the logical inbox; a WuzAPI connection is only one transport/session for
 it. `standby` and `migration` connections may be monitored but never accept webhook
@@ -27,7 +29,6 @@ than passing a WuzAPI ID to another adapter or session.
 | `ReadReceipt`                                                                                                                                                                       | Provider-neutral delivery/read observations.                                                                                                                                                                                                                                                                                                                                              |
 | `GroupInfo`, `JoinedGroup`, `Picture`                                                                                                                                               | Bounded metadata/avatar invalidation followed by an OCA `queue_job` refresh.                                                                                                                                                                                                                                                                                                              |
 | `CallOffer`, `CallAccept`, `CallTerminate`                                                                                                                                          | Immutable provider-neutral call cards in the direct conversation. The provider call ID is represented only by a scoped SHA-256 reference.                                                                                                                                                                                                                                                 |
-| `IdentityChange`                                                                                                                                                                    | Immutable security card on an existing direct conversation; it never changes aliases, guest names, PN/LID evidence or partner links.                                                                                                                                                                                                                                                      |
 | `Connected`, `Disconnected`, `ConnectFailure`, `KeepAliveRestored`, `KeepAliveTimeout`, `StreamError`, `StreamReplaced`, `LoggedOut`, `QRTimeout`, `ClientOutdated`, `TemporaryBan` | Connection-health hints. Polling `/session/status` remains the authoritative repair path.                                                                                                                                                                                                                                                                                                 |
 
 Unknown human message wrappers become one safe `[Conteúdo do WhatsApp não suportado]`

@@ -15,6 +15,7 @@ from ..services.adapter import (
     WUZAPI_LIFECYCLE_EVENT_TYPES,
     WUZAPI_VERSION,
     ad_origin_preview_candidate,
+    is_retired_webhook_event,
 )
 
 _logger = logging.getLogger(__name__)
@@ -564,6 +565,49 @@ def _conversation_ingress_response(connection, adapter, headers, body, envelope)
     return response, block_reason
 
 
+def _persist_webhook_event(connection, envelope, body, ingress_block_reason):
+    """Persist a callback after authentication and admission have completed."""
+    try:
+        persisted_envelope = sanitize_webhook_envelope(envelope)
+    except ValueError:
+        return _json_response({"error": "invalid_envelope"}, 400)
+
+    digest = hashlib.sha256(body).hexdigest()
+    inbox_model = request.env["contact.center.inbox.event"].sudo()
+    dedupe_key = _inbox_dedupe_key(inbox_model, connection, persisted_envelope, digest)
+    domain = [
+        ("provider_connection_id", "=", connection.id),
+        ("inbox_dedupe_key", "=", dedupe_key),
+    ]
+    _capture_ad_origin_preview(
+        connection,
+        envelope,
+        persisted_envelope,
+        existing_inbox=inbox_model.search(domain, limit=1),
+    )
+    values = _inbox_ledger_values(
+        connection,
+        envelope,
+        persisted_envelope,
+        body,
+        digest,
+        dedupe_key,
+        ingress_block_reason,
+    )
+    inbox, duplicate = _find_or_create_inbox(inbox_model, domain, values)
+    if not duplicate and ingress_block_reason == "onboarding_not_activated":
+        connection._contact_center_record_onboarding_ingress(connection.onboarding_ref)
+    return _json_response(
+        {
+            "accepted": True,
+            "duplicate": duplicate,
+            "event_id": inbox.id,
+            "blocked": inbox.state == "blocked",
+        },
+        200 if duplicate else 202,
+    )
+
+
 class WuzapiWebhookController(http.Controller):
     @http.route(
         "/contact-center/webhook/wuzapi/<string:webhook_key>",
@@ -628,46 +672,6 @@ class WuzapiWebhookController(http.Controller):
         )
         if ingress_response is not None:
             return ingress_response
-        try:
-            persisted_envelope = sanitize_webhook_envelope(envelope)
-        except ValueError:
-            return _json_response({"error": "invalid_envelope"}, 400)
-
-        digest = hashlib.sha256(body).hexdigest()
-        inbox_model = request.env["contact.center.inbox.event"].sudo()
-        dedupe_key = _inbox_dedupe_key(
-            inbox_model, connection, persisted_envelope, digest
-        )
-        domain = [
-            ("provider_connection_id", "=", connection.id),
-            ("inbox_dedupe_key", "=", dedupe_key),
-        ]
-        _capture_ad_origin_preview(
-            connection,
-            envelope,
-            persisted_envelope,
-            existing_inbox=inbox_model.search(domain, limit=1),
-        )
-        values = _inbox_ledger_values(
-            connection,
-            envelope,
-            persisted_envelope,
-            body,
-            digest,
-            dedupe_key,
-            ingress_block_reason,
-        )
-        inbox, duplicate = _find_or_create_inbox(inbox_model, domain, values)
-        if not duplicate and ingress_block_reason == "onboarding_not_activated":
-            connection._contact_center_record_onboarding_ingress(
-                connection.onboarding_ref
-            )
-        return _json_response(
-            {
-                "accepted": True,
-                "duplicate": duplicate,
-                "event_id": inbox.id,
-                "blocked": inbox.state == "blocked",
-            },
-            200 if duplicate else 202,
-        )
+        if is_retired_webhook_event(envelope):
+            return _json_response({"accepted": True, "ignored": True}, 200)
+        return _persist_webhook_event(connection, envelope, body, ingress_block_reason)

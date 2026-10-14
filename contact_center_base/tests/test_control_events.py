@@ -162,16 +162,6 @@ class TestControlEvents(SavepointCase):
         }
         return EventDTO.from_dict(values)
 
-    def _identity_security_event(self, jid, *, event_id=None, implicit=False):
-        values = self._event_values(jid, "identity.security.changed", event_id=event_id)
-        values["extensions"] = {
-            "identity_security": {
-                "change_kind": "primary_device",
-                "implicit": implicit,
-            }
-        }
-        return EventDTO.from_dict(values)
-
     def _source_event(self, event, connection=None):
         connection = connection or self.connection
         return (
@@ -371,63 +361,6 @@ class TestControlEvents(SavepointCase):
         self.assertTrue(binding.identity_id.mail_guest_id)
         self.assertEqual(binding.channel_id.channel_type, "contact_center")
 
-    def test_identity_security_is_existing_only_idempotent_and_does_not_enrich(self):
-        unknown_jid = "5511900004103@s.whatsapp.net"
-        counts = {
-            model: self.env[model].sudo().search_count([])
-            for model in (
-                "contact.center.identity",
-                "mail.guest",
-                "mail.channel",
-                "contact.center.channel.binding",
-            )
-        }
-
-        missing = self.application._process_event(
-            self.connection,
-            self._identity_security_event(unknown_jid),
-        )
-
-        self.assertFalse(missing)
-        self.assertEqual(
-            counts,
-            {model: self.env[model].sudo().search_count([]) for model in counts},
-        )
-
-        known_jid = "5511900004104@s.whatsapp.net"
-        identity, _channel, binding = self._direct_conversation(known_jid)
-        alias_count = len(identity.alias_ids)
-        channel_alias_count = len(binding.alias_ids)
-        event_id = "identity-security-stable-event"
-        event = self._identity_security_event(
-            known_jid, event_id=event_id, implicit=True
-        )
-        values = event.to_dict()
-        values["actor"] = {
-            "display_name": "This must not replace the identity",
-            "addresses": [self._address(known_jid, "sender")],
-        }
-        event = EventDTO.from_dict(values)
-
-        message = self.application._process_event(self.connection, event)
-        replay = self.application._process_event(self.connection, event)
-
-        identity.invalidate_recordset()
-        self.assertEqual(replay, message)
-        self.assertEqual(identity.name, "Known Person")
-        self.assertFalse(identity.observed_name)
-        self.assertEqual(len(identity.alias_ids), alias_count)
-        self.assertEqual(len(binding.alias_ids), channel_alias_count)
-        message_binding = self._binding_for_message(message)
-        self.assertEqual(message_binding.channel_binding_id, binding)
-        self.assertEqual(message_binding.content_type, "identity.security.changed")
-        self.assertIn("possível alteração automática", message.body)
-        self.assertEqual(
-            message_binding.external_message_id,
-            "control:identity-security:%s"
-            % hashlib.sha256(event_id.encode("utf-8")).hexdigest(),
-        )
-
     def test_control_event_shapes_are_strict(self):
         jid = "5511900004105@s.whatsapp.net"
         valid_call = self._call_event(jid, "offered").to_dict()
@@ -468,41 +401,13 @@ class TestControlEvents(SavepointCase):
                         self.connection, EventDTO.from_dict(values)
                     )
 
-        identity_event = self._identity_security_event(jid).to_dict()
-        identity_event["extensions"]["identity_security"]["extra"] = True
-        with self.assertRaises(ValidationError):
-            self.application._process_event(
-                self.connection, EventDTO.from_dict(identity_event)
-            )
-
-        for missing_field in ("actor", "conversation"):
-            identity_event = self._identity_security_event(jid).to_dict()
-            if missing_field == "actor":
-                identity_event["actor"]["addresses"] = []
-            else:
-                identity_event["conversation"]["addresses"][0]["role"] = "alternate"
-            with self.subTest(missing_field=missing_field):
-                with self.assertRaises(ValidationError):
-                    self.application._process_event(
-                        self.connection, EventDTO.from_dict(identity_event)
-                    )
-
-        identity_event = self._identity_security_event(jid).to_dict()
-        identity_event["actor"]["addresses"] = [
-            self._address("5511900099997@s.whatsapp.net", "sender")
-        ]
-        with self.assertRaises(ValidationError):
-            self.application._process_event(
-                self.connection, EventDTO.from_dict(identity_event)
-            )
-
     def test_control_sources_are_persisted_and_missing_links_are_enriched(self):
         jid = "5511900004110@s.whatsapp.net"
         self._direct_conversation(jid)
         events = [
             self._call_event(jid, state)
             for state in ("offered", "accepted", "terminated")
-        ] + [self._identity_security_event(jid)]
+        ]
         for event in events:
             with self.subTest(event_type=event.event_type, extensions=event.extensions):
                 source = self._source_event(event)
@@ -518,10 +423,7 @@ class TestControlEvents(SavepointCase):
                     message,
                 )
 
-        for event in (
-            self._call_event("5511900004111@s.whatsapp.net", "accepted"),
-            self._identity_security_event(jid),
-        ):
+        for event in (self._call_event("5511900004111@s.whatsapp.net", "accepted"),):
             message = self.application._process_event(self.connection, event)
             target = self._binding_for_message(message)
             self.assertFalse(target.source_inbox_event_id)

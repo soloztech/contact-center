@@ -113,4 +113,4 @@ class TestIntakeAdapterVocabulary(TransactionCase):
                 observed.update(values)
         self.assertTrue(observed)
         # Base control events are always present even in a standalone CRM graph.
-        self.assertIn("identity.security.changed", observed)
+        self.assertTrue({"call.offer", "call.accept", "call.terminate"} <= observed)
