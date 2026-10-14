@@ -125,6 +125,14 @@ class TestPayloadExpiry(SavepointCase):
         self.assertFalse(event.normalized_dto_json)
         self.assertEqual(event.inbox_dedupe_key, dedupe_key)
 
+    def test_zero_completion_discards_only_the_finished_event(self):
+        self.parameters.set_param(_PARAMETER, "0")
+        older_receipt = self._event("done", age_days=10)
+        current = self._event("pending", age_days=0)
+        current.write({"state": "done", "processed_at": fields.Datetime.now()})
+        self.assertEqual(current.raw_envelope_json, _EXPIRED)
+        self._assert_payload_kept(older_receipt)
+
     def test_zero_preserves_payload_when_processing_fails(self):
         self.parameters.set_param(_PARAMETER, "0")
         event = self._event("pending", age_days=0)

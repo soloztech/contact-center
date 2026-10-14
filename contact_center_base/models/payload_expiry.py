@@ -51,12 +51,13 @@ class ContactCenterInboxPayloadExpiry(models.Model):
                      WHERE state IN ('done', 'unsupported')
                        AND metadata_json ->> 'content_erased' IS NULL
                        AND metadata_json -> 'attribution_capture_failure' IS NULL
-                       AND processed_at < %s
+                       AND processed_at <= %s
+                       AND (%s OR id = ANY(%s))
                      ORDER BY processed_at
                      LIMIT %s
                        FOR UPDATE SKIP LOCKED)
             """,
-            [cutoff, max(1, int(limit))],
+            [cutoff, not self, self.ids, max(1, int(limit))],
         )
         expired = self.env.cr.rowcount
         self.invalidate_model(
@@ -64,43 +65,14 @@ class ContactCenterInboxPayloadExpiry(models.Model):
         )
         return expired
 
-    def _job_process(self):
-        result = super()._job_process()
-        self._discard_payload_if_zero()
+    def write(self, values):
+        result = super().write(values)
+        if self and values.get("state") in ("done", "unsupported"):
+            parameters = self.env["ir.config_parameter"].sudo()
+            try:
+                immediate = int(parameters.get_param(_RETENTION_PARAMETER, -1)) == 0
+            except (TypeError, ValueError):
+                immediate = False
+            if immediate:
+                self._cron_expire_payloads(limit=len(self))
         return result
-
-    def _process_one(self):
-        result = super()._process_one()
-        self._discard_payload_if_zero()
-        return result
-
-    def _discard_payload_if_zero(self):
-        """Discard only after all message, media and attribution work is saved."""
-
-        self.ensure_one()
-        metadata = dict(self.metadata_json or {})
-        if (
-            self.state not in ("done", "unsupported")
-            or metadata.get("content_erased") is not None
-            or metadata.get("attribution_capture_failure") is not None
-        ):
-            return False
-        try:
-            days = int(
-                self.env["ir.config_parameter"]
-                .sudo()
-                .get_param(_RETENTION_PARAMETER, -1)
-            )
-        except (TypeError, ValueError):
-            return False
-        if days != 0:
-            return False
-        metadata.update(content_erased=True, reason="payload_expired")
-        self.write(
-            {
-                "raw_envelope_json": {"content_erased": True},
-                "normalized_dto_json": False,
-                "metadata_json": metadata,
-            }
-        )
-        return True
