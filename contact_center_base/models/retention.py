@@ -14,6 +14,7 @@ import hmac
 import json
 import logging
 from datetime import timedelta
+from time import monotonic
 
 from odoo import _, api, fields, models
 from odoo.exceptions import AccessError, ValidationError
@@ -500,7 +501,12 @@ class ContactCenterRetention(models.AbstractModel):
         events._erase_conversation_content("history_retention_mutation_staging")
         jobs.exists().unlink()
         binding.write({"retention_last_run_at": now})
-        return {"message_count": 0, "media_count": 0, "staging": True}
+        return {
+            "message_count": 0,
+            "media_count": 0,
+            "inbox_count": len(events),
+            "staging": True,
+        }
 
     def _jobs(self, records, messages):
         uuids = set()
@@ -742,6 +748,7 @@ class ContactCenterRetention(models.AbstractModel):
             [("message_id", "in", messages.ids)]
         )
         notes.unlink()
+        schedule_count = len(scheduled)
         scheduled.unlink()
         uploads.unlink()
         # Delete leaf retries first; readonly retry_of_id must not be rewritten.
@@ -755,7 +762,12 @@ class ContactCenterRetention(models.AbstractModel):
             leaves.unlink()
             remaining -= leaves
         events._erase_conversation_content("history_retention")
-        result = {"message_count": len(messages), "media_count": len(media)}
+        result = {
+            "message_count": len(messages),
+            "media_count": len(media),
+            "inbox_count": len(events),
+            "schedule_count": schedule_count,
+        }
         removed_ids = messages.ids
         messages.unlink()
         exclusive_attachments.exists().unlink()
@@ -808,53 +820,137 @@ class ContactCenterRetention(models.AbstractModel):
             )
         return result
 
+    def _cron_purge_batch(self, binding_id, domain, now, unindexed, blocked=False):
+        # Own only this batch's transaction; never commit the caller's cursor.
+        with self.env.registry.cursor() as cr:
+            cr.execute("SET LOCAL lock_timeout TO '5s'")
+            service = (
+                self.with_env(api.Environment(cr, self.env.uid, self.env.context))
+                .sudo()
+                .with_context(**_service_context())
+            )
+            binding = service.env["contact.center.channel.binding"].search(
+                domain + [("id", "=", binding_id)], limit=1
+            )
+            if not binding:
+                return {}
+            account_id = binding.account_id.id
+            if not blocked and account_id not in unindexed:
+                unindexed[account_id] = bool(
+                    service.env["contact.center.inbox.event"].search_count(
+                        [
+                            ("account_id", "=", account_id),
+                            ("retention_route_indexed", "=", False),
+                        ]
+                    )
+                )
+                if unindexed[account_id]:
+                    _logger.warning(
+                        "Retention deferred: account %s has unindexed events",
+                        account_id,
+                    )
+            if blocked or unindexed.get(account_id):
+                binding.account_id._lock_conversation_policy()
+                binding.write(
+                    {"retention_last_run_at": now, "retention_last_blocked": True}
+                )
+                result = {"blocked": True}
+            else:
+                result = service._purge_binding(binding, now=now)
+            cr.commit()  # pylint: disable=invalid-commit
+        return result
+
     def _cron_purge(self):
-        # One group per invocation bounds the transaction and releases its locks
-        # at the native cron commit. Ordering rotates groups, including busy ones.
-        service = self.sudo().with_context(**_service_context())
-        binding = service.env["contact.center.channel.binding"].search(
-            [
-                ("active", "=", True),
-                ("merged_into_id", "=", False),
-                ("conversation_type", "=", "group"),
-                ("retention_preserve", "=", False),
-                ("account_id.active", "=", True),
-                ("account_id.retention_enabled", "=", True),
-                ("account_id.connection_ids.adapter_key", "=", "wuzapi"),
-            ],
-            order="retention_last_run_at, id",
-            limit=1,
+        domain = [
+            ("active", "=", True),
+            ("merged_into_id", "=", False),
+            ("conversation_type", "=", "group"),
+            ("retention_preserve", "=", False),
+            ("account_id.active", "=", True),
+            ("account_id.retention_enabled", "=", True),
+            ("account_id.connection_ids.adapter_key", "=", "wuzapi"),
+        ]
+        pending = (
+            self.env["contact.center.channel.binding"]
+            .sudo()
+            .search(domain, order="retention_last_run_at, id")
+            .ids
         )
-        if not binding:
+        if not pending:
             return False
-        try:
-            with self.env.cr.savepoint():
-                inbox = service.env["contact.center.inbox.event"]
-                if inbox.search_count(
-                    [
-                        ("account_id", "=", binding.account_id.id),
-                        ("retention_route_indexed", "=", False),
-                    ]
-                ):
-                    # Commit this bounded backfill before advancing any cutoff.
-                    binding.account_id._lock_conversation_policy()
-                    binding.write({"retention_last_run_at": fields.Datetime.now()})
-                    return {"indexing": True}
-                return service._purge_binding(binding)
-        except ValidationError:
-            # Retrying on the next round is intentional; never delete a business
-            # dependency or uncertain send to make an expiration counter shrink.
-            binding.account_id._lock_conversation_policy()
-            binding.write(
-                {
-                    "retention_last_run_at": fields.Datetime.now(),
-                    "retention_last_blocked": True,
-                }
+        now = fields.Datetime.now()
+        deadline = monotonic() + 300
+        totals = dict.fromkeys(
+            ("message_count", "media_count", "inbox_count", "schedule_count"), 0
+        )
+        visited, blocked = set(), set()
+        unindexed, staging = {}, {}
+        failures = 0
+        while pending:
+            following = []
+            for position, binding_id in enumerate(pending):
+                if monotonic() >= deadline:
+                    following.extend(pending[position:])
+                    break
+                visited.add(binding_id)
+                try:
+                    result = self._cron_purge_batch(binding_id, domain, now, unindexed)
+                    if result.get("staging"):
+                        staging[binding_id] = staging.get(binding_id, 0) + 1
+                        if staging[binding_id] >= 10:
+                            self._cron_purge_batch(
+                                binding_id, domain, now, unindexed, blocked=True
+                            )
+                            blocked.add(binding_id)
+                    if result.get("blocked"):
+                        blocked.add(binding_id)
+                    totals = {
+                        key: count + result.get(key, 0) for key, count in totals.items()
+                    }
+                    if binding_id not in blocked and (
+                        result.get("staging")
+                        or any(result.get(key, 0) for key in totals)
+                    ):
+                        following.append(binding_id)
+                except Exception as error:  # A failed group must not stop the others.
+                    blocked.add(binding_id)
+                    if isinstance(error, ValidationError):
+                        _logger.info(
+                            "Retention batch blocked for binding %s", binding_id
+                        )
+                    else:
+                        failures += 1
+                        _logger.exception(
+                            "Retention batch failed for binding %s", binding_id
+                        )
+                    try:
+                        self._cron_purge_batch(
+                            binding_id, domain, now, unindexed, blocked=True
+                        )
+                    except Exception:
+                        _logger.exception(
+                            "Could not mark retention deferral for %s", binding_id
+                        )
+            pending = following
+            if monotonic() >= deadline:
+                break
+        _logger.info(
+            "Retention daily: %s groups visited, %s messages, %s inbox events, "
+            "%s schedules, %s blocked, %s staged, %s deferred by time, %s errors",
+            len(visited),
+            totals["message_count"],
+            totals["inbox_count"],
+            totals["schedule_count"],
+            len(blocked),
+            len(staging),
+            len(pending),
+            failures,
+        )
+        if failures:
+            raise ValidationError(
+                _("A limpeza de grupos teve %s falha(s). Consulte o log.") % failures
             )
-            _logger.info(
-                "Contact Center retention batch deferred for binding %s", binding.id
-            )
-            return False
+        return totals
 
 
 class ContactCenterRetentionUiApi(models.AbstractModel):

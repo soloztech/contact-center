@@ -223,6 +223,20 @@ barreira contra recriação de conteúdo expirado. O lote preserva registros com
 protege trabalho em andamento e adia dependências sem contrato seguro de expiração. A
 coleta física dos arquivos continua a cargo do Odoo.
 
+O mesmo agendador percorre diariamente os grupos elegíveis, às 03h40 de São Paulo por
+padrão. Trata até 100 mensagens por grupo em cada rodada e confirma cada lote em uma
+transação própria, liberando os bloqueios entre lotes. Também continua a limpeza de
+eventos e agendamentos sem mensagem. Preservação por grupo, prazo da caixa e todos os
+contratos de exclusão permanecem aplicados em cada lote.
+
+Uma conta com eventos não indexados é adiada, sem reprocessar payloads históricos.
+Preparações têm até dez chamadas por grupo; o início de novos lotes é interrompido após
+cinco minutos e espera a próxima execução diária. Falhas de um grupo não impedem os
+demais e ficam no log/resumo e no estado de bloqueio quando disponível. Esperas por
+locks são limitadas a cinco segundos. Horário é configurável em Ações agendadas. O
+upgrade ajusta o cron `noupdate` que ainda estiver no padrão de um minuto; cadências
+personalizadas e seu estado ativo/inativo são preservados.
+
 O contrato de extensão para retenção é implementado em
 [retention_dependencies.py](../contact_center_base/models/retention_dependencies.py).
 Novos consumidores devem preservar seus fatos e liberar apenas suas referências antes de

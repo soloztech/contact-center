@@ -6,6 +6,7 @@ from . import (
     test_ingress_concurrency,
     test_onboarding,
     test_onboarding_concurrency,
+    test_retention_cron,
     test_retention_ingress,
     test_webhook,
     test_wuzapi_config,

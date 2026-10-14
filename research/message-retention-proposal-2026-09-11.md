@@ -10,10 +10,16 @@ O serviço está em `contact_center_base/models/retention.py`, com barreira de e
 adaptador WuzAPI identifica rota, data e alvos sem depender da normalização do corpo. As
 configurações e exceções exigem supervisor/administrador e são auditadas no backend.
 
-O cron processa um grupo por minuto, até 100 mensagens por lote. Antes da primeira
-purga, indexa os eventos legados da caixa em lotes de 500. Cópias em citações e edições
-são saneadas em etapas limitadas antes da exclusão do alvo. Anexos compartilhados são
-preservados; consumidores comerciais sem contrato de expiração adiam o lote.
+Atualização de 14/10: o cron existente percorre os grupos diariamente, por padrão às
+03h40 de São Paulo, em rodadas de até 100 mensagens por grupo e transação própria por
+lote. Também limpa eventos/agendamentos vencidos sem mensagem. O reindexador histórico
+foi retirado; eventos não indexados adiam a conta e geram aviso, sem reler seus
+payloads. Preparações de citações/edições podem avançar em até dez chamadas por grupo na
+mesma execução. O início de novos lotes é interrompido após cinco minutos, sem job
+extra; os demais ficam para a próxima madrugada. Falhas são isoladas por grupo e
+registradas no resumo. Anexos compartilhados são preservados; consumidores comerciais
+sem contrato de expiração continuam adiando o lote. Configurações de retenção ficam
+inalteradas; o upgrade muda somente a agenda ainda no padrão de um minuto.
 
 A interface inclui aviso do prazo, exceção por grupo e atualização da conversa aberta
 após a limpeza, mantendo o estado de leitura de cada usuário. A simulação conta
