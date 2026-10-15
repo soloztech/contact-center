@@ -658,25 +658,28 @@ class ContactCenterMediaUpload(models.Model):
 
     @api.model
     def _cron_cleanup_expired(self):
-        expired = self.sudo().search(
-            [("expires_at", "<", fields.Datetime.now())],
-            order="expires_at, id",
-            limit=_MEDIA_UPLOAD_CLEANUP_BATCH,
-        )
-        pending_attachment_ids = expired.filtered(
-            lambda upload: upload.state == "pending"
-        ).attachment_id.ids
-        expired.unlink()
-        # Odoo normally deletes generic attachments whose ``res_model/res_id``
-        # points at an unlinked record. Re-browse the captured IDs because that
-        # automatic cleanup invalidates the original attachment recordset; trying
-        # to unlink it again raises MissingError/CacheMiss. The explicit fallback
-        # still cleans a pending attachment if its generic link was inconsistent.
-        pending_attachments = (
-            self.env["ir.attachment"].sudo().browse(pending_attachment_ids).exists()
-        )
-        if pending_attachments:
-            pending_attachments.with_context(
-                contact_center_post_token=CONTACT_CENTER_POST_TOKEN
-            ).unlink()
-        return True
+        cutoff = fields.Datetime.now()
+        while True:
+            expired = self.sudo().search(
+                [("expires_at", "<", cutoff)],
+                order="expires_at, id",
+                limit=_MEDIA_UPLOAD_CLEANUP_BATCH,
+            )
+            if not expired:
+                return True
+            pending_attachment_ids = expired.filtered(
+                lambda upload: upload.state == "pending"
+            ).attachment_id.ids
+            expired.unlink()
+            # Odoo normally deletes generic attachments whose ``res_model/res_id``
+            # points at an unlinked record. Re-browse the captured IDs because that
+            # automatic cleanup invalidates the original attachment recordset; trying
+            # to unlink it again raises MissingError/CacheMiss. The explicit fallback
+            # still cleans a pending attachment if its generic link was inconsistent.
+            pending_attachments = (
+                self.env["ir.attachment"].sudo().browse(pending_attachment_ids).exists()
+            )
+            if pending_attachments:
+                pending_attachments.with_context(
+                    contact_center_post_token=CONTACT_CENTER_POST_TOKEN
+                ).unlink()

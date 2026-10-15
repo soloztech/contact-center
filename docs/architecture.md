@@ -259,3 +259,23 @@ presença de um runbook não autoriza executar seus comandos.
 
 A jornada comercial, escopo por negócio e diagrama de tracking estão em
 [crm-journey.md](crm-journey.md).
+
+## Responsabilidades da API e do cliente
+
+`models/ui_api.py` mantém conversas, timeline e ações de mensagens. A extensão
+`ui_api_contacts.py` concentra projeção de identidades e vínculo de contatos/empresas,
+no mesmo modelo público e com as mesmas regras de autorização. O store coordena o estado
+do inbox; `contact_center_operation_journal.esm.js` cuida somente do formato, validação
+e persistência do diário de idempotência. Os exports antigos do store são mantidos para
+os consumidores existentes.
+
+Miniaturas salvas acompanham o histórico da mensagem e não vencem por idade.
+Localizadores privados têm prazo de uso próprio e descarte diário, com todos os vencidos
+do corte inicial percorridos em lotes. A janela para obter dados faltantes continua
+limitada; ela não determina a vida da imagem já salva. Ver
+[ciclo das prévias](../operations/ad-origin-preview.md).
+
+Prévias de referência isolada (`source_key_kind=event`) aparecem somente no painel e não
+têm mensagem vinculada. Sua imagem fica até a exclusão da conversa; a retenção e a
+redação de mensagens não selecionam essas prévias. Esse ciclo é separado do das
+miniaturas vinculadas a mensagens.

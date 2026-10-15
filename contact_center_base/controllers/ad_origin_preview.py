@@ -1,6 +1,6 @@
 from werkzeug.exceptions import NotFound
 
-from odoo import fields, http
+from odoo import http
 from odoo.exceptions import AccessError, ValidationError
 from odoo.http import request
 
@@ -20,7 +20,7 @@ class ContactCenterAdPreviewController(http.Controller):
             .search([("public_ref", "=", public_ref)], limit=1)
         )
         try:
-            if not preview or preview.expires_at <= fields.Datetime.now():
+            if not preview:
                 raise NotFound()
             preview._authorize_read()
         except (AccessError, ValidationError):

@@ -1,7 +1,7 @@
 {
     "name": "Contact Center UI",
     "summary": "Standalone operational interface for Contact Center agents",
-    "version": "16.0.1.11.6",
+    "version": "16.0.1.11.7",
     "category": "Productivity/Discuss",
     "author": "Soloz Technologies",
     "website": "https://github.com/soloztech/contact-center",
@@ -18,6 +18,7 @@
             "contact_center_ui/static/src/js/contact_center_shared_reads.esm.js",
             "contact_center_ui/static/src/js/structured_content.esm.js",
             "contact_center_ui/static/src/js/browser_attention.esm.js",
+            "contact_center_ui/static/src/js/contact_center_operation_journal.esm.js",
             "contact_center_ui/static/src/js/contact_center_store.esm.js",
             "contact_center_ui/static/src/js/deferred_image.esm.js",
             "contact_center_ui/static/src/js/attribution_touchpoints.esm.js",

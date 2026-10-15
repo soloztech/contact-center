@@ -4,18 +4,23 @@ import hmac
 import json
 import time
 import uuid
+from datetime import timedelta
 from unittest import mock
 
 from psycopg2 import errorcodes
 from psycopg2.errors import SerializationFailure
 
-from odoo import _
+from odoo import _, fields
 from odoo.exceptions import ValidationError
 from odoo.tests import tagged
 from odoo.tests.common import HttpCase
 
 from ..controllers import main as media_controller
-from ..services.tokens import CONTACT_CENTER_POST_TOKEN
+from ..models.ad_origin_preview import _owned
+from ..services.tokens import (
+    CONTACT_CENTER_ATTRIBUTION_TOKEN,
+    CONTACT_CENTER_POST_TOKEN,
+)
 
 _PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
@@ -315,16 +320,22 @@ class TestContactCenterHttpEndpoints(HttpCase):
 
     def test_document_upload_streams_above_default_form_memory_limit(self):
         self.connection.write(
-            {"capabilities_json": {"send_message": True, "media": {
-                "document": {"enabled": True, "max_bytes": 100_000_000}
-            }}}
+            {
+                "capabilities_json": {
+                    "send_message": True,
+                    "media": {"document": {"enabled": True, "max_bytes": 100_000_000}},
+                }
+            }
         )
         content = b"%PDF-1.3\n" + bytes(range(256)) * (12 * 1024 * 1024 // 256)
         reference = str(uuid.uuid4())
         response = self.url_open(
             "/contact_center/media/upload",
-            data={"channel_id": str(self.channel.id), "client_upload_id": reference,
-                  "csrf_token": self._csrf_token()},
+            data={
+                "channel_id": str(self.channel.id),
+                "client_upload_id": reference,
+                "csrf_token": self._csrf_token(),
+            },
             files={"file": ("synthetic.pdf", content, "application/pdf")},
         )
         self.assertEqual(response.status_code, 200)
@@ -611,3 +622,82 @@ class TestContactCenterHttpEndpoints(HttpCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, _PNG)
+
+    def test_saved_ad_thumbnail_is_served_after_acquisition_deadline(self):
+        self.account.write({"attribution_ui_enabled": True})
+        message_binding = self.media.message_binding_id
+        inbox = (
+            self.env["contact.center.inbox.event"]
+            .sudo()
+            .with_context(contact_center_skip_enqueue=True)
+            .create(
+                {
+                    "provider_connection_id": self.connection.id,
+                    "inbox_dedupe_key": str(uuid.uuid4()),
+                    "provider_schema_version": "http-test-v1",
+                    "raw_envelope_json": {"fixture": True},
+                }
+            )
+        )
+        point = (
+            self.env["contact.center.attribution.touchpoint"]
+            .sudo()
+            .with_context(
+                contact_center_attribution_token=CONTACT_CENTER_ATTRIBUTION_TOKEN
+            )
+            .create(
+                {
+                    "company_id": self.account.company_id.id,
+                    "account_id": self.account.id,
+                    "provider_connection_id": self.connection.id,
+                    "inbox_event_id": inbox.id,
+                    "message_binding_id": message_binding.id,
+                    "channel_binding_id": self.binding.id,
+                    "occurred_at": fields.Datetime.now() - timedelta(days=40),
+                    "conversation_ref": self.binding.conversation_ref,
+                    "conversation_address_fingerprint": "a" * 64,
+                    "source_key_kind": "message",
+                    "source_external_key": message_binding.external_message_id,
+                    "external_message_id": message_binding.external_message_id,
+                    "canonical_key": uuid.uuid4().hex * 2,
+                    "attribution_fingerprint": "b" * 64,
+                    "touchpoint_type": "paid_ad_click",
+                    "evidence_level": "provider_asserted",
+                    "network": "whatsapp",
+                }
+            )
+        )
+        preview = _owned(self.env["contact.center.attribution.preview"]).create(
+            {
+                "touchpoint_id": point.id,
+                "title": "Saved ad",
+                "state": "ready",
+                "expires_at": fields.Datetime.now() - timedelta(days=1),
+            }
+        )
+        content = b"synthetic-private-jpeg"
+        attachment = (
+            self.env["ir.attachment"]
+            .sudo()
+            .create(
+                {
+                    "name": "ad-preview.jpg",
+                    "type": "binary",
+                    "raw": content,
+                    "mimetype": "image/jpeg",
+                    "res_model": preview._name,
+                    "res_id": preview.id,
+                }
+            )
+        )
+        _owned(preview).write({"thumbnail_attachment_id": attachment.id})
+        route = "/contact_center/attribution/%s/thumbnail" % preview.public_ref
+        response = self.url_open(route)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, content)
+        self.assertEqual(response.headers["Cache-Control"], "private, no-store")
+        self.authenticate(self.outsider.login, self.PASSWORD)
+        self.assertEqual(self.url_open(route).status_code, 404)
+        self.authenticate(self.agent.login, self.PASSWORD)
+        preview._expire()
+        self.assertEqual(self.url_open(route).status_code, 404)

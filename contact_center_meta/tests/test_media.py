@@ -1,4 +1,9 @@
+import datetime
+import hashlib
+import uuid
 from unittest import mock
+
+from odoo import fields
 
 from odoo.addons.contact_center_base.services.adapter import (
     AdapterError,
@@ -206,3 +211,73 @@ class TestMetaPrivateMedia(MetaCase):
             )
 
         request_mock.assert_not_called()
+
+    def test_expired_locator_is_rejected_before_http_and_success_can_finalize(self):
+        _delivery, locator = self._routed_locator()
+        deadline = locator.purge_after
+        with mock.patch.object(
+            fields.Datetime,
+            "now",
+            return_value=deadline - datetime.timedelta(seconds=1),
+        ), mock.patch(REQUEST_PATCH, return_value=FakeMediaResponse()):
+            self.connection.get_adapter().download_media(
+                self.connection, self._dto(locator)
+            )
+        with mock.patch.object(
+            fields.Datetime,
+            "now",
+            return_value=deadline + datetime.timedelta(seconds=1),
+        ):
+            with mock.patch(REQUEST_PATCH) as request_mock, self.assertRaises(
+                AdapterError
+            ):
+                self.connection.get_adapter().download_media(
+                    self.connection, self._dto(locator)
+                )
+            request_mock.assert_not_called()
+            self.connection.get_adapter().finalize_media_download(
+                self.connection, self._dto(locator), succeeded=True
+            )
+        self.assertEqual(locator.state, "consumed")
+        self.assertFalse(locator.download_url)
+
+    def test_daily_private_url_cleanup_drains_batches_and_preserves_future(self):
+        from ..services.tokens import CONTACT_CENTER_META_INTERNAL_TOKEN
+
+        delivery, _locator = self._routed_locator()
+        now = fields.Datetime.now()
+        model = (
+            self.env["contact.center.meta.media.locator"]
+            .sudo()
+            .with_context(
+                contact_center_meta_internal=CONTACT_CENTER_META_INTERNAL_TOKEN
+            )
+        )
+        values = [
+            {
+                "reference": uuid.uuid4().hex + uuid.uuid4().hex,
+                "meta_delivery_id": delivery.id,
+                "meta_item_key": "entry:0:messaging:0",
+                "sequence": index + 1,
+                "slot": "attachment:%s" % (index + 1),
+                "download_url": "https://lookaside.fbsbx.com/daily",
+                "url_sha256": hashlib.sha256(b"daily").hexdigest(),
+                "purge_after": now - datetime.timedelta(days=1),
+            }
+            for index in range(502)
+        ]
+        old = model.create(values)
+        future = model.create(
+            dict(
+                values[0],
+                reference=uuid.uuid4().hex + uuid.uuid4().hex,
+                slot="attachment:future",
+                purge_after=now + datetime.timedelta(days=1),
+            )
+        )
+        self.assertEqual(model._cron_purge_private_urls(limit=1), 1)
+        self.assertGreaterEqual(model._cron_purge_private_urls(), 500)
+        self.assertEqual(set(old.mapped("state")), {"expired"})
+        self.assertFalse(any(old.mapped("download_url")))
+        self.assertEqual(future.state, "active")
+        self.assertTrue(future.download_url)

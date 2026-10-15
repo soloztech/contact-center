@@ -4,6 +4,7 @@ from . import account
 from . import application
 from . import application_outbound
 from . import ui_api
+from . import ui_api_contacts
 from . import attribution
 from . import channel
 from . import conversation_preference

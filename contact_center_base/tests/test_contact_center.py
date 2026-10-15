@@ -7057,3 +7057,48 @@ class TestContactCenter(SavepointCase):
             outbox.provider_response_json["dispatch_outcome"],
             "provider_returned_success",
         )
+
+    def test_daily_upload_cleanup_drains_more_than_one_batch(self):
+        _channel, binding, _identity = self._channel_binding()
+        attachments = (
+            self.env["ir.attachment"]
+            .sudo()
+            .create(
+                [
+                    {
+                        "name": "daily-upload.bin",
+                        "raw": b"daily-upload",
+                        "type": "binary",
+                        "res_model": "contact.center.media.upload",
+                        "res_id": 0,
+                    }
+                    for _index in range(501)
+                ]
+            )
+        )
+        uploads = (
+            self.env["contact.center.media.upload"]
+            .sudo()
+            .create(
+                [
+                    {
+                        "channel_binding_id": binding.id,
+                        "uploaded_by_user_id": self.agent.id,
+                        "attachment_id": attachment.id,
+                        "kind": "image",
+                        "mime_type": "image/png",
+                        "file_name": "daily.png",
+                        "size_bytes": 12,
+                        "sha256": hashlib.sha256(b"daily-upload").hexdigest(),
+                        "expires_at": fields.Datetime.now()
+                        - datetime.timedelta(days=1),
+                    }
+                    for attachment in attachments
+                ]
+            )
+        )
+        for upload in uploads:
+            upload.attachment_id.write({"res_id": upload.id})
+        self.env["contact.center.media.upload"]._cron_cleanup_expired()
+        self.assertFalse(uploads.exists())
+        self.assertFalse(attachments.exists())

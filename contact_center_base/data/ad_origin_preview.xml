@@ -10,14 +10,22 @@
         <field name="channel_id" ref="channel_ad_origin_preview" />
         <field name="retry_pattern" eval="{1: 30, 2: 120, 3: 300}" />
     </record>
-    <record id="cron_expire_ad_previews" model="ir.cron">
-        <field name="name">Contact Center: expire ad previews</field>
-        <field name="model_id" ref="model_contact_center_attribution_preview" />
-        <field name="state">code</field>
-        <field name="code">model._cron_expire()</field>
-        <field name="interval_number">1</field>
-        <field name="interval_type">hours</field>
-        <field name="numbercall">-1</field>
-        <field name="active" eval="True" />
-    </record>
+    <data noupdate="1">
+        <record id="cron_expire_ad_previews" model="ir.cron">
+            <field
+                name="name"
+            >Contact Center: clear expired ad thumbnail locators</field>
+            <field name="model_id" ref="model_contact_center_ad_preview_locator" />
+            <field name="state">code</field>
+            <field name="code">model._cron_expire()</field>
+            <field name="interval_number">1</field>
+            <field name="interval_type">days</field>
+            <field
+                name="nextcall"
+                eval="(datetime.utcnow().replace(hour=6, minute=25, second=0, microsecond=0) + timedelta(days=1 if datetime.utcnow().strftime('%H:%M') &gt;= '06:25' else 0)).strftime('%Y-%m-%d %H:%M:%S')"
+            />
+            <field name="numbercall">-1</field>
+            <field name="active" eval="True" />
+        </record>
+    </data>
 </odoo>

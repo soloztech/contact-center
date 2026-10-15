@@ -78,7 +78,8 @@ class ContactCenterMetaMediaLocator(models.Model):
         index=True,
         default=lambda self: fields.Datetime.now()
         + datetime.timedelta(hours=PRIVATE_MEDIA_RETENTION_HOURS),
-        help="Local retention ceiling for the signed provider URL.",
+        help="Deadline for using the signed URL. Unused URLs are cleared "
+        "by the next daily cleanup.",
     )
     state = fields.Selection(
         [
@@ -287,14 +288,19 @@ class ContactCenterMetaMediaLocator(models.Model):
         )
 
     @api.model
-    def _resolve_for_download(self, connection, reference):
+    def _resolve_for_download(self, connection, reference, *, for_download=True):
         connection.ensure_one()
         if not _internal(self):
             raise AccessError(_("Meta private media locators are resolved internally."))
         if not _SHA256_PATTERN.fullmatch(reference or ""):
             raise ValidationError(_("Meta private locator reference is invalid."))
         locator = self.sudo().search([("reference", "=", reference)], limit=1)
-        if not locator or locator.state != "active" or not locator.download_url:
+        if (
+            not locator
+            or locator.state != "active"
+            or not locator.download_url
+            or (for_download and locator.purge_after <= fields.Datetime.now())
+        ):
             raise ValidationError(_("Meta private media locator is unavailable."))
         asset = connection.sudo().meta_webhook_asset_id
         page = asset.page_id
@@ -354,26 +360,32 @@ class ContactCenterMetaMediaLocator(models.Model):
         return True
 
     @api.model
-    def _cron_purge_private_urls(self, limit=500):
-        limit = max(1, min(int(limit or 500), 5000))
-        locators = self.sudo().search(
-            [
-                ("state", "=", "active"),
-                ("download_url", "!=", False),
-                ("purge_after", "<=", fields.Datetime.now()),
-            ],
-            order="purge_after, id",
-            limit=limit,
-        )
-        internal = locators.with_context(
-            contact_center_meta_internal=CONTACT_CENTER_META_INTERNAL_TOKEN
-        )
-        if internal:
+    def _cron_purge_private_urls(self, limit=None):
+        batch_size = max(1, min(int(limit or 500), 5000))
+        cutoff = fields.Datetime.now()
+        count = 0
+        while True:
+            locators = self.sudo().search(
+                [
+                    ("state", "=", "active"),
+                    ("download_url", "!=", False),
+                    ("purge_after", "<=", cutoff),
+                ],
+                order="purge_after, id",
+                limit=batch_size,
+            )
+            if not locators:
+                return count
+            internal = locators.with_context(
+                contact_center_meta_internal=CONTACT_CENTER_META_INTERNAL_TOKEN
+            )
             internal.write(
                 {
                     "download_url": False,
                     "state": "expired",
-                    "consumed_at": fields.Datetime.now(),
+                    "consumed_at": cutoff,
                 }
             )
-        return len(internal)
+            count += len(internal)
+            if limit is not None:
+                return count

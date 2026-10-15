@@ -221,8 +221,8 @@ def finalize_private_media(env, connection, media, *, succeeded):
     if not reference:
         return None
     # A failed binding remains manually retryable in the core. Keep its private
-    # locator available only until the vault's short local retention deadline; the
-    # cleanup cron clears it even when no retry occurs.
+    # locator usable only until its deadline. The daily cleanup clears unused
+    # URLs; successful finalization clears its URL even across that deadline.
     if not succeeded:
         return None
     locator_model = (
@@ -231,7 +231,9 @@ def finalize_private_media(env, connection, media, *, succeeded):
         .with_context(contact_center_meta_internal=CONTACT_CENTER_META_INTERNAL_TOKEN)
     )
     try:
-        locator = locator_model._resolve_for_download(connection, reference)
+        locator = locator_model._resolve_for_download(
+            connection, reference, for_download=False
+        )
     except ValidationError:
         # Finalization is idempotent: an already consumed/expired locator is done.
         return None
