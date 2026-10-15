@@ -1920,9 +1920,9 @@ class ContactCenterProviderConnection(models.Model):
         ),
     ]
 
-    _health_interval_seconds = 60
+    _health_interval_seconds = 600
     _health_jitter_window_seconds = 30
-    _health_stale_after_seconds = 180
+    _health_stale_after_seconds = 3 * _health_interval_seconds
 
     @api.model
     def _contact_center_scope_domain(self, user=None, companies=None):
@@ -2646,8 +2646,8 @@ class ContactCenterProviderConnection(models.Model):
 
         self.ensure_one()
         now = _odoo_datetime(now)
-        stale_deadline = now - datetime.timedelta(
-            seconds=self._health_stale_after_seconds
+        stale_deadline = now + datetime.timedelta(
+            seconds=self._health_interval_seconds - 240
         )
         return bool(
             self.health_check_pending
@@ -2853,7 +2853,7 @@ class ContactCenterProviderConnection(models.Model):
                     values["health_job_uuid"] = active_job.uuid
                 if (
                     not connection.next_health_check_at
-                    or connection.next_health_check_at < now
+                    or connection.next_health_check_at <= now
                 ):
                     values["next_health_check_at"] = now + datetime.timedelta(
                         seconds=self._health_interval_seconds
@@ -3125,10 +3125,10 @@ class ContactCenterProviderConnection(models.Model):
         error_class,
         new_state,
     ):
-        """Build metrics and retry cooldown for an accepted provider probe."""
+        """Build metrics for an accepted provider probe."""
 
         self.ensure_one()
-        values = {
+        return {
             "last_health_at": observed_at,
             "last_health_latency_ms": latency_ms,
             "consecutive_unhealthy_checks": (
@@ -3137,15 +3137,19 @@ class ContactCenterProviderConnection(models.Model):
             "last_health_error_at": observed_at if error_class else False,
             "last_health_error_class": error_class or False,
         }
+
+    def _health_retry_values(self, normalized, observed_at, next_check_at):
+        """Respect provider cooldowns even when a newer probe won the state race."""
+
+        self.ensure_one()
+        values = {}
         retry_after_seconds = normalized.get("retry_after_seconds", 0)
         if retry_after_seconds:
-            provider_deadline = observed_at + datetime.timedelta(
-                seconds=retry_after_seconds
+            provider_deadline = max(
+                observed_at + datetime.timedelta(seconds=retry_after_seconds),
+                self.health_retry_not_before or observed_at,
             )
-            if (
-                not self.next_health_check_at
-                or self.next_health_check_at < provider_deadline
-            ):
+            if not next_check_at or next_check_at < provider_deadline:
                 values["next_health_check_at"] = provider_deadline
             values["health_retry_not_before"] = provider_deadline
         elif (
@@ -3602,6 +3606,8 @@ class ContactCenterProviderConnection(models.Model):
                     "health_job_uuid": False,
                 }
             )
+            if not state_is_fresh:
+                values["next_health_check_at"] = observed_at
         probe_is_fresh = bool(
             not connection.last_health_at
             or observed_at >= _odoo_datetime(connection.last_health_at)
@@ -3614,6 +3620,14 @@ class ContactCenterProviderConnection(models.Model):
                     latency_ms=latency_ms,
                     error_class=error_class,
                     new_state=new_state,
+                )
+            )
+        if completes_check or records_health_probe:
+            values.update(
+                connection._health_retry_values(
+                    normalized,
+                    observed_at,
+                    values.get("next_health_check_at", connection.next_health_check_at),
                 )
             )
         values.update(

@@ -428,6 +428,7 @@ class ContactCenterProviderConnection(models.Model):
             blockers.append(_("provider session is not healthy"))
         if (
             not last_health_at
+            or last_health_at < now - datetime.timedelta(minutes=3)
             or not self._contact_center_observation_is_fresh(now=now)
             or self.health_check_pending
         ):
@@ -591,7 +592,9 @@ class ContactCenterProviderConnection(models.Model):
                 _("Wait for the WuzAPI HMAC rotation before continuing setup.")
             )
         revision = connection.wuzapi_onboarding_revision + 1
-        configuration_revision = connection.health_configuration_revision
+        configuration_revision = connection.health_configuration_revision + (
+            operation == "prepare"
+        )
         webhook_revision = connection.wuzapi_webhook_sync_revision
         hmac_revision = connection.wuzapi_hmac_rotation_revision
         connection.write(
@@ -600,6 +603,7 @@ class ContactCenterProviderConnection(models.Model):
                 "wuzapi_onboarding_revision": revision,
                 "wuzapi_onboarding_job_uuid": False,
                 "wuzapi_onboarding_last_error": False,
+                "health_configuration_revision": configuration_revision,
             }
         )
         delayed = connection.with_delay(

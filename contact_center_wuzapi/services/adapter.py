@@ -788,6 +788,21 @@ def _validated_own_lid_pair(data, own_identity):
     return {"jid": pn, "lid": lid}
 
 
+def _cached_own_lid_pair(connection):
+    snapshot = connection.sudo().wuzapi_own_identity_json or {}
+    if (
+        connection.identity_mismatch_latched
+        or not isinstance(snapshot, dict)
+        or snapshot.get("configuration_revision")
+        != connection.health_configuration_revision
+    ):
+        return {}
+    try:
+        return _validated_own_lid_pair(snapshot, _configured_own_identity(connection))
+    except AdapterError:
+        return {}
+
+
 def _call_own_identities(connection, participants):
     if connection.identity_mismatch_latched:
         raise TransientAdapterError(
@@ -801,18 +816,9 @@ def _call_own_identities(connection, participants):
         # The health job records this proof using the same authenticated session.
         # Ingress/routing must remain free of network requests and guest aliases
         # from other inboxes cannot prove the identity of this session.
-        snapshot = connection.sudo().wuzapi_own_identity_json or {}
-        if (
-            snapshot.get("configuration_revision")
-            != connection.health_configuration_revision
-        ):
+        pair = _cached_own_lid_pair(connection)
+        if not pair:
             raise TransientAdapterError("WuzAPI own LID mapping awaits a health check")
-        try:
-            pair = _validated_own_lid_pair(snapshot, own)
-        except AdapterError as error:
-            raise TransientAdapterError(
-                "WuzAPI own LID mapping awaits a health check"
-            ) from error
         identities.add(pair["lid"])
     return identities
 
@@ -4349,7 +4355,14 @@ class WuzapiAdapter(WuzapiDirectStartMixin, WuzapiGroupMetadataMixin, ProviderAd
         # covered by health_configuration_revision before crossing the network
         # boundary; the core compares that revision again after the response.
         connection.invalidate_recordset(
-            ["wuzapi_base_url", "wuzapi_api_token", "account_id"]
+            [
+                "wuzapi_base_url",
+                "wuzapi_api_token",
+                "account_id",
+                "wuzapi_own_identity_json",
+                "health_configuration_revision",
+                "identity_mismatch_latched",
+            ]
         )
         account = connection.account_id
         account.invalidate_recordset(["own_external_identity"])
@@ -4379,7 +4392,11 @@ class WuzapiAdapter(WuzapiDirectStartMixin, WuzapiGroupMetadataMixin, ProviderAd
         configured_identity = str(account.own_external_identity or "").strip()
         health = self._health_payload_values(baseline, payload, configured_identity)
         own = _normalize_session_identity(configured_identity)
-        if health.get("identity_matches") is True and own.endswith("@s.whatsapp.net"):
+        if (
+            health.get("identity_matches") is True
+            and own.endswith("@s.whatsapp.net")
+            and not _cached_own_lid_pair(connection)
+        ):
             try:
                 data = self._identity_profile_request(
                     connection,

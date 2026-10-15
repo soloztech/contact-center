@@ -114,6 +114,32 @@ nativos. Mensagens, identity/reaction/media e eventos desconhecidos mantêm o ca
 completo. O reparo de conversas de 30s e o reparo de resumo de 5min continuam
 independentes do bus.
 
+O agendador de saúde seleciona conexões vencidas a cada minuto; cada conexão tem
+intervalo nominal de dez minutos, com dispersão de até29s e espera da fila. UI e envio
+usam a mesma validade operacional de três intervalos (30min); habilitação WuzAPI exige
+uma confirmação de saúde de até3min. Para habilitar/fazer failover, verifique a saúde,
+aguarde o job e prossiga nessa janela. O indicador de consulta pendente vence em quatro
+minutos após a ETA; ele não prolonga a validade da saúde. Uma falha de status pode
+manter envios aguardando até o próximo probe. Uma resposta superada por evento fica
+elegível para nova leitura no cron seguinte. Retry-After prevalece, inclusive para
+respostas atrasadas; um cooldown maior que30min pode fazer a saúde passar a unknown até
+permitir nova leitura.
+
+A prova PN/LID WuzAPI é obtida quando falta um vínculo válido e reutilizada sem
+renovação por idade. Status continua sendo consultado em cada probe. Número, URL/token e
+prepare de pareamento invalidam pela revisão existente; perda de autenticação e
+inconsistência descartam a prova. Desconexão comum preserva o LID. Eventos somente
+invalidam: a nova prova vem da sessão autenticada. Um probe antigo não restaura a prova
+após logout. O upgrade WuzAPI1.3.7 descarta as provas antigas uma única vez; cada
+conexão confirma o vínculo na próxima verificação saudável. Pareamento externo sem
+evento de perda de autenticação nem alteração local não tem sinal de invalidação
+observável. Não se presume que o LID seja imutável.
+
+Uma aquisição fria faz duas requisições: status e LID. Com prova válida, cada job faz
+somente a requisição de status. A cadência nominal equivale a seis verificações por
+hora/conexão, sujeita ao poll, dispersão, fila, eventos e cooldown. Essas contagens
+descrevem o fluxo e os testes simulados, sem medir tráfego produtivo.
+
 `member_seen` próprio ou de terceiros e `member_fetched` atualizam somente os guards de
 leitura/bulk aplicáveis, sem refresh rotineiro do Store. O próprio eco de leitura
 durante bulk incerto conserva a conferência existente. A systray ignora `member_fetched`

@@ -6,11 +6,13 @@ import hashlib
 import hmac
 import json
 import traceback
+from types import SimpleNamespace
 from unittest import mock
 
 import requests
 from urllib3.exceptions import MaxRetryError, NewConnectionError
 
+from odoo import fields
 from odoo.exceptions import AccessError, UserError, ValidationError
 
 from odoo.addons.contact_center_base.services.adapter import (
@@ -33,8 +35,10 @@ from odoo.addons.contact_center_base.services.media import (
     validate_media_metadata,
     validate_provider_media_capability,
 )
+from odoo.addons.queue_job.tests.common import trap_jobs
 
 from ..controllers.webhook import sanitize_webhook_envelope
+from ..models.provider_connection import _WUZAPI_OWN_IDENTITY_TOKEN
 from ..services.adapter import (
     WUZAPI_COMMIT,
     WUZAPI_VERSION,
@@ -137,7 +141,13 @@ class TestWuzapiAdapter(WuzapiCase):
         cls.adapter = WuzapiAdapter(cls.env)
 
     def _record_own_call_identity(self, pn, lid):
-        self.account.own_external_identity = pn
+        observed_at = fields.Datetime.now()
+        with mock.patch.object(
+            fields.Datetime,
+            "now",
+            return_value=observed_at - datetime.timedelta(seconds=1),
+        ):
+            self.account.own_external_identity = pn
         self.connection._apply_health_result(
             {
                 "state": "connected",
@@ -145,8 +155,18 @@ class TestWuzapiAdapter(WuzapiCase):
                 "wuzapi_own_identity": {"jid": pn, "lid": lid},
             },
             records_health_probe=True,
+            observed_at=observed_at,
             expected_configuration_revision=self.connection.health_configuration_revision,
         )
+
+    def _session_status_response(self, **values):
+        data = {
+            "connected": True,
+            "loggedIn": True,
+            "jid": self.account.own_external_identity,
+        }
+        data.update(values)
+        return FakeResponse(200, {"code": 200, "success": True, "data": data})
 
     def test_call_accepted_on_own_device_routes_to_creator_without_provider_io(self):
         self._record_own_call_identity(
@@ -259,7 +279,7 @@ class TestWuzapiAdapter(WuzapiCase):
             },
             records_health_probe=True,
         )
-        self.assertTrue(self.connection.wuzapi_own_identity_json)
+        self.assertFalse(self.connection.wuzapi_own_identity_json)
         with self.assertRaises(TransientAdapterError):
             self.adapter.normalize_event(
                 self.connection, self.load_fixture("call_accept.json")
@@ -314,7 +334,11 @@ class TestWuzapiAdapter(WuzapiCase):
             ),
         ]
         health = self.adapter.get_health(self.connection)
-        self.connection._apply_health_result(health, records_health_probe=True)
+        self.connection._apply_health_result(
+            health,
+            records_health_probe=True,
+            observed_at=fields.Datetime.now() + datetime.timedelta(seconds=1),
+        )
         self.assertEqual(
             self.connection.wuzapi_own_identity_json,
             {
@@ -334,15 +358,187 @@ class TestWuzapiAdapter(WuzapiCase):
             request.call_args.kwargs["headers"]["Token"],
             self.connection.wuzapi_api_token,
         )
+        self.assertEqual(request.call_count, 2)
+        old = fields.Datetime.now() - datetime.timedelta(days=7)
+        self.connection.write({"last_health_at": old, "last_state_observed_at": old})
+        proof = dict(self.connection.wuzapi_own_identity_json)
+        pending = self.connection._health_job_record()
+        if pending:
+            pending.write({"state": "done"})
+        request.side_effect = None
+        clock = fields.Datetime.now()
+        for probe in range(12):
+            request.return_value = self._session_status_response()
+            with mock.patch.object(
+                fields.Datetime,
+                "now",
+                return_value=clock + datetime.timedelta(seconds=600 * (probe + 1)),
+            ), trap_jobs():
+                self.connection._enqueue_health_check()
+                self.connection.with_context(
+                    job_uuid=self.connection.health_job_uuid
+                )._job_check_health()
+            self.assertEqual(self.connection.state, "connected")
+            self.assertEqual(self.connection.wuzapi_own_identity_json, proof)
+            self.assertEqual(request.call_count, probe + 3)
+            self.assertEqual(
+                request.call_args.args[1], "https://wuzapi.invalid/session/status"
+            )
+        self.assertEqual(request.call_count, 14)
 
     @mock.patch(REQUEST_PATCH)
-    def test_failed_own_lid_probe_preserves_messaging_health_and_verified_pair(
+    def test_health_reacquires_invalid_lid_proofs(self, request):
+        self._record_own_call_identity(
+            "5511888888888@s.whatsapp.net", "200000000000002@lid"
+        )
+        valid = dict(self.connection.wuzapi_own_identity_json)
+        candidates = [
+            {},
+            [valid],
+            dict(valid, lid="invalid"),
+            dict(valid, jid="5511777777777@s.whatsapp.net"),
+            dict(
+                valid,
+                configuration_revision=self.connection.health_configuration_revision
+                - 1,
+            ),
+        ]
+        for proof in candidates:
+            with self.subTest(proof=proof):
+                self.connection.with_context(
+                    wuzapi_own_identity_token=_WUZAPI_OWN_IDENTITY_TOKEN
+                ).write({"wuzapi_own_identity_json": proof})
+                request.reset_mock()
+                request.side_effect = [
+                    self._session_status_response(),
+                    FakeResponse(200, {"code": 200, "success": True, "data": valid}),
+                ]
+                health = self.adapter.get_health(self.connection)
+                self.assertEqual(request.call_count, 2)
+                self.assertEqual(health["wuzapi_own_identity"]["lid"], valid["lid"])
+
+    @mock.patch(REQUEST_PATCH)
+    def test_authentication_loss_reacquires_lid_but_disconnect_preserves_it(
         self, request
     ):
         self._record_own_call_identity(
             "5511888888888@s.whatsapp.net", "200000000000002@lid"
         )
-        previous = dict(self.connection.wuzapi_own_identity_json)
+        proof = dict(self.connection.wuzapi_own_identity_json)
+        clock = self.connection.last_health_at
+        self.connection._apply_provider_state_event(
+            "disconnected", observed_at=clock + datetime.timedelta(seconds=1)
+        )
+        self.assertEqual(self.connection.wuzapi_own_identity_json, proof)
+        self.connection._apply_provider_state_event(
+            "authentication_required", observed_at=clock + datetime.timedelta(seconds=2)
+        )
+        self.assertFalse(self.connection.wuzapi_own_identity_json)
+        connected = self.adapter.normalize_event(
+            self.connection,
+            {
+                "type": "Connected",
+                "event": {},
+                "instanceName": "WuzAPI test instance",
+                "userID": "wuzapi-test-user",
+            },
+        )
+        with mock.patch.object(
+            fields.Datetime, "now", return_value=clock + datetime.timedelta(seconds=3)
+        ):
+            self.env["contact.center.application"]._process_event(
+                self.connection,
+                connected,
+                inbox_event=SimpleNamespace(
+                    id=5001, create_date=clock + datetime.timedelta(seconds=3)
+                ),
+            )
+        request.side_effect = [
+            self._session_status_response(),
+            FakeResponse(200, {"code": 200, "success": True, "data": proof}),
+        ]
+        health = self.adapter.get_health(self.connection)
+        self.assertEqual(request.call_count, 2)
+        self.connection._apply_health_result(
+            health,
+            records_health_probe=True,
+            observed_at=clock + datetime.timedelta(seconds=4),
+        )
+        self.assertTrue(self.connection.wuzapi_own_identity_json)
+        # An older logout can arrive late in the durable Inbox; discard only the proof.
+        self.connection._apply_provider_state_event(
+            "authentication_required", observed_at=clock + datetime.timedelta(seconds=2)
+        )
+        self.assertEqual(self.connection.state, "connected")
+        self.assertFalse(self.connection.wuzapi_own_identity_json)
+
+    def test_old_probe_cannot_restore_proof_after_logout_or_reconnect_hint(self):
+        self._record_own_call_identity(
+            "5511888888888@s.whatsapp.net", "200000000000002@lid"
+        )
+        proof = dict(self.connection.wuzapi_own_identity_json)
+        clock = self.connection.last_health_at
+        self.connection._apply_provider_state_event(
+            "authentication_required", observed_at=clock + datetime.timedelta(seconds=2)
+        )
+        for state in ("authentication_required", "degraded"):
+            if state == "degraded":
+                self.connection._apply_provider_state_event(
+                    "degraded",
+                    detail="identity_unverified",
+                    observed_at=clock + datetime.timedelta(seconds=3),
+                )
+            self.connection._apply_health_result(
+                {
+                    "state": "connected",
+                    "identity_matches": True,
+                    "wuzapi_own_identity": proof,
+                },
+                records_health_probe=True,
+                observed_at=clock + datetime.timedelta(seconds=1),
+            )
+            self.assertFalse(self.connection.wuzapi_own_identity_json)
+            self.assertEqual(self.connection.state, state)
+
+    @mock.patch(REQUEST_PATCH)
+    def test_manual_health_restores_activation_after_the_three_minute_gate(
+        self, request
+    ):
+        self._record_own_call_identity(
+            "5511888888888@s.whatsapp.net", "200000000000002@lid"
+        )
+        now = fields.Datetime.now()
+        self.connection.write(
+            {
+                "role": "standby",
+                "inbound_active": False,
+                "last_health_at": now - datetime.timedelta(seconds=181),
+                "last_state_observed_at": now - datetime.timedelta(seconds=181),
+                "health_check_pending": False,
+                "health_job_uuid": False,
+                "wuzapi_webhook_sync_state": "in_sync",
+                "wuzapi_webhook_url_matches": True,
+                "wuzapi_webhook_last_sync_at": now,
+            }
+        )
+        with self.assertRaisesRegex(ValidationError, "health proof is stale"):
+            self.connection.action_use_as_primary()
+        request.return_value = self._session_status_response()
+        with trap_jobs():
+            self.connection.action_check_health()
+            self.connection.with_context(
+                job_uuid=self.connection.health_job_uuid
+            )._job_check_health()
+        self.connection.action_use_as_primary()
+        self.connection.action_enable_outbound()
+        self.assertTrue(self.connection.outbound_active)
+        self.assertEqual(request.call_count, 1)
+
+    @mock.patch(REQUEST_PATCH)
+    def test_failed_own_lid_probe_preserves_messaging_health_without_valid_proof(
+        self, request
+    ):
+        self.account.own_external_identity = "5511888888888@s.whatsapp.net"
         for failure in (
             FakeResponse(401, {}),
             FakeResponse(404, {}),
@@ -357,6 +553,7 @@ class TestWuzapiAdapter(WuzapiCase):
                 },
             ),
         ):
+            request.reset_mock()
             request.side_effect = [
                 FakeResponse(
                     200,
@@ -375,8 +572,13 @@ class TestWuzapiAdapter(WuzapiCase):
             health = self.adapter.get_health(self.connection)
             self.assertEqual(health["state"], "connected")
             self.assertNotIn("wuzapi_own_identity", health)
-            self.connection._apply_health_result(health, records_health_probe=True)
-            self.assertEqual(self.connection.wuzapi_own_identity_json, previous)
+            self.assertEqual(request.call_count, 2)
+            self.connection._apply_health_result(
+                health,
+                records_health_probe=True,
+                observed_at=fields.Datetime.now() + datetime.timedelta(seconds=1),
+            )
+            self.assertFalse(self.connection.wuzapi_own_identity_json)
 
     @mock.patch(REQUEST_PATCH)
     def test_rate_limited_own_lid_probe_sets_core_health_cooldown(self, request):
@@ -409,6 +611,58 @@ class TestWuzapiAdapter(WuzapiCase):
             self.connection.next_health_check_at,
             self.connection.health_retry_not_before,
         )
+
+    @mock.patch(REQUEST_PATCH)
+    def test_long_lid_rate_limit_can_outlast_the_health_window(self, request):
+        self.account.own_external_identity = "5511888888888@s.whatsapp.net"
+        request.side_effect = [
+            self._session_status_response(),
+            FakeResponse(429, {}, headers={"Retry-After": "3600"}),
+        ]
+        health = self.adapter.get_health(self.connection)
+        self.assertEqual(health["state"], "connected")
+        clock = fields.Datetime.now() + datetime.timedelta(seconds=1)
+        self.connection._apply_health_result(
+            health, records_health_probe=True, observed_at=clock
+        )
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(
+            self.connection.health_retry_not_before,
+            clock + datetime.timedelta(seconds=3600),
+        )
+        self.assertEqual(
+            self.connection._contact_center_health_status(
+                now=clock + datetime.timedelta(seconds=1800)
+            ),
+            "connected",
+        )
+        self.assertEqual(
+            self.connection._contact_center_health_status(
+                now=clock + datetime.timedelta(seconds=1801)
+            ),
+            "unknown",
+        )
+
+    @mock.patch(REQUEST_PATCH)
+    def test_failed_lid_revalidation_cannot_reuse_a_latched_proof(self, request):
+        self._record_own_call_identity(
+            "5511888888888@s.whatsapp.net", "200000000000002@lid"
+        )
+        self.connection.identity_mismatch_latched = True
+        request.side_effect = [self._session_status_response(), FakeResponse(503, {})]
+        health = self.adapter.get_health(self.connection)
+        self.connection._apply_health_result(
+            health,
+            records_health_probe=True,
+            observed_at=self.connection.last_health_at + datetime.timedelta(seconds=1),
+        )
+        self.assertEqual(request.call_count, 2)
+        self.assertFalse(self.connection.identity_mismatch_latched)
+        self.assertFalse(self.connection.wuzapi_own_identity_json)
+        with self.assertRaises(TransientAdapterError):
+            self.adapter.normalize_event(
+                self.connection, self.load_fixture("call_accept.json")
+            )
 
     def _command(
         self,

@@ -190,9 +190,27 @@ class ContactCenterProviderConnection(models.Model):
             pair = _validated_own_lid_pair(
                 normalized["wuzapi_own_identity"], _configured_own_identity(self)
             )
-            values["wuzapi_own_identity_json"] = dict(
-                pair, configuration_revision=self.health_configuration_revision
-            )
+            if self._state_observation_is_fresh(
+                kwargs["observed_at"], "health_job", kwargs["new_state"]
+            ):
+                values["wuzapi_own_identity_json"] = dict(
+                    pair, configuration_revision=self.health_configuration_revision
+                )
+        elif self.adapter_key == "wuzapi" and (
+            normalized.get("identity_matches") is False
+            or self.identity_mismatch_latched
+        ):
+            values["wuzapi_own_identity_json"] = False
+        return values
+
+    def _health_state_transition_values(self, **kwargs):
+        values = super()._health_state_transition_values(**kwargs)
+        if (
+            self.adapter_key == "wuzapi"
+            and kwargs["new_state"] == "authentication_required"
+        ):
+            # A delayed logout still invalidates the proof, without reverting state.
+            values["wuzapi_own_identity_json"] = False
         return values
 
     def _default_wuzapi_webhook_event_ids(self):

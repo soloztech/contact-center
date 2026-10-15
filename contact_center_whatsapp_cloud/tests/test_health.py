@@ -112,7 +112,9 @@ class TestWhatsAppCloudHealth(WhatsAppCloudOutboundMixin, WhatsAppCloudCase):
     def test_send_after_the_observation_expires_requires_a_new_read(self):
         channel, _inbound = self._conversation()
         outbox = self._send(channel, "Depois da leitura")
-        stale = fields.Datetime.now() - datetime.timedelta(minutes=10)
+        stale = fields.Datetime.now() - datetime.timedelta(
+            seconds=self.connection._health_stale_after_seconds + 1
+        )
         self.env.cr.execute(
             "UPDATE contact_center_provider_connection "
             "SET last_health_at = %s, last_state_observed_at = %s WHERE id = %s",

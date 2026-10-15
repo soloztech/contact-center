@@ -453,6 +453,7 @@ class TestWuzapiOnboarding(SavepointCase):
         queued_job = connection._wuzapi_active_onboarding_job()
         self.assertTrue(queued_job)
         revision = connection.wuzapi_onboarding_revision
+        health_revision = connection.health_configuration_revision
         connection.sudo().write({"wuzapi_onboarding_job_uuid": False})
 
         with trap_jobs() as trap:
@@ -463,6 +464,46 @@ class TestWuzapiOnboarding(SavepointCase):
         )
         self.assertEqual(connection.wuzapi_onboarding_job_uuid, queued_job.uuid)
         self.assertEqual(connection.wuzapi_onboarding_revision, revision)
+        self.assertEqual(connection.health_configuration_revision, health_revision)
+
+    def test_prepare_invalidates_existing_configuration_and_group_proof(self):
+        wizard = self._new_wizard()
+        wizard.action_prepare()
+        connection = wizard.connection_id
+        channel = self.env["mail.channel"]._contact_center_create_channel(
+            account=connection.account_id,
+            conversation_type="group",
+            name="Pairing fixture",
+        )
+        binding = self.env["contact.center.channel.binding"].create(
+            {
+                "account_id": connection.account_id.id,
+                "channel_id": channel.id,
+                "conversation_type": "group",
+                "conversation_ref": "120363000000001@g.us",
+            }
+        )
+        profile = self.env["contact.center.group.profile"]._get_or_create(
+            binding, connection
+        )
+        profile.write(
+            {
+                "metadata_state": "ready",
+                "own_protocol_participant_health_revision": 7,
+                "next_sync_at": fields.Datetime.now() + datetime.timedelta(hours=6),
+            }
+        )
+        revision = connection.health_configuration_revision
+        with trap_jobs() as trap:
+            connection._enqueue_wuzapi_onboarding("prepare")
+        self.assertEqual(connection.health_configuration_revision, revision + 1)
+        self.assertEqual(trap.enqueued_jobs[0].args[2], revision + 1)
+        self.assertEqual(profile.own_protocol_participant_health_revision, 0)
+        self.assertEqual(profile.metadata_state, "stale")
+        self.assertLessEqual(profile.next_sync_at, fields.Datetime.now())
+        with trap_jobs():
+            connection._enqueue_wuzapi_onboarding("check")
+        self.assertEqual(connection.health_configuration_revision, revision + 1)
 
     def test_awaiting_scan_can_request_a_fresh_pairing_cycle(self):
         wizard = self._new_wizard()

@@ -43,7 +43,11 @@ normalizes legacy transient inputs so the public health state has four persisted
 | `ClientOutdated`                                   | `error`                                      | `degraded`                                   |
 | `TemporaryBan`                                     | `paused`                                     | `degraded`                                   |
 
-`unknown` is derived when there is no observation in the last 180 seconds; it is not
+The current code uses a 600-second per-connection probe interval, with the existing
+minute selector cron. See [the current contract](../docs/architecture.md) for LID reuse,
+activation and request counts. The M4 deployment evidence below is historical.
+
+`unknown` is derived when there is no observation in the last 1800 seconds; it is not
 persisted as a provider state. UI and dispatch use the exact same inclusive freshness
 boundary, so an observation at the cutoff is still fresh and one second older is
 `unknown` and cannot dispatch. `checking` is a transverse boolean. It does not replace a
@@ -166,7 +170,7 @@ authentication bypass.
 
 Outbound dispatch is allowed only when both the logical account and provider connection
 are active, the connection is outbound-enabled and `connected`, its observation is
-within the same 180-second UI freshness window, and it is not protected by
+within the same 1800-second UI freshness window, and it is not protected by
 `identity_mismatch_latched`. Account archive is a final guard at the provider boundary.
 After a mismatch/unverified identity, only the verified health match described above may
 both clear the lock and make recovery eligible. A lifecycle `Connected` hint or an
@@ -246,7 +250,8 @@ Before changing the WuzAPI image, commit, webhook format, or JobRunner topology:
    health, explicit verified release, and bounded timeout behavior without exposing raw
    identifiers;
 5. prove that `Connected`/`KeepAliveRestored` remain degraded until polling confirms
-   health and that a stale observation blocks dispatch at the same 180-second UI cutoff;
+   health and that a stale observation blocks dispatch at the same 1800-second UI
+   cutoff;
 6. prove that fresh polling can recover a stale-but-persisted `connected` connection and
    does not enqueue uncertain, post-boundary, terminal, standby, or already active work;
 7. verify that provider Retry-After blocks cron and manual refresh until the durable

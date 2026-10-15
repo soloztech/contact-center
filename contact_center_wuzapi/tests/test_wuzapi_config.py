@@ -21,6 +21,7 @@ from odoo.addons.contact_center_base.services.job import provider_paused_retry_s
 from odoo.addons.queue_job.exception import RetryableJobError
 from odoo.addons.queue_job.tests.common import trap_jobs
 
+from ..models.provider_connection import _WUZAPI_OWN_IDENTITY_TOKEN
 from ..services.adapter import (
     WUZAPI_DEFAULT_WEBHOOK_EVENTS,
     WUZAPI_RETIRED_WEBHOOK_EVENTS,
@@ -125,6 +126,47 @@ class TestWuzapiConfig(WuzapiCase):
         migration = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(migration)
         return migration.migrate
+
+    def test_lid_reuse_upgrade_discards_old_proofs_once_without_other_changes(self):
+        inactive = self.connection.copy(
+            {
+                "name": "Inactive LID fixture",
+                "active": False,
+                "role": "historical",
+                "inbound_active": False,
+                "wuzapi_api_token": "inactive-lid-test-token",
+                "wuzapi_hmac_secret": "inactive-lid-secret-at-least-32-chars",
+            }
+        )
+        connections = self.connection | inactive
+        connections.with_context(
+            wuzapi_own_identity_token=_WUZAPI_OWN_IDENTITY_TOKEN
+        ).write(
+            {
+                "wuzapi_own_identity_json": {
+                    "jid": "5511888888888@s.whatsapp.net",
+                    "lid": "200000000000002@lid",
+                    "configuration_revision": 0,
+                },
+            }
+        )
+        stable_fields = [
+            "active",
+            "role",
+            "health_configuration_revision",
+            "state",
+            "wuzapi_api_token",
+            "wuzapi_base_url",
+            "wuzapi_webhook_sync_revision",
+        ]
+        before = connections.read(stable_fields)
+        migration = self._retired_migration(
+            "contact_center_wuzapi", "16.0.1.3.7", "post"
+        )
+        for _run in range(2):
+            migration(self.env.cr, "16.0.1.3.6")
+            self.assertFalse(connections.filtered("wuzapi_own_identity_json"))
+            self.assertEqual(connections.read(stable_fields), before)
 
     def test_retired_catalog_preflight_and_idempotent_cleanup(self):
         event = self.env["contact.center.wuzapi.webhook.event"].create(

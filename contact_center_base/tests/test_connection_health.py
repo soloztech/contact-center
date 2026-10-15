@@ -146,6 +146,13 @@ class TestConnectionHealth(SavepointCase):
 
     def setUp(self):
         super().setUp()
+        # Persisted labs also contain real connections.
+        # Isolate the scheduler fixtures inside the test's rollback transaction.
+        self.env["contact.center.provider.connection"].with_context(
+            active_test=False
+        ).search([("id", "!=", self.connection.id)]).write(
+            {"next_health_check_at": fields.Datetime.now() + datetime.timedelta(days=1)}
+        )
         ConnectionHealthAdapter.health_result = {
             "state": "connected",
             "detail": "healthy",
@@ -333,9 +340,221 @@ class TestConnectionHealth(SavepointCase):
         self.assertTrue(self.connection.next_health_check_at)
         self.assertGreaterEqual(
             self.connection.next_health_check_at,
-            queued_job.eta + datetime.timedelta(seconds=59),
+            queued_job.eta + datetime.timedelta(seconds=599),
+        )
+        self.assertLessEqual(
+            self.connection.next_health_check_at,
+            queued_job.eta + datetime.timedelta(seconds=601),
         )
         self.assertEqual(ConnectionHealthAdapter.health_calls, [])
+
+    def test_ten_minute_deadline_skips_intermediate_cron_ticks(self):
+        now = fields.Datetime.now()
+        with mock.patch.object(account_model, "_odoo_datetime", return_value=now):
+            with trap_jobs():
+                self.connection._enqueue_health_check()
+        deadline = self.connection.next_health_check_at
+        self.assertEqual(deadline, now + datetime.timedelta(seconds=600))
+        self.connection.write({"health_check_pending": False, "health_job_uuid": False})
+        for offset, expected in ((599, 0), (600, 1)):
+            with mock.patch.object(
+                fields.Datetime,
+                "now",
+                return_value=now + datetime.timedelta(seconds=offset),
+            ), trap_jobs() as trap:
+                self.assertEqual(
+                    self.env[
+                        "contact.center.provider.connection"
+                    ]._cron_schedule_health_checks(),
+                    expected,
+                )
+                trap.assert_jobs_count(expected)
+
+    def test_checking_expires_before_the_operational_health_window(self):
+        now = fields.Datetime.now()
+        self.connection.write(
+            {
+                "state": "connected",
+                "last_state_observed_at": now,
+                "health_check_pending": True,
+                "next_health_check_at": now + datetime.timedelta(seconds=600),
+            }
+        )
+        self.assertTrue(self.connection._contact_center_health_is_checking(now=now))
+        self.assertTrue(
+            self.connection._contact_center_health_is_checking(
+                now=now + datetime.timedelta(seconds=240)
+            )
+        )
+        self.assertFalse(
+            self.connection._contact_center_health_is_checking(
+                now=now + datetime.timedelta(seconds=241)
+            )
+        )
+        self.assertTrue(
+            self.connection._contact_center_outbound_is_available(
+                now=now + datetime.timedelta(seconds=601)
+            )
+        )
+        self.assertEqual(self.connection._health_stale_after_seconds, 1800)
+        self.assertFalse(
+            self.connection._contact_center_outbound_is_available(
+                now=now + datetime.timedelta(seconds=1801)
+            )
+        )
+
+    def test_superseded_confirmation_is_rechecked_by_the_existing_cron(self):
+        clock = fields.Datetime.now()
+        for event_delay in (0, 1):
+            with self.subTest(event_delay=event_delay):
+                self.connection.write({"health_job_uuid": False})
+                with trap_jobs() as trap, mock.patch.object(
+                    fields.Datetime, "now", return_value=clock
+                ):
+                    self.connection._enqueue_health_check()
+                    job_uuid = trap.enqueued_jobs[0].uuid
+                    self.connection._apply_provider_state_event(
+                        "degraded",
+                        detail="identity_unverified",
+                        observed_at=clock + datetime.timedelta(seconds=event_delay),
+                    )
+                    self.connection.with_context(job_uuid=job_uuid)._job_check_health()
+                self.assertEqual(self.connection.state, "degraded")
+                self.assertEqual(self.connection.next_health_check_at, clock)
+                with trap_jobs() as retry, mock.patch.object(
+                    fields.Datetime,
+                    "now",
+                    return_value=clock + datetime.timedelta(seconds=60),
+                ):
+                    self.assertEqual(
+                        self.env[
+                            "contact.center.provider.connection"
+                        ]._cron_schedule_health_checks(),
+                        1,
+                    )
+                    self.connection.with_context(
+                        job_uuid=retry.enqueued_jobs[0].uuid
+                    )._job_check_health()
+                self.assertEqual(self.connection.state, "connected")
+                clock += datetime.timedelta(seconds=120)
+
+    def test_superseded_probe_becomes_due_after_its_short_cooldown(self):
+        clock = fields.Datetime.now()
+        self.connection.write(
+            {
+                "state": "degraded",
+                "health_detail": "identity_unverified",
+                "last_state_observed_at": clock,
+                "next_health_check_at": clock + datetime.timedelta(seconds=600),
+            }
+        )
+        self.connection._apply_health_result(
+            {"state": "connected", "identity_matches": True, "retry_after_seconds": 60},
+            observed_at=clock,
+            completes_check=True,
+        )
+        deadline = clock + datetime.timedelta(seconds=60)
+        self.assertEqual(self.connection.state, "degraded")
+        self.assertEqual(self.connection.next_health_check_at, deadline)
+        self.assertEqual(self.connection.health_retry_not_before, deadline)
+        for offset, expected in ((59, 0), (60, 1)):
+            with mock.patch.object(
+                fields.Datetime,
+                "now",
+                return_value=clock + datetime.timedelta(seconds=offset),
+            ), trap_jobs() as trap:
+                self.assertEqual(
+                    self.env[
+                        "contact.center.provider.connection"
+                    ]._cron_schedule_health_checks(),
+                    expected,
+                )
+                trap.assert_jobs_count(expected)
+
+    def test_older_probe_still_preserves_the_longest_retry_after(self):
+        clock = fields.Datetime.now()
+        newer = clock + datetime.timedelta(seconds=1)
+        self.connection.write(
+            {
+                "state": "connected",
+                "last_state_observed_at": newer,
+                "last_health_at": newer,
+                "next_health_check_at": clock + datetime.timedelta(seconds=600),
+            }
+        )
+        for retry_seconds in (3600, 120):
+            self.connection._apply_health_result(
+                {
+                    "state": "paused",
+                    "reason": "rate_limited",
+                    "retry_after_seconds": retry_seconds,
+                },
+                observed_at=clock,
+                completes_check=True,
+            )
+            self.assertEqual(self.connection.last_health_at, newer)
+            self.assertEqual(self.connection.state, "connected")
+            self.assertEqual(
+                self.connection.health_retry_not_before,
+                clock + datetime.timedelta(seconds=3600),
+            )
+            self.assertEqual(
+                self.connection.next_health_check_at,
+                clock + datetime.timedelta(seconds=3600),
+            )
+        with trap_jobs() as trap, mock.patch.object(
+            fields.Datetime, "now", return_value=newer
+        ):
+            self.assertFalse(self.connection._enqueue_health_check())
+            trap.assert_jobs_count(0)
+
+    def test_failed_probe_waits_for_the_normal_deadline_before_recovery(self):
+        clock = fields.Datetime.now()
+        ConnectionHealthAdapter.health_error = RuntimeError(
+            "Temporary transport failure"
+        )
+        with mock.patch.object(
+            fields.Datetime, "now", return_value=clock
+        ), trap_jobs() as trap:
+            self.connection._enqueue_health_check()
+            self.connection.with_context(
+                job_uuid=trap.enqueued_jobs[0].uuid
+            )._job_check_health()
+        self.assertFalse(
+            self.connection._contact_center_outbound_is_available(now=clock)
+        )
+        self.assertEqual(
+            self.connection.next_health_check_at,
+            clock + datetime.timedelta(seconds=600),
+        )
+        with mock.patch.object(
+            fields.Datetime, "now", return_value=clock + datetime.timedelta(seconds=599)
+        ), trap_jobs() as trap:
+            self.assertEqual(
+                self.env[
+                    "contact.center.provider.connection"
+                ]._cron_schedule_health_checks(),
+                0,
+            )
+            trap.assert_jobs_count(0)
+        ConnectionHealthAdapter.health_error = None
+        with mock.patch.object(
+            fields.Datetime, "now", return_value=clock + datetime.timedelta(seconds=600)
+        ), trap_jobs() as trap:
+            self.assertEqual(
+                self.env[
+                    "contact.center.provider.connection"
+                ]._cron_schedule_health_checks(),
+                1,
+            )
+            self.connection.with_context(
+                job_uuid=trap.enqueued_jobs[0].uuid
+            )._job_check_health()
+        self.assertTrue(
+            self.connection._contact_center_outbound_is_available(
+                now=clock + datetime.timedelta(seconds=600)
+            )
+        )
 
     def test_manual_refresh_is_supervisor_only_and_never_calls_provider_inline(self):
         other_agent = (
@@ -460,6 +679,7 @@ class TestConnectionHealth(SavepointCase):
             contract["job_function"]["channel"], "root.contact_center.health"
         )
         self.assertEqual(contract["priority_floor"], 30)
+        self.assertEqual(contract["interval_seconds"], 600)
         self.assertEqual(contract["jitter_window_seconds"], 30)
         self.assertNotIn("token", repr(contract).lower())
 
@@ -503,7 +723,12 @@ class TestConnectionHealth(SavepointCase):
                 "last_state_observed_at": "2026-08-23 10:00:00",
             }
         )
-        item = self.connection._contact_center_health_item(now="2026-08-23 10:10:00")
+        item = self.connection._contact_center_health_item(
+            now=datetime.datetime(2026, 8, 23, 10)
+            + datetime.timedelta(
+                seconds=self.connection._health_stale_after_seconds + 1
+            )
+        )
         self.assertEqual(item["state"], "unknown")
         self.assertEqual(item["detail"], "unknown")
 
@@ -866,7 +1091,8 @@ class TestConnectionHealth(SavepointCase):
         first.write(
             {
                 "health_check_pending": True,
-                "next_health_check_at": observed_at + datetime.timedelta(minutes=1),
+                "next_health_check_at": observed_at
+                + datetime.timedelta(seconds=first._health_interval_seconds),
             }
         )
 
