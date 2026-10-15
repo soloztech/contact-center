@@ -148,7 +148,7 @@ class TestWhatsAppCloudMedia(
     # -- 9: limits at the boundary through the real client ------------------------
 
     def test_receive_document_up_to_the_core_limit(self):
-        content = b"%PDF" + b"0" * (50 * MiB - 4)
+        content = b"%PDF" + b"0" * (100_000_000 - 4)
         media = self._media(content, kind="document", mime_type="application/pdf")
         result, _calls = self._download(
             media,
@@ -157,7 +157,7 @@ class TestWhatsAppCloudMedia(
                 self._binary(content, "application/pdf"),
             ],
         )
-        self.assertEqual(result.size_bytes, 50 * MiB)
+        self.assertEqual(result.size_bytes, 100_000_000)
         oversized = content + b"0"
         with self.assertRaisesRegex(AdapterError, "size limit"):
             self._download(
@@ -167,6 +167,26 @@ class TestWhatsAppCloudMedia(
                     self._binary(oversized, "application/pdf"),
                 ],
             )
+
+    def test_receive_document_stream_over_core_limit_without_declared_size(self):
+        content = b"%PDF" + b"0" * (100_000_001 - 4)
+        media = self._media(content, kind="document", mime_type="application/pdf")
+        resolved = FakeResponse(
+            {
+                "messaging_product": "whatsapp",
+                "url": MEDIA_URL,
+                "mime_type": "application/pdf",
+                "sha256": hashlib.sha256(content).hexdigest(),
+                "id": self.MEDIA_ID,
+            }
+        )
+        with mock.patch(
+            GRAPH_PATCH,
+            side_effect=[resolved, self._binary(content, "application/pdf")],
+        ) as request:
+            with self.assertRaisesRegex(AdapterError, "size limit"):
+                self.connection.get_adapter().download_media(self.connection, media)
+        self.assertEqual(request.call_count, 2)
 
     def _document_outbox(self, size):
         channel, inbound = self._conversation()

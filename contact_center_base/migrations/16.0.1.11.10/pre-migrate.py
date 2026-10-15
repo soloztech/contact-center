@@ -1,3 +1,4 @@
+from odoo import _
 from odoo.exceptions import ValidationError
 
 
@@ -9,8 +10,10 @@ def migrate(cr, version):
     )
     if cr.fetchone():
         raise ValidationError(
-            "Retired identity notices must be selectively removed before upgrading "
-            "Contact Center. Preserve their business references during cleanup."
+            _(
+                "Retired identity notices must be selectively removed before upgrading "
+                "Contact Center. Preserve their business references during cleanup."
+            )
         )
     cr.execute(
         "SELECT to_regclass(%s), to_regclass(%s)",
@@ -31,6 +34,8 @@ def migrate(cr, version):
     )
     if cr.fetchone():
         raise ValidationError(
-            "Retired identity subscriptions must be removed and verified through "
-            "the existing webhook configuration before upgrading Contact Center."
+            _(
+                "Retired identity subscriptions must be removed and verified through "
+                "the existing webhook configuration before upgrading Contact Center."
+            )
         )

@@ -7,6 +7,8 @@ from ..services.dto import SCHEMA_VERSION
 
 
 class ContactCenterUiApiContacts(models.AbstractModel):
+    # Keep contact/company operations separate from conversation projection.
+    # pylint: disable-next=consider-merging-classes-inherited
     _inherit = "contact.center.ui.api"
 
     @api.model

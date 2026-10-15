@@ -1,4 +1,4 @@
-from odoo import SUPERUSER_ID, api
+from odoo import SUPERUSER_ID, _, api
 from odoo.exceptions import ValidationError
 
 
@@ -11,7 +11,7 @@ def migrate(cr, version):
     if env["contact.center.provider.connection"].search_count(
         [("wuzapi_webhook_event_ids", "in", events.ids)]
     ):
-        raise ValidationError("Retired identity subscriptions still exist.")
+        raise ValidationError(_("Retired identity subscriptions still exist."))
     env["ir.model.data"].search(
         [
             ("module", "=", "contact_center_wuzapi"),
