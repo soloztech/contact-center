@@ -122,6 +122,17 @@ confiável ao Odoo e mantém esse limite de isolamento de entrada.
 
 ## LID e limites do lote
 
+A reconexão usa a transação temporária do queue_job (`allow_commit`), mantendo o
+bloqueio de execução na transação externa. Após consultar o provedor, renova o snapshot
+do banco e revalida os vínculos antes de gravar. Uma mensagem enfileirada durante a
+consulta não obriga a repetir o Connect. Um resultado já gravado também é preservado se
+o worker reiniciar antes de concluir o job.
+
+Se o worker cair após Connect e antes de gravar o resultado, a retentativa pode repetir
+o Connect idempotente e perder a observação anterior usada no aviso de rede e na
+comparação dos eventos assinados. Não há garantia de execução única nessa janela. A
+publicação exige o runtime compatível já descrito para Connect.
+
 O vínculo PN/LID válido é reaproveitado sem renovação periódica. Quando falta ou é
 inconsistente, a consulta usa o PN configurado e valida ambos os lados; nunca infere PN
 pelo LID. O status recente do runtime pode apresentar LID e é aceito somente com esse

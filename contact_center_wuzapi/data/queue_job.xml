@@ -87,5 +87,6 @@
             ref="queue_job_channel_contact_center_wuzapi_webhook"
         />
         <field name="retry_pattern" eval="{1: 10, 2: 30, 3: 60, 4: 120, 5: 300}" />
+        <field name="allow_commit" eval="True" />
     </record>
 </odoo>

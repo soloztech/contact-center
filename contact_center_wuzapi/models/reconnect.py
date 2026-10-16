@@ -544,23 +544,40 @@ class ContactCenterWuzapiReconnectWizard(models.TransientModel):
             return False
         return True
 
+    def _refresh_job_snapshot(self):
+        job = (
+            self.env["queue.job"]
+            .sudo()
+            .search([("uuid", "=", self.env.context.get("job_uuid"))], limit=1)
+        )
+        if not job or not job.job_function_id.allow_commit:
+            raise RuntimeError("Reconnect requires a queue job with allow_commit.")
+        # Only the temporary job cursor is reset; queue_job keeps its outer lock.
+        self.env.cr.rollback()
+        self.env.invalidate_all()
+
     def _job_reconnect(self, revision):
         self.ensure_one()
         if not self.env.context.get("job_uuid"):
             raise ValidationError(_("Reconnect must run through queue_job."))
         try:
+            if self.state != "queued":
+                return False
             connection = self._current(revision)
             if not connection:
                 return self._finish_error(revision)
-            (
-                health,
-                token,
-                observed_at,
-                result,
-                qr,
-                network_changed,
-                pending_observation,
-            ) = self._read_reconnect(connection)
+            try:
+                (
+                    health,
+                    token,
+                    observed_at,
+                    result,
+                    qr,
+                    network_changed,
+                    pending_observation,
+                ) = self._read_reconnect(connection)
+            finally:
+                self._refresh_job_snapshot()
             current = self._current(revision, lock=True)
             if not current:
                 return self._finish_error(revision)

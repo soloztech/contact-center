@@ -45,6 +45,20 @@ class TestWuzapiReconnect(WuzapiCase):
 
     def setUp(self):
         super().setUp()
+
+        # These fixtures are uncommitted. TransactionCase covers the real reset.
+        def refresh_without_rollback(request):
+            request.env.flush_all()
+            request.env.invalidate_all()
+
+        boundary = mock.patch.object(
+            type(self.env["contact.center.wuzapi.reconnect.wizard"]),
+            "_refresh_job_snapshot",
+            autospec=True,
+            side_effect=refresh_without_rollback,
+        )
+        boundary.start()
+        self.addCleanup(boundary.stop)
         self.account.own_external_identity = "5511888888888@s.whatsapp.net"
         self.wizards = self.env["contact.center.wuzapi.reconnect.wizard"].with_user(
             self.admin

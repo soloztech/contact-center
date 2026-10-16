@@ -17,13 +17,17 @@ from odoo import SUPERUSER_ID, api, fields
 from odoo.exceptions import ValidationError
 from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
+from odoo.tools.translate import code_translations
 
 from odoo.addons.contact_center_base.services.tokens import (
     CONTACT_CENTER_DELETION_TOKEN,
 )
+from odoo.addons.queue_job.controllers.main import _prevent_commit
+from odoo.addons.queue_job.job import Job
 
 from ..controllers import webhook
 from ..models.provider_connection import _WUZAPI_OWN_IDENTITY_TOKEN
+from .test_adapter import REQUEST_PATCH, FakeResponse
 
 
 @tagged("-at_install", "post_install")
@@ -100,6 +104,201 @@ class TestWuzapiIngressConcurrency(TransactionCase):
             env["contact.center.account"].browse(fixture["account"]).unlink()
             env["res.users"].browse(fixture["agent"]).unlink()
             cr.commit()  # pylint: disable=invalid-commit
+
+    def _reconnect_fixture(self):
+        fixture = self._fixture()
+        with self.registry.cursor() as cr:
+            env = api.Environment(cr, SUPERUSER_ID, {})
+            connection = env["contact.center.provider.connection"].browse(
+                fixture["connection"]
+            )
+            connection.account_id.own_external_identity = "5511888888888@s.whatsapp.net"
+            actor = env["res.users"].browse(fixture["agent"])
+            actor.groups_id |= env.ref("contact_center_base.group_contact_center_admin")
+            request = (
+                env["contact.center.wuzapi.reconnect.wizard"]
+                .with_user(actor)
+                .create({"connection_id": connection.id})
+            )
+            request.action_start()
+            fixture.update(
+                wizard=request.id, job_uuid=connection.wuzapi_onboarding_job_uuid
+            )
+            cr.commit()  # pylint: disable=invalid-commit
+        self.addCleanup(self._cleanup_reconnect_job, fixture["job_uuid"])
+        return fixture
+
+    def _cleanup_reconnect_job(self, job_uuid):
+        with self.registry.cursor() as cr:
+            env = api.Environment(cr, SUPERUSER_ID, {})
+            env["queue.job"].search([("uuid", "=", job_uuid)]).unlink()
+            cr.commit()  # pylint: disable=invalid-commit
+
+    def _assert_reconnect_lock_held(self, fixture):
+        with self.registry.cursor() as cr:
+            env = api.Environment(cr, SUPERUSER_ID, {})
+            self.assertFalse(Job.load(env, fixture["job_uuid"]).lock())
+
+    def _reconnect_during_write(self, *, drift=False, reconfigure=False, rerun=False):
+        fixture = self._reconnect_fixture()
+        calls = []
+
+        def transport(method, url, **values):
+            endpoint = "/" + url.split("/", 3)[-1]
+            calls.append((method, endpoint))
+            started = ("POST", "/session/connect") in calls
+            if (method, endpoint) == ("POST", "/session/connect"):
+                self.assertEqual(values["json"], {"Subscribe": [], "Immediate": True})
+                with self.registry.cursor() as cr:
+                    env = api.Environment(cr, SUPERUSER_ID, {})
+                    cr.execute(
+                        "UPDATE contact_center_provider_connection "
+                        "SET outbound_admission_revision = outbound_admission_revision + 1 "
+                        "WHERE id = %s",
+                        [fixture["connection"]],
+                    )
+                    if reconfigure:
+                        connection = env["contact.center.provider.connection"].browse(
+                            fixture["connection"]
+                        )
+                        next_revision = connection.health_configuration_revision + 1
+                        connection.write(
+                            {"health_configuration_revision": next_revision}
+                        )
+                    cr.commit()  # pylint: disable=invalid-commit
+                return FakeResponse(200, {"code": 200, "success": True})
+            if (method, endpoint) == ("GET", "/session/status"):
+                return FakeResponse(
+                    200,
+                    {
+                        "code": 200,
+                        "success": True,
+                        "data": {
+                            "connected": started,
+                            "loggedIn": False,
+                            "events": "Message"
+                            if drift and started
+                            else "Message,Connected",
+                            "proxy_url": "http://proxy.invalid:8080" if started else "",
+                        },
+                    },
+                )
+            self.assertEqual((method, endpoint), ("GET", "/session/qr"))
+            return FakeResponse(500, {"error": "not connected"})
+
+        with self.registry.cursor() as cr:
+            env = api.Environment(cr, SUPERUSER_ID, {})
+            job = Job.load(env, fixture["job_uuid"])
+            self.assertTrue(job.job_config.allow_commit)
+            job.set_started()
+            job.store()
+            cr.commit()  # pylint: disable=invalid-commit
+            self.assertTrue(job.lock())
+            request_type = type(env["contact.center.wuzapi.reconnect.wizard"])
+            current = request_type._current
+            lock_checks = []
+            translations = {}
+
+            def checked_current(request, revision, *, lock=False):
+                result = current(request, revision, lock=lock)
+                if lock:
+                    self._assert_reconnect_lock_held(fixture)
+                    lock_checks.append(True)
+                    language = (
+                        request.env.lang or request.env.user.context_get()["lang"]
+                    )
+                    translations.update(
+                        code_translations.get_python_translations(
+                            "contact_center_wuzapi", language
+                        )
+                    )
+                return result
+
+            with mock.patch(REQUEST_PATCH, side_effect=transport), mock.patch.object(
+                request_type, "_current", new=checked_current
+            ), _prevent_commit(cr):
+                job.perform()
+                self.assertTrue(lock_checks)
+                if rerun:
+                    # The temporary result committed, but the outer done did not.
+                    cr.rollback()
+                    env.invalidate_all()
+                    job = Job.load(env, fixture["job_uuid"])
+                    self.assertTrue(job.lock())
+                    job.perform()
+                self._assert_reconnect_lock_held(fixture)
+                job.set_done()
+                job.store()
+            cr.commit()  # pylint: disable=invalid-commit
+
+        self.assertEqual(calls.count(("POST", "/session/connect")), 1)
+        with self.registry.cursor() as cr:
+            env = api.Environment(cr, SUPERUSER_ID, {})
+            request = env["contact.center.wuzapi.reconnect.wizard"].browse(
+                fixture["wizard"]
+            )
+            connection = request.connection_id
+            self.assertEqual(connection.outbound_admission_revision, 1)
+            if reconfigure:
+                self.assertEqual(request.state, "error")
+                self.assertFalse(request.pending_observation_json)
+                self.assertNotEqual(
+                    request.configuration_revision,
+                    connection.health_configuration_revision,
+                )
+                self.assertEqual(connection.wuzapi_pairing_revision, 0)
+            elif drift:
+                self.assertEqual(request.state, "error")
+                self.assertEqual(connection.wuzapi_webhook_sync_state, "drift")
+                expected = (
+                    "The provider's subscribed events changed. "
+                    "Review the webhook configuration."
+                )
+                self.assertIn(translations.get(expected, expected), request.message)
+            else:
+                self.assertEqual(request.state, "waiting")
+                self.assertFalse(request.pending_observation_json["proxy_present"])
+                self.assertEqual(
+                    request.pending_observation_json["events"], "Message,Connected"
+                )
+                expected = "The provider applied its configured network policy."
+                self.assertIn(translations.get(expected, expected), request.message)
+
+    def test_reconnect_preserves_baseline_during_concurrent_admission(self):
+        self._reconnect_during_write()
+
+    def test_reconnect_detects_drift_during_concurrent_admission(self):
+        self._reconnect_during_write(drift=True)
+
+    def test_reconnect_refuses_configuration_changed_during_http(self):
+        self._reconnect_during_write(reconfigure=True)
+
+    def test_reconnect_rerun_preserves_committed_waiting_result(self):
+        self._reconnect_during_write(rerun=True)
+
+    def test_reconnect_snapshot_reset_requires_allow_commit_and_keeps_job_lock(self):
+        fixture = self._reconnect_fixture()
+        with self.registry.cursor() as cr:
+            env = api.Environment(cr, SUPERUSER_ID, {})
+            job = Job.load(env, fixture["job_uuid"])
+            job.set_started()
+            job.store()
+            cr.commit()  # pylint: disable=invalid-commit
+            self.assertTrue(job.lock())
+            function = job.db_record().job_function_id
+            # Uncommitted metadata change is rolled back with this test cursor.
+            function.allow_commit = False
+            request = env["contact.center.wuzapi.reconnect.wizard"].browse(
+                fixture["wizard"]
+            )
+            with self.assertRaisesRegex(RuntimeError, "allow_commit"):
+                request.with_context(
+                    job_uuid=fixture["job_uuid"]
+                )._refresh_job_snapshot()
+            self._assert_reconnect_lock_held(fixture)
+            cr.rollback()
+            env.invalidate_all()
+            env["queue.job.function"].clear_caches()
 
     def _envelope(self, group=True):
         path = Path(__file__).parent / "fixtures" / "message_group_text_lid.json"
