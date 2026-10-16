@@ -413,28 +413,97 @@ class TestWuzapiReconnect(WuzapiCase):
         self.assertEqual(self.connection.wuzapi_pairing_state, "verified")
 
     def test_revoked_or_stale_reconnect_request_cannot_call_provider(self):
-        request = self._request()
-        with trap_jobs() as trap:
-            request.action_start()
-        old_job = trap.enqueued_jobs[0]
-        revision = request.request_revision
-        self.connection.write({"wuzapi_onboarding_job_uuid": "superseding-operation"})
-        with mock.patch(CLIENT) as client:
-            self.assertFalse(
-                request.with_context(job_uuid=old_job.uuid)._job_reconnect(revision)
-            )
+        for revoked in (False, True):
+            request = self._request()
+            with trap_jobs() as trap:
+                request.action_start()
+            old_job = trap.enqueued_jobs[0]
+            revision = request.request_revision
+            if revoked:
+                self.admin.groups_id -= self.env.ref(
+                    "contact_center_base.group_contact_center_admin"
+                )
+            else:
+                self.connection.wuzapi_onboarding_job_uuid = "superseding-operation"
+            with mock.patch(CLIENT) as client:
+                self.assertFalse(
+                    request.with_context(job_uuid=old_job.uuid)._job_reconnect(revision)
+                )
             client.assert_not_called()
-        self.connection.write({"wuzapi_onboarding_job_uuid": old_job.uuid})
-        self.admin.groups_id -= self.env.ref(
-            "contact_center_base.group_contact_center_admin"
+            self.assertEqual(request.sudo().state, "error")
+            self.assertFalse(request.sudo().request_revision)
+            self.assertFalse(request.sudo().retry_at)
+
+    def test_confirmed_inactive_session_keeps_reconnect_after_api_timeout(self):
+        self.connection._apply_health_result(
+            {"state": "disconnected", "reason": "session_inactive"},
+            observed_at=self.clock,
+            records_health_probe=True,
         )
-        with mock.patch(CLIENT) as client:
-            self.assertFalse(
-                request.with_context(job_uuid=old_job.uuid)._job_reconnect(revision)
-            )
-        client.assert_not_called()
-        self.assertEqual(request.sudo().state, "error")
-        self.assertFalse(request.sudo().retry_at)
+        self.connection._apply_health_result(
+            {"state": "degraded", "reason": "unreachable", "conclusive": False},
+            observed_at=self.clock + datetime.timedelta(seconds=1),
+            records_health_probe=True,
+        )
+        item = self.connection._contact_center_health_item()
+        self.assertEqual(item["state"], "disconnected")
+        self.assertEqual(item["detail"], "unreachable")
+        self.assertEqual(item["fix_kind"], "reconnect")
+
+    def test_obsolete_observation_requires_reopening_without_applying_drift(self):
+        for drift in (False, True):
+            with self.subTest(drift=drift):
+                self._phase("qr")
+                request = self._request()
+                with trap_jobs() as trap:
+                    request.action_start()
+                token = self.connection._contact_center_health_observation_token()
+                job_uuid = self.connection.wuzapi_onboarding_job_uuid
+                sync_state = self.connection.wuzapi_webhook_sync_state
+                request._update({"pending_observation_json": {"events": "Message"}})
+
+                def read(_request, _connection):
+                    self._phase("expired")
+                    return (
+                        {
+                            "state": "degraded",
+                            "reason": "invalid_response",
+                            "conclusive": False,
+                            "wuzapi_events_changed": drift,
+                        },
+                        token,
+                        self.clock,
+                        ("error", "Synthetic subscription drift")
+                        if drift
+                        else ("qr", False),
+                        not drift,
+                        False,
+                        False,
+                    )
+
+                with mock.patch.object(type(request), "_read_reconnect", new=read):
+                    self.assertFalse(
+                        request.with_context(
+                            job_uuid=trap.enqueued_jobs[0].uuid
+                        )._job_reconnect(request.request_revision)
+                    )
+                self.assertEqual(request.state, "error")
+                self.assertFalse(request.request_revision)
+                self.assertFalse(request.pending_observation_json)
+                self.assertFalse(request.retry_at)
+                self.assertTrue(request.message)
+                if drift:
+                    self.assertIn("Synthetic subscription drift", request.message)
+                self.assertEqual(self.connection.wuzapi_pairing_state, "expired")
+                self.assertTrue(self.connection.identity_mismatch_latched)
+                self.assertEqual(self.connection.wuzapi_webhook_sync_state, sync_state)
+                self.assertEqual(self.connection.wuzapi_onboarding_job_uuid, job_uuid)
+                with trap_jobs() as followup, mock.patch(CLIENT) as client:
+                    for action in (request.action_check, request.action_start):
+                        with self.assertRaises(ValidationError):
+                            action()
+                    followup.assert_jobs_count(0)
+                client.assert_not_called()
 
     def test_qr_route_fences_owner_company_epoch_and_configuration_before_io(self):
         request = self._request()

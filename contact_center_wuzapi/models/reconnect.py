@@ -159,6 +159,10 @@ class ContactCenterWuzapiReconnectWizard(models.TransientModel):
             or request.company_id not in self.env.companies
         ):
             raise AccessError(_("This reconnect request belongs to another session."))
+        if not queued and request.state == "error" and not request.request_revision:
+            raise ValidationError(
+                _("This reconnect request is no longer current. Close and reopen it.")
+            )
         return self._allowed_connection(request.connection_id.id, request.create_uid)
 
     def _current(self, revision, *, lock=False):
@@ -230,7 +234,7 @@ class ContactCenterWuzapiReconnectWizard(models.TransientModel):
             or self.request_revision != connection.wuzapi_onboarding_revision
             or self.pairing_revision != connection.wuzapi_pairing_revision
         ):
-            self._finish_error(self.request_revision)
+            self._finish_error(self.request_revision, stale=True)
             return self._reopen()
         if (
             connection.wuzapi_hmac_rotation_state != "stable"
@@ -528,11 +532,13 @@ class ContactCenterWuzapiReconnectWizard(models.TransientModel):
             if not current:
                 return self._finish_error(revision)
             if current._contact_center_health_observation_token() != token:
-                pending_observation = False
-                result, qr = (
-                    "waiting",
-                    _("The connection changed. Check again."),
-                ), False
+                return self._finish_error(
+                    revision,
+                    stale=True,
+                    diagnostic=result[1]
+                    if health.get("wuzapi_events_changed")
+                    else False,
+                )
             if qr and self.env["contact.center.outbox.command"].sudo().search_count(
                 [
                     ("provider_connection_id", "=", current.id),
@@ -595,24 +601,27 @@ class ContactCenterWuzapiReconnectWizard(models.TransientModel):
         except (AdapterError, AccessError, ValidationError):
             return self._finish_error(revision)
 
-    def _finish_error(self, revision):
+    def _finish_error(self, revision, *, stale=False, diagnostic=False):
         try:
             current = self._current(revision, lock=True)
         except (AccessError, ValidationError):
             current = False
-        if current:
+        stale = stale or not current
+        if not stale:
             current.write({"wuzapi_onboarding_job_uuid": False})
+        message = (
+            _("This reconnect request is no longer current. Close and reopen it.")
+            if stale
+            else _(
+                "The provider could not restore the session. "
+                "Review its configuration and try again."
+            )
+        )
         self._update(
             {
                 "state": "error",
-                "message": _(
-                    "The provider could not restore the session. "
-                    "Review its configuration and try again."
-                )
-                if current
-                else _(
-                    "This reconnect request is no longer current. Close and reopen it."
-                ),
+                "message": "%s\n%s" % (diagnostic, message) if diagnostic else message,
+                "request_revision": 0 if stale else revision,
                 "retry_at": False,
                 "pending_observation_json": False,
             }

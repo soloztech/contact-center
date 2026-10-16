@@ -5159,6 +5159,65 @@ class TestWuzapiAdapter(WuzapiCase):
                 self.assertEqual(health["reason"], expected_reason)
 
     @mock.patch(REQUEST_PATCH)
+    def test_rate_limited_probe_does_not_clear_an_unreachable_incident(self, request):
+        self._record_own_call_identity(
+            "5511888888888@s.whatsapp.net", "200000000000002@lid"
+        )
+        now = fields.Datetime.now() + datetime.timedelta(seconds=2)
+        self.connection.write(
+            {
+                "health_check_pending": False,
+                "health_job_uuid": False,
+                "wuzapi_webhook_sync_state": "in_sync",
+                "wuzapi_webhook_url_matches": True,
+                "wuzapi_webhook_last_sync_at": now,
+            }
+        )
+        request.return_value = self._session_status_response()
+        self.connection._apply_health_result(
+            self.adapter.get_health(self.connection),
+            observed_at=now - datetime.timedelta(seconds=1),
+            records_health_probe=True,
+        )
+        self.connection.action_enable_outbound()
+        revision = self.connection.outbox_recovery_revision
+        for offset, response, error in (
+            (0, None, requests.Timeout("Synthetic unavailable probe")),
+            (1, FakeResponse(429, {}, headers={"Retry-After": "19"}), None),
+        ):
+            request.side_effect = error
+            request.return_value = response
+            health = self.adapter.get_health(self.connection)
+            self.assertIs(health["conclusive"], False)
+            with trap_jobs() as trap:
+                self.connection._apply_health_result(
+                    health,
+                    observed_at=now + datetime.timedelta(seconds=offset),
+                    records_health_probe=True,
+                )
+                trap.assert_jobs_count(0)
+            self.assertFalse(self.connection._contact_center_outbound_is_available())
+            self.assertEqual(self.connection.last_probe_detail, "unreachable")
+            self.assertEqual(
+                self.connection._contact_center_fix_kind(), "configuration"
+            )
+            self.assertEqual(self.connection.outbox_recovery_revision, revision)
+        self.assertEqual(
+            self.connection.health_retry_not_before,
+            now + datetime.timedelta(seconds=20),
+        )
+        request.return_value = self._session_status_response()
+        for offset in (21, 22):
+            self.connection._apply_health_result(
+                self.adapter.get_health(self.connection),
+                observed_at=now + datetime.timedelta(seconds=offset),
+                records_health_probe=True,
+            )
+            self.assertTrue(self.connection._contact_center_outbound_is_available())
+            self.assertFalse(self.connection.last_probe_detail)
+            self.assertEqual(self.connection.outbox_recovery_revision, revision + 1)
+
+    @mock.patch(REQUEST_PATCH)
     def test_health_failures_are_short_safe_and_provider_neutral(self, request):
         sensitive_payload = {
             "token": self.connection.wuzapi_api_token,

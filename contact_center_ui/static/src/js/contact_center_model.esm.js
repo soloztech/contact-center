@@ -1767,7 +1767,10 @@ export function connectionHealthAlerts(health, accountId = false) {
             item.connection_role === "primary" &&
             (!accountId || item.account_id === accountId) &&
             connectionHealthNeedsAttention(item) &&
-            !(item.detail === "rate_limited" && item.fix_kind === "none")
+            !(
+                item.fix_kind === "none" &&
+                (item.state === "unknown" || item.detail === "rate_limited")
+            )
     );
 }
 

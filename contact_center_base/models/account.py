@@ -2101,8 +2101,6 @@ class ContactCenterProviderConnection(models.Model):
         """Return last-known canonical state or the derived ``unknown`` state."""
 
         self.ensure_one()
-        if self._contact_center_has_probe_diagnostic():
-            return "degraded"
         observation_is_fresh = self._contact_center_observation_is_fresh(now=now)
         if (
             self.state in ("authentication_required", "disconnected")
@@ -2110,6 +2108,8 @@ class ContactCenterProviderConnection(models.Model):
             and self.last_state_source in ("health_job", "provider_event")
         ):
             return self.state
+        if self._contact_center_has_probe_diagnostic():
+            return "degraded"
         if self.identity_mismatch_latched:
             return "degraded"
         if not observation_is_fresh:
@@ -2746,15 +2746,8 @@ class ContactCenterProviderConnection(models.Model):
 
     def _contact_center_fix_kind(self):
         self.ensure_one()
-        if (
-            self.last_probe_detail == "rate_limited"
-            and self._contact_center_identity_is_verified()
-        ):
-            return "none"
         return (
-            "none"
-            if self._contact_center_health_status() == "connected"
-            else "configuration"
+            "none" if self._contact_center_identity_is_verified() else "configuration"
         )
 
     def _contact_center_fix_action(self):
@@ -3241,6 +3234,16 @@ class ContactCenterProviderConnection(models.Model):
         """Build metrics for an accepted provider probe."""
 
         self.ensure_one()
+        detail = (
+            normalized["detail"] if normalized.get("conclusive") is False else False
+        )
+        if (
+            detail == "rate_limited"
+            and self._contact_center_has_probe_diagnostic()
+            and self.last_probe_detail != "rate_limited"
+        ):
+            # A throttle is no evidence that the preceding incident recovered.
+            detail = self.last_probe_detail
         return {
             "last_health_at": observed_at,
             "last_health_latency_ms": latency_ms,
@@ -3250,9 +3253,7 @@ class ContactCenterProviderConnection(models.Model):
                 and normalized.get("conclusive") is not False
                 else self.consecutive_unhealthy_checks + 1
             ),
-            "last_probe_detail": (
-                normalized["detail"] if normalized.get("conclusive") is False else False
-            ),
+            "last_probe_detail": detail,
             "last_health_error_at": observed_at if error_class else False,
             "last_health_error_class": error_class or False,
         }

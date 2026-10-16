@@ -14174,6 +14174,24 @@ QUnit.module("contact_center_ui > multi-file and structured messages", () => {
                     "degraded",
                     "the diagnostic panel retains the warning"
                 );
+                store.applyConnectionHealthItem({
+                    id: 1,
+                    account_id: 10,
+                    connection_role: "primary",
+                    state: "unknown",
+                    detail: "unknown",
+                    fix_kind: "none",
+                });
+                await nextTick();
+                assert.notOk(
+                    target.querySelector('[role="alert"]'),
+                    "an old usable proof is not a failure incident"
+                );
+                assert.strictEqual(
+                    store.connectionHealth.items.find((item) => item.id === 1).state,
+                    "unknown",
+                    "the diagnostic panel retains the stale status"
+                );
             } finally {
                 store.destroy();
             }

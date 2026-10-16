@@ -767,6 +767,53 @@ class TestConnectionHealth(SavepointCase):
             self.connection._contact_center_health_status(now=now), "unknown"
         )
         self.assertTrue(self.connection._contact_center_outbound_is_available(now=now))
+        item = self.connection._contact_center_health_item(now=now)
+        self.assertEqual(item["state"], "unknown")
+        self.assertEqual(item["fix_kind"], "none")
+
+    def test_legacy_proof_migration_is_due_independently_of_database_timezone(self):
+        from odoo.modules.migration import load_script
+
+        migration = load_script(
+            "contact_center_base/migrations/16.0.1.11.14/post-migrate.py",
+            "post_migrate_connection_health_proof",
+        )
+        now = fields.Datetime.now()
+        future = now + datetime.timedelta(days=1)
+        self.env.cr.execute("SHOW TimeZone")
+        timezone = self.env.cr.fetchone()[0]
+        try:
+            self.env.cr.execute("SET LOCAL TIME ZONE 'Pacific/Kiritimati'")
+            for overrides, expected in (
+                ({}, False),
+                ({"last_state_source": "health_job"}, False),
+                ({"last_state_observed_at": now}, False),
+                (
+                    {"last_state_source": "health_job", "last_state_observed_at": now},
+                    future,
+                ),
+                ({"health_check_pending": True}, future),
+                ({"active": False}, future),
+                ({"state": "disconnected"}, future),
+            ):
+                with self.subTest(overrides=overrides):
+                    self.connection.write(
+                        {
+                            "active": True,
+                            "state": "connected",
+                            "last_state_source": False,
+                            "last_state_observed_at": False,
+                            "health_check_pending": False,
+                            "next_health_check_at": future,
+                            **overrides,
+                        }
+                    )
+                    self.env.flush_all()
+                    migration.migrate(self.env.cr, "16.0.1.11.13")
+                    self.connection.invalidate_recordset(["next_health_check_at"])
+                    self.assertEqual(self.connection.next_health_check_at, expected)
+        finally:
+            self.env.cr.execute("SELECT set_config('TimeZone', %s, true)", [timezone])
 
     def test_conclusive_health_recovers_outbox_after_inconclusive_probe(
         self,
@@ -1881,6 +1928,71 @@ class TestConnectionHealth(SavepointCase):
             self.connection.health_retry_not_before,
             now + datetime.timedelta(seconds=300),
         )
+
+    def test_rate_limit_does_not_recover_an_existing_probe_incident(self):
+        now = fields.Datetime.now()
+        self.connection._apply_health_result(
+            {"state": "connected"}, observed_at=now - datetime.timedelta(seconds=5)
+        )
+        self._outbox(self._channel_binding())
+        with trap_jobs() as trap:
+            for offset, reason in enumerate(("unreachable", "rate_limited")):
+                self.connection._apply_health_result(
+                    {
+                        "state": "degraded",
+                        "reason": reason,
+                        "conclusive": False,
+                        "retry_after_seconds": 300 if reason == "rate_limited" else 0,
+                    },
+                    observed_at=now + datetime.timedelta(seconds=offset),
+                    records_health_probe=True,
+                )
+                trap.assert_jobs_count(0)
+                self.assertFalse(
+                    self.connection._contact_center_outbound_is_available()
+                )
+                item = self.connection._contact_center_health_item()
+                self.assertEqual(item["state"], "degraded")
+                self.assertEqual(item["detail"], "unreachable")
+                self.assertEqual(item["fix_kind"], "configuration")
+            self.assertEqual(
+                self.connection.health_retry_not_before,
+                now + datetime.timedelta(seconds=301),
+            )
+            self.connection._apply_health_result(
+                {"state": "connected"},
+                observed_at=now + datetime.timedelta(seconds=302),
+                records_health_probe=True,
+            )
+            trap.assert_jobs_count(1)
+            self.assertTrue(self.connection._contact_center_outbound_is_available())
+            self.connection._apply_health_result(
+                {"state": "connected"},
+                observed_at=now + datetime.timedelta(seconds=303),
+                records_health_probe=True,
+            )
+            trap.assert_jobs_count(1)
+
+    def test_confirmed_disconnect_remains_visible_after_inconclusive_probe(self):
+        now = fields.Datetime.now()
+        for state in ("disconnected", "authentication_required"):
+            with self.subTest(state=state):
+                self.connection._apply_health_result(
+                    {"state": state}, observed_at=now, records_health_probe=True
+                )
+                now += datetime.timedelta(seconds=1)
+                self.connection._apply_health_result(
+                    {"state": "degraded", "reason": "unreachable", "conclusive": False},
+                    observed_at=now,
+                    records_health_probe=True,
+                )
+                item = self.connection._contact_center_health_item()
+                self.assertEqual(item["state"], state)
+                self.assertEqual(item["detail"], "unreachable")
+                self.assertFalse(
+                    self.connection._contact_center_outbound_is_available()
+                )
+                now += datetime.timedelta(seconds=1)
 
     def test_health_failure_backoff_has_a_bounded_ceiling(self):
         now = fields.Datetime.now()

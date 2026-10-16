@@ -188,11 +188,6 @@ class ContactCenterProviderConnection(models.Model):
     def _contact_center_fix_kind(self):
         if self.adapter_key == "wuzapi" and self.role == "primary":
             if (
-                self._contact_center_has_probe_diagnostic()
-                and self.last_probe_detail != "rate_limited"
-            ):
-                return "configuration"
-            if (
                 self.state == "disconnected"
                 or self.health_detail in ("session_inactive", "pairing_required")
                 or self.sudo().wuzapi_pairing_state == "mismatch"

@@ -23,8 +23,9 @@ caminho normal de cada mensagem.
 - Uma leitura de saúde inconclusiva preserva a última prova, registra
   `last_probe_detail` e pausa novos envios antes do HTTP, devolvendo a tentativa. Um
   rate limit apenas do probe preserva o envio verificado e fica como aviso do painel,
-  sem alerta de falha ou botão de configuração. Uma observação conclusiva posterior
-  limpa o diagnóstico e retoma somente pendentes seguros.
+  sem alerta de falha ou botão de configuração. Se já havia diagnóstico bloqueante, o
+  rate limit o preserva: ele não comprova recuperação. Uma observação conclusiva
+  posterior limpa o diagnóstico e retoma somente pendentes seguros.
 - Timeout após a fronteira de envio continua `uncertain`. Uma consulta saudável nunca
   reenvia essa mensagem automaticamente.
 - Se todas as tentativas locais de gravar o pedido antecipado falharem, a recuperação
@@ -42,6 +43,10 @@ mobile, e na janela flutuante da caixa afetada. A capacidade local do usuário d
 quem recebe o botão de correção; um upsert do bus não concede essa permissão. O backend
 revalida administrador, empresa e caixa visível.
 
+Desconexão/autorização conclusivas continuam visíveis após uma leitura inconclusiva; o
+detalhe dessa leitura permanece no painel. Uma prova saudável antiga, sem incidente,
+fica como desconhecida no painel, sem aviso grande ou botão de correção.
+
 O descriptor neutro `fix_kind` e o hook `_contact_center_fix_action` permitem que cada
 integração ofereça sua recuperação. Meta e Cloud abrem a configuração existente. A
 política comum não interpreta nomes de provedores nem impõe QR a outros adapters.
@@ -52,6 +57,12 @@ O wizard restaura a conexão existente por solicitação explícita do administr
 credenciais da própria conexão. Não cria instância, troca número, token, webhook ou
 HMAC. Reusa o canal e o controle de operação do onboarding, preservando o onboarding
 original e a revisão de configuração.
+
+A permissão do autor é conferida antes de cada tentativa do job e nas ações privadas de
+QR. Uma revogação durante uma tentativa já em andamento pode ficar invisível no
+snapshot/cache do Odoo até o fim dessa tentativa, permitindo um Connect já autorizado.
+Não há cancelamento instantâneo de chamadas em voo. Os locks e fences de conexão,
+configuração e operação continuam valendo; a leitura posterior do QR revalida o acesso.
 
 Uma sessão não logada pode continuar pareada. O wizard tenta restabelecer/verificar; só
 oferece QR quando o provedor retorna um PNG válido. Desafio adicional por passkey deve
