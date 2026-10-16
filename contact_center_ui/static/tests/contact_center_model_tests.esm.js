@@ -14032,4 +14032,136 @@ QUnit.module("contact_center_ui > multi-file and structured messages", () => {
             );
         }
     );
+    QUnit.test(
+        "repair descriptors stay neutral and bus cannot grant administrator capability",
+        (assert) => {
+            const store = new ContactCenterStore({
+                orm: {},
+                busService: new EventTarget(),
+                notification: false,
+            });
+            try {
+                store.state.bootstrap = {capabilities: {fix_connection: false}};
+                store.applyConnectionHealth({
+                    items: [
+                        {
+                            id: 1,
+                            account_id: 10,
+                            connection_role: "primary",
+                            state: "disconnected",
+                            fix_kind: "reconnect",
+                        },
+                        {
+                            id: 2,
+                            account_id: 20,
+                            connection_role: "primary",
+                            state: "degraded",
+                            fix_kind: "configuration",
+                        },
+                        {
+                            id: 3,
+                            account_id: 10,
+                            connection_role: "standby",
+                            state: "disconnected",
+                            fix_kind: "reconnect",
+                        },
+                    ],
+                });
+                assert.deepEqual(
+                    store.connectionAlerts(10).map((item) => item.id),
+                    [1]
+                );
+                assert.strictEqual(
+                    store.connectionHealth.items.find((item) => item.id === 1).fix_kind,
+                    "reconnect"
+                );
+                const component = {store};
+                const item = store.connectionAlerts(10)[0];
+                assert.notOk(ConnectionHealth.prototype.canFix.call(component, item));
+                store.applyConnectionHealthItem({...item, can_fix: true});
+                assert.notOk(
+                    ConnectionHealth.prototype.canFix.call(component, item),
+                    "a sudo bus upsert cannot grant repair"
+                );
+                store.state.bootstrap.capabilities.fix_connection = true;
+                assert.ok(ConnectionHealth.prototype.canFix.call(component, item));
+                assert.strictEqual(
+                    ConnectionHealth.prototype.fixLabel.call(component, item),
+                    "Reconectar"
+                );
+                assert.strictEqual(
+                    normalizeConnectionHealth({
+                        items: [{id: 4, fix_kind: "javascript:evil"}],
+                    }).items[0].fix_kind,
+                    "none"
+                );
+            } finally {
+                store.destroy();
+            }
+        }
+    );
+
+    QUnit.test(
+        "persistent repair banner is scoped, keyboard reachable and disappears after recovery",
+        async (assert) => {
+            makeFakeLocalizationService();
+            const env = await makeTestEnv();
+            const store = new ContactCenterStore({
+                orm: {},
+                busService: new EventTarget(),
+                notification: false,
+                stateFactory: reactive,
+            });
+            try {
+                store.state.bootstrap = {capabilities: {fix_connection: true}};
+                store.applyConnectionHealth({
+                    items: [
+                        {
+                            id: 1,
+                            account_id: 10,
+                            connection_role: "primary",
+                            connection_name: "Caixa A",
+                            state: "disconnected",
+                            detail: "session_inactive",
+                            fix_kind: "reconnect",
+                        },
+                        {
+                            id: 2,
+                            account_id: 20,
+                            connection_role: "primary",
+                            connection_name: "Caixa B",
+                            state: "disconnected",
+                            fix_kind: "reconnect",
+                        },
+                    ],
+                });
+                const target = getFixture();
+                await mount(ConnectionHealth, target, {
+                    env,
+                    props: {store, state: store.state, mode: "banner", accountId: 10},
+                });
+                assert.strictEqual(target.querySelectorAll('[role="alert"]').length, 1);
+                assert.ok(target.textContent.includes("Caixa A"));
+                assert.notOk(target.textContent.includes("Caixa B"));
+                const button = target.querySelector("button");
+                assert.strictEqual(button.textContent, "Reconectar");
+                button.focus();
+                assert.strictEqual(document.activeElement, button);
+                assert.notOk(
+                    target.querySelector("#cc-connection-health-panel"),
+                    "banner does not duplicate disclosure IDs"
+                );
+                store.applyConnectionHealthItem({
+                    ...store.connectionAlerts(10)[0],
+                    state: "connected",
+                    detail: "healthy",
+                    fix_kind: "none",
+                });
+                await nextTick();
+                assert.notOk(target.querySelector('[role="alert"]'));
+            } finally {
+                store.destroy();
+            }
+        }
+    );
 });

@@ -882,3 +882,19 @@ class TestMetaPhase64Outbound(MetaCase):
         self.assertEqual(instagram_media["image"]["max_bytes"], 8_000_000)
         self.assertNotIn("audio/ogg", instagram_media["audio"]["mimetypes"])
         self.assertNotIn("image/gif", instagram_media["image"]["mimetypes"])
+
+    def test_health_hint_is_classified_by_shared_runtime_not_core(self):
+        from odoo.addons.meta_api_base.services.errors import (
+            MetaApiPausedError,
+            MetaApiRateLimitError,
+            MetaApiUncertainError,
+        )
+
+        from ..services.api import _adapter_error
+
+        for original, expected in (
+            (MetaApiRateLimitError("synthetic", http_status=400), False),
+            (MetaApiPausedError("synthetic", http_status=401), True),
+            (MetaApiUncertainError("synthetic", http_status=503), True),
+        ):
+            self.assertEqual(_adapter_error(original).check_connection, expected)

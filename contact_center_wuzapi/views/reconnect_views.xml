@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<odoo>
+    <record id="view_wuzapi_reconnect_form" model="ir.ui.view">
+        <field name="name">contact.center.wuzapi.reconnect.wizard.form</field>
+        <field name="model">contact.center.wuzapi.reconnect.wizard</field>
+        <field name="arch" type="xml">
+            <form string="Reconectar WhatsApp" create="false">
+                <field name="inbox_event_ids" invisible="1" />
+                <group>
+                    <field
+                        name="connection_id"
+                        string="Conexão"
+                        options="{'no_open': True}"
+                    />
+                    <field
+                        name="state"
+                        string="Etapa"
+                        attrs="{'invisible': [('inbox_event_ids', '!=', [])]}"
+                    />
+                    <field name="connected" invisible="1" />
+                    <field name="running" invisible="1" />
+                    <field
+                        name="retry_at"
+                        string="Aguardar até"
+                        attrs="{'invisible': [('retry_at', '=', False)]}"
+                    />
+                </group>
+                <group attrs="{'invisible': [('inbox_event_ids', '=', [])]}">
+                    <p
+                    >Confirme somente eventos recebidos do número desta caixa. Esta ação não comprova a origem automaticamente e não libera pareamentos rejeitados ou anteriores.</p>
+                    <field
+                        name="confirm_origin"
+                        string="Confirmo que os eventos selecionados pertencem ao número desta caixa"
+                    />
+                </group>
+                <div
+                    class="alert alert-success"
+                    role="status"
+                    attrs="{'invisible': ['|', ('connected', '=', False), ('inbox_event_ids', '!=', [])]}"
+                >
+                    Conexão verificada. As mensagens pendentes seguras podem continuar.
+                </div>
+                <field
+                    name="message"
+                    nolabel="1"
+                    attrs="{'invisible': [('message', '=', False)]}"
+                />
+                <field
+                    name="qr_url"
+                    widget="contact_center_onboarding_qr"
+                    nolabel="1"
+                    attrs="{'invisible': [('qr_url', '=', False)]}"
+                />
+                <group
+                    attrs="{'invisible': ['|', ('quarantined_count', '=', 0), ('inbox_event_ids', '!=', [])]}"
+                >
+                    <field
+                        name="quarantined_count"
+                        string="Eventos aguardando confirmação de origem"
+                    />
+                    <p
+                    >Revise os eventos recebidos durante o pareamento antes de liberar os que pertencem a esta caixa.</p>
+                    <button
+                        name="action_quarantined_events"
+                        type="object"
+                        string="Revisar eventos retidos"
+                        class="btn-link"
+                    />
+                </group>
+                <footer>
+                    <button
+                        name="action_confirm_origins"
+                        type="object"
+                        string="Confirmar origem e reenfileirar"
+                        class="btn-primary"
+                        attrs="{'invisible': [('inbox_event_ids', '=', [])]}"
+                    />
+                    <button
+                        name="action_start"
+                        type="object"
+                        string="Reconectar"
+                        class="btn-primary"
+                        attrs="{'invisible': ['|', '|', ('connected', '=', True), ('running', '=', True), ('inbox_event_ids', '!=', [])]}"
+                    />
+                    <button
+                        name="action_check"
+                        type="object"
+                        string="Verificar"
+                        class="btn-secondary"
+                        attrs="{'invisible': [('inbox_event_ids', '!=', [])]}"
+                    />
+                    <button special="cancel" string="Fechar" class="btn-secondary" />
+                </footer>
+            </form>
+        </field>
+    </record>
+</odoo>

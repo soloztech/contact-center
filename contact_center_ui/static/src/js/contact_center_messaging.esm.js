@@ -15,6 +15,7 @@ import {
 } from "./contact_center_model.esm";
 import {ContactCenterStore} from "./contact_center_store.esm";
 import {ConversationTimeline} from "./conversation_timeline.esm";
+import {ConnectionHealth} from "./connection_health.esm";
 import {DeferredImage} from "./deferred_image.esm";
 import {MessageComposer} from "./message_composer.esm";
 import {MessagingMenu} from "@mail/components/messaging_menu/messaging_menu";
@@ -438,7 +439,11 @@ export class ContactCenterChat extends Component {
 }
 ContactCenterChat.template = "contact_center_ui.Chat";
 ContactCenterChat.props = {chatWindow: Object};
-ContactCenterChat.components = {ConversationTimeline, MessageComposer};
+ContactCenterChat.components = {
+    ConnectionHealth,
+    ConversationTimeline,
+    MessageComposer,
+};
 patch(
     getMessagingComponent("ChatWindow").components,
     "contact_center_ui.chat_components",

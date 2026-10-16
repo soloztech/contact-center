@@ -91,7 +91,9 @@ def _active_route(connection):
         or not connection.sudo().meta_webhook_asset_id
         or not connection._meta_outbound_is_ready()
     ):
-        raise ProviderPausedError("Meta outbound route is unavailable")
+        error = ProviderPausedError("Meta outbound route is unavailable")
+        error.check_connection = True
+        raise error
     return connection.sudo().meta_webhook_page_id
 
 

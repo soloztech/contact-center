@@ -42,6 +42,7 @@ from ..services.media import (
 from .application import GroupRosterRefreshRequired, IdentityConflictError
 
 _logger = logging.getLogger(__name__)
+_PAIRING_RELEASE_TOKEN = object()
 
 _ACTIVE_QUEUE_JOB_STATES = ACTIVE_QUEUE_JOB_STATES
 _QUEUE_RECOVERY_GRACE_SECONDS = 300
@@ -190,6 +191,8 @@ class AmbiguousAdapterResultError(AmbiguousTimeoutError):
 
     def __init__(self, result):
         self.result = result
+        self.check_connection = result.check_connection
+        self.retry_after_seconds = result.retry_after_seconds
         super().__init__(result.error_message or result.error_code)
 
     def provider_evidence(self):
@@ -208,6 +211,116 @@ class ContactCenterInboxEvent(models.Model):
     _name = "contact.center.inbox.event"
     _description = "Contact Center Inbox Event"
     _order = "create_date, id"
+
+    pairing_hold_epoch = fields.Integer(compute="_compute_pairing_hold")
+    pairing_hold_status = fields.Selection(
+        [
+            ("unverified", "Not Verified"),
+            ("verified", "Verified"),
+            ("mismatch", "Identity Mismatch"),
+            ("rejected", "Epoch Rejected"),
+            ("obsolete", "Earlier Epoch — Do Not Release"),
+        ],
+        compute="_compute_pairing_hold",
+    )
+
+    def _compute_pairing_hold(self):
+        for event in self:
+            metadata = event.metadata_json or {}
+            held = metadata.get("blocked_reason") == "pairing_unverified"
+            event.pairing_hold_epoch = metadata.get("hold_epoch", 0) if held else 0
+            event.pairing_hold_status = (
+                event.provider_connection_id.sudo()._contact_center_pairing_release_status(
+                    event
+                )
+                if held
+                else False
+            )
+
+    def _check_pairing_release_access(self):
+        if not self.env.user.has_group(
+            "contact_center_base.group_contact_center_admin"
+        ):
+            raise AccessError(
+                _("Only Contact Center administrators can confirm origin.")
+            )
+        self.check_access_rights("read")
+        self.check_access_rule("read")
+        if (
+            not self
+            or len(self) > 200
+            or any(event.company_id not in self.env.companies for event in self)
+        ):
+            raise ValidationError(
+                _("Select up to 200 events from the current company.")
+            )
+
+    def action_prepare_pairing_release(self):
+        self._check_pairing_release_access()
+        connections = self.provider_connection_id
+        if len(connections) != 1:
+            raise ValidationError(_("Review events from one connection at a time."))
+        return connections._contact_center_pairing_release_action(self)
+
+    def action_confirm_pairing_origin(self):
+        """Explicit administrator confirmation; never an automatic recovery lane."""
+
+        self._check_pairing_release_access()
+        connections = self.provider_connection_id
+        accounts = connections.account_id
+        self.env.cr.execute(
+            "SELECT id FROM contact_center_account WHERE id = ANY(%s) ORDER BY id FOR SHARE",
+            [accounts.ids],
+        )
+        self.env.cr.execute(
+            (
+                "SELECT id FROM contact_center_provider_connection WHERE id = ANY(%s)"
+                " ORDER BY id FOR UPDATE"
+            ),
+            [connections.ids],
+        )
+        self.env.cr.execute(
+            (
+                "SELECT id FROM contact_center_inbox_event WHERE id = ANY(%s) ORDER "
+                "BY id FOR UPDATE"
+            ),
+            [self.ids],
+        )
+        self.invalidate_recordset()
+        connections.invalidate_recordset()
+        accounts.invalidate_recordset()
+        for connection in connections:
+            events = self.filtered(
+                lambda item: item.provider_connection_id == connection
+            )
+            if (
+                any(event.state != "blocked" for event in events)
+                or connection.sudo()._contact_center_pairing_release_status(
+                    events, locked=True
+                )
+                != "verified"
+            ):
+                raise ValidationError(
+                    _(
+                        "This pairing epoch is not eligible for origin confirmation. "
+                        "Check the connection and the selected events."
+                    )
+                )
+        for event in self:
+            metadata = dict(event.metadata_json or {})
+            metadata.update(
+                pairing_origin_confirmed_by=self.env.uid,
+                pairing_origin_confirmed_at=fields.Datetime.to_string(
+                    fields.Datetime.now()
+                ),
+                pairing_origin_reason="administrator_confirmed_inbox_origin",
+            )
+            event.sudo().write({"metadata_json": metadata})
+        return (
+            self.sudo()
+            .with_context(contact_center_pairing_release_token=_PAIRING_RELEASE_TOKEN)
+            .action_requeue()
+        )
 
     provider_connection_id = fields.Many2one(
         "contact.center.provider.connection",
@@ -471,6 +584,14 @@ class ContactCenterInboxEvent(models.Model):
                     _("Erased conversation content cannot be replayed.")
                 )
             metadata = dict(event.metadata_json or {})
+            if (
+                metadata.get("blocked_reason") == "pairing_unverified"
+                and self.env.context.get("contact_center_pairing_release_token")
+                is not _PAIRING_RELEASE_TOKEN
+            ):
+                raise ValidationError(
+                    _("Use the explicit origin confirmation action for pairing events.")
+                )
             if (
                 event.state == "blocked"
                 and metadata.get("blocked_reason") == "onboarding_not_activated"
@@ -2496,7 +2617,7 @@ class ContactCenterOutboxCommand(models.Model):
             ) from error
         except ProviderPausedError as error:
             self._persist_safe_retry(error, state="pending")
-            self._commit_job_transaction()
+            self._commit_failure(error)
             raise RetryableJobError(
                 str(error),
                 seconds=provider_paused_retry_seconds(error, ("outbox", self.id)),
@@ -2596,6 +2717,7 @@ class ContactCenterOutboxCommand(models.Model):
 
     def _dispatch_after_boundary(self, connection, command_dto, adapter):
         self.ensure_one()
+        failure = None
         try:
             with self.env.cr.savepoint():
                 result = self._execute_adapter(adapter, connection, command_dto)
@@ -2608,7 +2730,7 @@ class ContactCenterOutboxCommand(models.Model):
                 state="pending",
                 attempts=max(0, self.attempts - 1),
             )
-            self._commit_job_transaction()
+            self._commit_failure(error)
             raise RetryableJobError(
                 str(error),
                 seconds=provider_paused_retry_seconds(error, ("outbox", self.id)),
@@ -2618,10 +2740,10 @@ class ContactCenterOutboxCommand(models.Model):
             self._extend_outbound_dispatch_deadline(error)
             if self.attempts >= QUEUE_ATTEMPT_CEILING:
                 self._finish_failure("dead", error)
-                self._commit_job_transaction()
+                self._commit_failure(error)
                 return False
             self._persist_safe_retry(error, state="retry")
-            self._commit_job_transaction()
+            self._commit_failure(error)
             raise RetryableJobError(str(error), seconds=_retry_delay(error)) from error
         except PostDispatchPersistenceError as error:
             self._finish_failure(
@@ -2640,6 +2762,7 @@ class ContactCenterOutboxCommand(models.Model):
                 self._attempt_provider_success_reconciliation_after_commit()
             return True
         except AmbiguousTimeoutError as error:
+            failure = error
             evidence = getattr(error, "provider_evidence", None)
             self._finish_failure(
                 "uncertain",
@@ -2647,6 +2770,7 @@ class ContactCenterOutboxCommand(models.Model):
                 provider_evidence=evidence() if callable(evidence) else None,
             )
         except AdapterError as error:
+            failure = error
             self._finish_failure("dead", error)
         except (DTOValidationError, ValidationError) as error:
             self._finish_failure("dead", error)
@@ -2660,7 +2784,7 @@ class ContactCenterOutboxCommand(models.Model):
                     "unexpected failure after provider dispatch began"
                 ),
             )
-        self._commit_job_transaction()
+        self._commit_failure(failure)
         return True
 
     def _lock_outbound_retry_after_scope(self):
@@ -2688,6 +2812,8 @@ class ContactCenterOutboxCommand(models.Model):
                 "provider_connection_id",
                 "state",
                 "attempts",
+                "last_error_class",
+                "company_id",
             ]
         )
         if (
@@ -2745,6 +2871,8 @@ class ContactCenterOutboxCommand(models.Model):
                 "identity_mismatch_latched",
                 "last_state_observed_at",
                 "last_health_at",
+                "last_probe_detail",
+                "last_state_source",
                 "capabilities_json",
             ]
         )
@@ -2843,6 +2971,50 @@ class ContactCenterOutboxCommand(models.Model):
             raise ValidationError(_("A queue job UUID is required at commit boundary."))
         self.env.cr.commit()  # pylint: disable=invalid-commit
         return True
+
+    def _commit_failure(self, error):
+        """Save the send outcome before trying a diagnostic in a fresh snapshot."""
+
+        self._commit_job_transaction()
+        if not getattr(error, "check_connection", False):
+            return True
+        for attempt in range(2):
+            try:
+                if not self.exists():
+                    return False
+                with self.env.cr.savepoint():
+                    connection = self._lock_outbound_retry_after_scope()
+                    if (
+                        self.state in ("done", "cancelled")
+                        or self.last_error_class == "ConversationContentErased"
+                        or self.company_id != connection.company_id
+                    ):
+                        return False
+                    if isinstance(error, AmbiguousTimeoutError):
+                        self._extend_outbound_dispatch_deadline(error)
+                    connection.sudo()._request_health_after_send(
+                        getattr(error, "retry_after_seconds", 0)
+                    )
+                self._commit_job_transaction()
+                return True
+            except TransactionRollbackError:
+                # Only the hint is retried. The message's result was committed
+                # above, and this path never calls execute_command again.
+                self.env.cr.rollback()
+                self.env.invalidate_all()
+                if attempt:
+                    break
+            except Exception as hint_error:
+                self.env.cr.rollback()
+                self.env.invalidate_all()
+                _logger.warning(
+                    "Connection diagnostic not scheduled for outbox %s (%s)",
+                    self.id,
+                    hint_error.__class__.__name__,
+                )
+                return False
+        _logger.warning("Connection diagnostic conflicted for outbox %s", self.id)
+        return False
 
     def _process_one(self):
         """Synchronous provider operation retained for focused unit tests."""
@@ -3413,23 +3585,23 @@ class ContactCenterOutboxCommand(models.Model):
 
     @api.model
     def _raise_for_adapter_result(self, result):
-        if result.status == "transient":
-            error_class = (
+        error_classes = {
+            "transient": (
                 ProviderRateLimitError
                 if result.error_code in ("http_429", "rate_limited")
                 else TransientAdapterError
-            )
-            error = error_class(result.error_message or result.error_code)
-            error.retry_after_seconds = result.retry_after_seconds
-            raise error
+            ),
+            "paused": ProviderPausedError,
+            "permanent": AdapterError,
+        }
         if result.status == "uncertain":
             raise AmbiguousAdapterResultError(result)
-        if result.status == "paused":
-            error = ProviderPausedError(result.error_message or result.error_code)
+        error_class = error_classes.get(result.status)
+        if error_class:
+            error = error_class(result.error_message or result.error_code)
             error.retry_after_seconds = result.retry_after_seconds
+            error.check_connection = result.check_connection
             raise error
-        if result.status == "permanent":
-            raise AdapterError(result.error_message or result.error_code)
         return True
 
     def _group_finalization_participant(self, connection, command_dto):

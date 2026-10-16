@@ -45,6 +45,8 @@ _HEALTH_DETAIL_SELECTION = [
     ("unavailable", "Unavailable"),
     ("unreachable", "Unreachable"),
     ("authentication_required", "Authentication Required"),
+    ("session_inactive", "Session Inactive"),
+    ("pairing_required", "Pairing Required"),
     ("rate_limited", "Rate Limited"),
     ("provider_paused", "Provider Paused"),
     ("provider_error", "Provider Error"),
@@ -70,6 +72,10 @@ _HEALTH_DETAIL_ALIASES = {
     "not_logged_in": "authentication_required",
     "logged_out": "authentication_required",
     "unauthorized": "authentication_required",
+    "session_inactive": "session_inactive",
+    "session_not_authenticated": "session_inactive",
+    "session_disconnected": "session_inactive",
+    "pairing_required": "pairing_required",
     "rate_limited": "rate_limited",
     "paused": "provider_paused",
     "provider_paused": "provider_paused",
@@ -1805,6 +1811,12 @@ class ContactCenterProviderConnection(models.Model):
         copy=False,
         default="unknown",
     )
+    last_probe_detail = fields.Selection(
+        _HEALTH_DETAIL_SELECTION,
+        readonly=True,
+        copy=False,
+        help="Failure of the latest health read; it is not a session observation.",
+    )
     identity_mismatch_latched = fields.Boolean(
         string="Identity Safety Lock",
         readonly=True,
@@ -1920,7 +1932,8 @@ class ContactCenterProviderConnection(models.Model):
         ),
     ]
 
-    _health_interval_seconds = 600
+    _health_interval_seconds = 3600
+    _health_job_lease_seconds = 300
     _health_jitter_window_seconds = 30
     _health_stale_after_seconds = 3 * _health_interval_seconds
 
@@ -2088,10 +2101,13 @@ class ContactCenterProviderConnection(models.Model):
         """Return last-known canonical state or the derived ``unknown`` state."""
 
         self.ensure_one()
+        if self._contact_center_has_probe_diagnostic():
+            return "degraded"
         observation_is_fresh = self._contact_center_observation_is_fresh(now=now)
-        if observation_is_fresh and self.state in (
-            "authentication_required",
-            "disconnected",
+        if (
+            self.state in ("authentication_required", "disconnected")
+            and self.last_state_observed_at
+            and self.last_state_source in ("health_job", "provider_event")
         ):
             return self.state
         if self.identity_mismatch_latched:
@@ -2101,15 +2117,45 @@ class ContactCenterProviderConnection(models.Model):
         return self.state if self.state in _CANONICAL_HEALTH_STATES else "unknown"
 
     def _contact_center_observation_is_fresh(self, now=None):
-        """Use the same exact freshness boundary for UI and dispatch."""
+        """Age a conclusive observation for diagnostics and provider reads."""
 
         self.ensure_one()
         now = _odoo_datetime(now)
         stale_deadline = now - datetime.timedelta(
             seconds=self._health_stale_after_seconds
         )
-        reference_at = self.last_state_observed_at or self.last_health_at
-        return bool(reference_at and reference_at >= stale_deadline)
+        reference_at = self.last_state_observed_at
+        return bool(
+            reference_at
+            and self.last_state_source in ("health_job", "provider_event")
+            and reference_at >= stale_deadline
+        )
+
+    def _contact_center_has_probe_diagnostic(self):
+        self.ensure_one()
+        return bool(
+            self.last_probe_detail
+            and self.last_health_at
+            and (
+                not self.last_state_observed_at
+                or self.last_health_at >= self.last_state_observed_at
+            )
+        )
+
+    def _contact_center_identity_is_verified(self):
+        """A usable identity proof does not expire merely because time passed."""
+
+        self.ensure_one()
+        return bool(
+            self.state == "connected"
+            and self.last_state_observed_at
+            and self.last_state_source in ("health_job", "provider_event")
+            and not self.identity_mismatch_latched
+            and not (
+                self._contact_center_has_probe_diagnostic()
+                and self.last_probe_detail != "rate_limited"
+            )
+        )
 
     def _contact_center_inbound_is_available(self):
         """Return the fail-closed core ingress decision for provider controllers."""
@@ -2133,9 +2179,7 @@ class ContactCenterProviderConnection(models.Model):
             and self.account_id._contact_center_access_is_ready()
             and self.role == "primary"
             and self.outbound_active
-            and self.state == "connected"
-            and not self.identity_mismatch_latched
-            and self._contact_center_observation_is_fresh(now=now)
+            and self._contact_center_identity_is_verified()
         )
 
     def _contact_center_record_outbound_admission(self):
@@ -2647,7 +2691,7 @@ class ContactCenterProviderConnection(models.Model):
         self.ensure_one()
         now = _odoo_datetime(now)
         stale_deadline = now + datetime.timedelta(
-            seconds=self._health_interval_seconds - 240
+            seconds=self._health_job_lease_seconds - 240
         )
         return bool(
             self.health_check_pending
@@ -2679,7 +2723,9 @@ class ContactCenterProviderConnection(models.Model):
             "last_check_at": fields.Datetime.to_string(self.last_health_at),
             "state_changed_at": fields.Datetime.to_string(self.last_state_change_at),
             "detail": (
-                "unknown"
+                self.last_probe_detail
+                if self._contact_center_has_probe_diagnostic()
+                else "unknown"
                 if status == "unknown"
                 else (
                     (
@@ -2693,9 +2739,43 @@ class ContactCenterProviderConnection(models.Model):
                 )
             ),
         }
+        item["fix_kind"] = self._contact_center_fix_kind()
         if can_check is not None:
             item["can_check"] = bool(can_check)
         return item
+
+    def _contact_center_fix_kind(self):
+        self.ensure_one()
+        return (
+            "none"
+            if self._contact_center_health_status() == "connected"
+            else "configuration"
+        )
+
+    def _contact_center_fix_action(self):
+        self.ensure_one()
+        return {
+            "type": "ir.actions.act_window",
+            "name": _("Provider Connection"),
+            "res_model": self._name,
+            "res_id": self.id,
+            "view_mode": "form",
+            "target": "new",
+        }
+
+    def _contact_center_pairing_release_status(self, events, *, locked=False):
+        """A provider must prove the epoch before held input can be replayed."""
+
+        return "unverified"
+
+    def _contact_center_pairing_release_action(self, events):
+        raise ValidationError(_("The provider does not support origin confirmation."))
+
+    def _contact_center_health_observation_token(self):
+        """Providers may fence an observation against their session lifecycle."""
+
+        self.ensure_one()
+        return (self.health_configuration_revision,)
 
     @api.model
     def _normalize_health_result(self, health):
@@ -2743,17 +2823,35 @@ class ContactCenterProviderConnection(models.Model):
         if state == "connected":
             detail = "metadata_limited" if detail == "metadata_limited" else "healthy"
         elif state == "authentication_required":
-            detail = "authentication_required"
+            detail = (
+                detail
+                if detail in ("pairing_required", "session_inactive")
+                else "authentication_required"
+            )
         elif state == "disconnected":
             detail = detail or "unavailable"
         else:
             detail = detail or "provider_error"
         normalized = {"state": state, "detail": detail}
+        return self._normalize_health_evidence(health, normalized)
+
+    @api.model
+    def _normalize_health_evidence(self, health, normalized):
+        """Validate internal proof and cooldown fields independently of aliases."""
+
+        if "conclusive" in health:
+            if not isinstance(health["conclusive"], bool) or (
+                health["conclusive"] is False and normalized["state"] == "connected"
+            ):
+                raise ValidationError(_("Provider health has an invalid proof flag."))
+            if health["conclusive"] is False:
+                normalized["conclusive"] = False
         # This is an internal fail-closed proof emitted by a provider adapter.
-        # Only the literal boolean True is accepted and it is never exposed in
-        # the public health DTO or bus payload.
+        # Boolean evidence is never exposed in the public health DTO or bus.
         if isinstance(health.get("identity_matches"), bool):
             normalized["identity_matches"] = health["identity_matches"]
+            if health["identity_matches"] is False:
+                normalized.pop("conclusive", None)
         raw_retry_after = health.get("retry_after_seconds")
         retry_after_text = str(raw_retry_after or "")
         if (
@@ -2774,7 +2872,9 @@ class ContactCenterProviderConnection(models.Model):
 
     @api.model
     def _health_failure_result(self, error):
-        if isinstance(error, ProviderPausedError):
+        if getattr(error, "classification", None) == "rate_limited":
+            result = {"state": "degraded", "detail": "rate_limited"}
+        elif isinstance(error, ProviderPausedError):
             result = {"state": "degraded", "detail": "provider_paused"}
         elif isinstance(error, TransientAdapterError):
             result = {"state": "disconnected", "detail": "unreachable"}
@@ -2782,8 +2882,14 @@ class ContactCenterProviderConnection(models.Model):
             result = {"state": "degraded", "detail": "invalid_response"}
         else:
             result = {"state": "degraded", "detail": "internal_error"}
-        result["error_class"] = self._safe_health_error_class(error)
-        return result
+        result["conclusive"] = bool(
+            isinstance(error, ProviderPausedError)
+            and getattr(error, "classification", None) != "rate_limited"
+        )
+        result["retry_after_seconds"] = getattr(error, "retry_after_seconds", 0)
+        normalized = self._normalize_health_result(result)
+        normalized["error_class"] = self._safe_health_error_class(error)
+        return normalized
 
     def _health_job_record(self):
         self.ensure_one()
@@ -2854,9 +2960,11 @@ class ContactCenterProviderConnection(models.Model):
                 if (
                     not connection.next_health_check_at
                     or connection.next_health_check_at <= now
+                    or connection.next_health_check_at
+                    > now + datetime.timedelta(seconds=self._health_job_lease_seconds)
                 ):
                     values["next_health_check_at"] = now + datetime.timedelta(
-                        seconds=self._health_interval_seconds
+                        seconds=self._health_job_lease_seconds
                     )
                 if values:
                     connection.write(values)
@@ -2869,11 +2977,7 @@ class ContactCenterProviderConnection(models.Model):
                     values["health_check_pending"] = False
                 if connection.health_job_uuid:
                     values["health_job_uuid"] = False
-                if (
-                    not connection.next_health_check_at
-                    or connection.next_health_check_at < cooldown_until
-                ):
-                    values["next_health_check_at"] = cooldown_until
+                values["next_health_check_at"] = max(cooldown_until, requested_for)
                 if values:
                     connection.write(values)
                     connection._notify_health_updated()
@@ -2891,7 +2995,7 @@ class ContactCenterProviderConnection(models.Model):
                     "health_check_pending": True,
                     "health_job_uuid": delayed.uuid,
                     "next_health_check_at": scheduled_for
-                    + datetime.timedelta(seconds=self._health_interval_seconds),
+                    + datetime.timedelta(seconds=self._health_job_lease_seconds),
                 }
             )
             scheduled_ids.append(connection.id)
@@ -2967,6 +3071,7 @@ class ContactCenterProviderConnection(models.Model):
             return self._complete_inactive_health_check(job_uuid)
 
         configuration_revision = self.health_configuration_revision
+        observation_token = self._contact_center_health_observation_token()
         started = time.monotonic()
         # Date the provider snapshot at the start of its read. A lifecycle
         # event accepted while the network request is in flight must remain
@@ -2993,6 +3098,7 @@ class ContactCenterProviderConnection(models.Model):
             error_class=error_class,
             expected_job_uuid=job_uuid,
             expected_configuration_revision=configuration_revision,
+            expected_observation_token=observation_token,
             completes_check=True,
         )
 
@@ -3020,6 +3126,7 @@ class ContactCenterProviderConnection(models.Model):
         error_class=False,
         expected_job_uuid=None,
         expected_configuration_revision=None,
+        expected_observation_token=None,
         completes_check=False,
         records_health_probe=False,
         observation_sequence=0,
@@ -3033,6 +3140,7 @@ class ContactCenterProviderConnection(models.Model):
             error_class=error_class,
             expected_job_uuid=expected_job_uuid,
             expected_configuration_revision=expected_configuration_revision,
+            expected_observation_token=expected_observation_token,
             completes_check=completes_check,
             records_health_probe=records_health_probe,
             observation_sequence=observation_sequence,
@@ -3132,17 +3240,40 @@ class ContactCenterProviderConnection(models.Model):
             "last_health_at": observed_at,
             "last_health_latency_ms": latency_ms,
             "consecutive_unhealthy_checks": (
-                0 if new_state == "connected" else self.consecutive_unhealthy_checks + 1
+                0
+                if new_state == "connected"
+                and normalized.get("conclusive") is not False
+                else self.consecutive_unhealthy_checks + 1
+            ),
+            "last_probe_detail": (
+                normalized["detail"] if normalized.get("conclusive") is False else False
             ),
             "last_health_error_at": observed_at if error_class else False,
             "last_health_error_class": error_class or False,
         }
 
-    def _health_retry_values(self, normalized, observed_at, next_check_at):
+    def _health_retry_values(
+        self,
+        normalized,
+        observed_at,
+        next_check_at,
+        *,
+        reschedule=False,
+        new_state=None,
+    ):
         """Respect provider cooldowns even when a newer probe won the state race."""
 
         self.ensure_one()
         values = {}
+        if reschedule:
+            delay = (
+                self._health_interval_seconds
+                if new_state == "connected"
+                and normalized.get("conclusive") is not False
+                else min(600, 60 * 2 ** min(self.consecutive_unhealthy_checks, 4))
+            )
+            next_check_at = observed_at + datetime.timedelta(seconds=delay)
+            values["next_health_check_at"] = next_check_at
         retry_after_seconds = normalized.get("retry_after_seconds", 0)
         if retry_after_seconds:
             provider_deadline = max(
@@ -3156,7 +3287,60 @@ class ContactCenterProviderConnection(models.Model):
             self.health_retry_not_before and self.health_retry_not_before <= observed_at
         ):
             values["health_retry_not_before"] = False
+        if self.health_retry_not_before and self.health_retry_not_before > observed_at:
+            values["next_health_check_at"] = max(
+                values.get("next_health_check_at", next_check_at) or observed_at,
+                self.health_retry_not_before,
+            )
         return values
+
+    def _request_health_after_send(self, retry_after_seconds=0):
+        """Record a bounded diagnostic hint; the caller owns a fresh transaction."""
+
+        self.ensure_one()
+        self.env.cr.execute(
+            "SELECT id FROM contact_center_account WHERE id = %s FOR SHARE",
+            [self.account_id.id],
+        )
+        self.env.cr.execute(
+            "SELECT id FROM contact_center_provider_connection WHERE id = %s FOR UPDATE",
+            [self.id],
+        )
+        self.invalidate_recordset()
+        self.account_id.invalidate_recordset(["active"])
+        if not self.active or not self.account_id.active:
+            return False
+        now = _odoo_datetime()
+        retry_after = self._normalize_health_result(
+            {"state": "degraded", "retry_after_seconds": retry_after_seconds}
+        ).get("retry_after_seconds", 0)
+        cooldown = max(
+            self.health_retry_not_before or now,
+            (
+                self.outbound_dispatch_not_before or now
+                if self.outbound_dispatch_not_before_reason == "provider_retry_after"
+                else now
+            ),
+            now + datetime.timedelta(seconds=retry_after),
+        )
+        # A known incident already has a controlled backoff. Traffic must not
+        # turn that backoff into one health read for each failed message.
+        if self.consecutive_unhealthy_checks and self.next_health_check_at:
+            deadline = max(cooldown, self.next_health_check_at)
+        else:
+            deadline = max(
+                cooldown,
+                self.last_health_at + datetime.timedelta(seconds=60)
+                if self.last_health_at
+                else now,
+            )
+        if deadline > now:
+            values = {"next_health_check_at": deadline}
+            if cooldown > now:
+                values["health_retry_not_before"] = cooldown
+            self.write(values)
+            return False
+        return bool(self._enqueue_health_check())
 
     def _health_state_transition_values(
         self,
@@ -3313,6 +3497,8 @@ class ContactCenterProviderConnection(models.Model):
                 "state",
                 "last_state_observed_at",
                 "last_health_at",
+                "last_probe_detail",
+                "last_state_source",
                 "identity_mismatch_latched",
                 "outbox_recovery_revision",
                 "last_recovered_command_count",
@@ -3498,6 +3684,7 @@ class ContactCenterProviderConnection(models.Model):
         error_class=False,
         expected_job_uuid=None,
         expected_configuration_revision=None,
+        expected_observation_token=None,
         completes_check=False,
         records_health_probe=False,
         observation_sequence=0,
@@ -3527,6 +3714,7 @@ class ContactCenterProviderConnection(models.Model):
                 "last_state_inbox_event_id",
                 "last_health_state_inbox_event_id",
                 "last_health_at",
+                "last_probe_detail",
                 "health_check_pending",
                 "health_job_uuid",
                 "health_configuration_revision",
@@ -3552,6 +3740,10 @@ class ContactCenterProviderConnection(models.Model):
             expected_configuration_revision is not None
             and connection.health_configuration_revision
             != expected_configuration_revision
+        ) or (
+            expected_observation_token is not None
+            and connection._contact_center_health_observation_token()
+            != expected_observation_token
         ):
             if owns_health_check:
                 connection.write(
@@ -3588,13 +3780,14 @@ class ContactCenterProviderConnection(models.Model):
             new_state,
             observation_sequence=observation_sequence,
         )
+        conclusive = normalized.get("conclusive") is not False
         values = connection._health_identity_cursor_values(
             source=source,
             observed_at=observed_at,
             observation_sequence=observation_sequence,
             mismatch_observed=mismatch_observed,
             explicit_identity_match=explicit_identity_match,
-            state_is_fresh=state_is_fresh,
+            state_is_fresh=state_is_fresh and conclusive,
         )
         if owns_health_check:
             # Only the queue job that passed ``expected_job_uuid`` above owns
@@ -3628,6 +3821,8 @@ class ContactCenterProviderConnection(models.Model):
                     normalized,
                     observed_at,
                     values.get("next_health_check_at", connection.next_health_check_at),
+                    reschedule=probe_is_fresh and state_is_fresh,
+                    new_state=new_state,
                 )
             )
         values.update(
@@ -3638,9 +3833,21 @@ class ContactCenterProviderConnection(models.Model):
                 observed_at=observed_at,
                 source=source,
                 observation_sequence=observation_sequence,
-                state_is_fresh=state_is_fresh,
+                state_is_fresh=state_is_fresh and conclusive,
             )
         )
+        if source == "provider_event" and state_is_fresh and new_state != "connected":
+            deadline = max(
+                observed_at + datetime.timedelta(seconds=60),
+                connection.health_retry_not_before or observed_at,
+            )
+            current = values.get(
+                "next_health_check_at", connection.next_health_check_at
+            )
+            values["next_health_check_at"] = max(
+                min(current, deadline) if current else deadline,
+                connection.health_retry_not_before or observed_at,
+            )
         if values:
             connection.write(values)
 

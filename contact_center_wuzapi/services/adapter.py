@@ -66,6 +66,7 @@ _logger = logging.getLogger(__name__)
 
 WUZAPI_VERSION = "v1.0.8"
 WUZAPI_COMMIT = "9487eca"
+HEALTH_OBSERVATION_CONTEXT_KEY = "contact_center_wuzapi_health_observation"
 MAX_PROVIDER_RETRY_AFTER_SECONDS = 60 * 60
 
 # These are the lifecycle event names exposed by the pinned WuzAPI revision.
@@ -79,8 +80,8 @@ WUZAPI_LIFECYCLE_EVENT_STATES = {
     "StreamReplaced": "disconnected",
     "KeepAliveTimeout": "degraded",
     "StreamError": "degraded",
-    "LoggedOut": "authentication_required",
-    "QRTimeout": "authentication_required",
+    "LoggedOut": "disconnected",
+    "QRTimeout": "disconnected",
     "ClientOutdated": "error",
     "TemporaryBan": "paused",
 }
@@ -2330,6 +2331,7 @@ def _error_result(status, retry_after_seconds=0):
             error_code="http_%s" % status,
             error_message="WuzAPI rejected the configured API token",
             retry_after_seconds=retry_after_seconds,
+            check_connection=True,
         )
     if status == 429:
         return AdapterResult(
@@ -2345,6 +2347,8 @@ def _error_result(status, retry_after_seconds=0):
             error_message=(
                 "WuzAPI failed after dispatch may have reached the provider"
             ),
+            retry_after_seconds=retry_after_seconds,
+            check_connection=True,
         )
     return AdapterResult(
         status="permanent",
@@ -2716,6 +2720,8 @@ class WuzapiAdapter(WuzapiDirectStartMixin, WuzapiGroupMetadataMixin, ProviderAd
             # prove which WhatsApp identity connected. Treat them as an
             # immediate health hint; only /session/status may reopen outbound.
             extensions["health_confirmation_required"] = True
+        elif provider_event_type in ("LoggedOut", "QRTimeout"):
+            extensions["detail"] = "session_inactive"
         return EventDTO(
             provider_schema_version=WUZAPI_VERSION,
             event_id="Lifecycle:%s:%s" % (provider_event_type, digest),
@@ -3491,8 +3497,9 @@ class WuzapiAdapter(WuzapiDirectStartMixin, WuzapiGroupMetadataMixin, ProviderAd
         except requests.RequestException as error:
             if _is_pre_dispatch_connection_failure(error):
                 return AdapterResult(
-                    status="transient",
+                    status="paused",
                     error_code="transport_not_connected",
+                    check_connection=True,
                     error_message=(
                         "WuzAPI connection could not be established before dispatch"
                     ),
@@ -3500,6 +3507,7 @@ class WuzapiAdapter(WuzapiDirectStartMixin, WuzapiGroupMetadataMixin, ProviderAd
             return AdapterResult(
                 status="uncertain",
                 error_code="transport_no_response",
+                check_connection=True,
                 error_message=(
                     "WuzAPI did not return a response after dispatch may have begun"
                 ),
@@ -4255,10 +4263,17 @@ class WuzapiAdapter(WuzapiDirectStartMixin, WuzapiGroupMetadataMixin, ProviderAd
                     baseline,
                     state="paused",
                     reason="rate_limited",
+                    conclusive=False,
                     retry_after_seconds=_retry_after(response),
                 )
             if not 200 <= response.status_code < 300:
-                return None, dict(baseline, state="error", reason="provider_error")
+                return None, dict(
+                    baseline,
+                    state="error",
+                    reason="provider_error",
+                    conclusive=False,
+                    retry_after_seconds=_retry_after(response),
+                )
             try:
                 payload = _limited_json_object(
                     response,
@@ -4266,20 +4281,25 @@ class WuzapiAdapter(WuzapiDirectStartMixin, WuzapiGroupMetadataMixin, ProviderAd
                     "WuzAPI health",
                 )
             except TransientAdapterError:
-                return None, dict(baseline, state="error", reason="unreachable")
+                return None, dict(
+                    baseline, state="error", reason="unreachable", conclusive=False
+                )
             except AdapterError:
                 return None, dict(
                     baseline,
                     available=True,
                     state="degraded",
                     reason="invalid_response",
+                    conclusive=False,
                 )
             return payload, None
         finally:
             response.close()
 
     @staticmethod
-    def _health_payload_values(baseline, payload, configured_identity):
+    def _health_payload_values(
+        baseline, payload, configured_identity, *, own_lid_pair=None, pairing_state=None
+    ):
         data = _lookup(payload, "data") if payload else None
         if _lookup(payload, "success") is not True or not isinstance(data, dict):
             return dict(
@@ -4287,6 +4307,7 @@ class WuzapiAdapter(WuzapiDirectStartMixin, WuzapiGroupMetadataMixin, ProviderAd
                 available=True,
                 state="degraded",
                 reason="invalid_response",
+                conclusive=False,
             )
         connected = _optional_boolean(_lookup(data, "connected"))
         logged_in = _optional_boolean(_lookup(data, "loggedIn"))
@@ -4296,6 +4317,7 @@ class WuzapiAdapter(WuzapiDirectStartMixin, WuzapiGroupMetadataMixin, ProviderAd
                 available=True,
                 state="degraded",
                 reason="invalid_response",
+                conclusive=False,
             )
             if connected is not None:
                 values["connected"] = connected
@@ -4303,8 +4325,9 @@ class WuzapiAdapter(WuzapiDirectStartMixin, WuzapiGroupMetadataMixin, ProviderAd
                 values["logged_in"] = logged_in
             return values
         if not logged_in:
-            state = "authentication_required"
-            reason = "session_not_authenticated"
+            waiting_for_qr = pairing_state == "qr" and connected
+            state = "authentication_required" if waiting_for_qr else "disconnected"
+            reason = "pairing_required" if waiting_for_qr else "session_inactive"
         elif not connected:
             state = "disconnected"
             reason = "session_disconnected"
@@ -4337,12 +4360,17 @@ class WuzapiAdapter(WuzapiDirectStartMixin, WuzapiGroupMetadataMixin, ProviderAd
                         reason="identity_unverified",
                         identity_matches=False,
                     )
-                elif _normalize_session_identity(
-                    configured_identity
-                ) != _normalize_session_identity(observed_identity):
+                elif _normalize_session_identity(observed_identity) not in {
+                    _normalize_session_identity(configured_identity),
+                    (own_lid_pair or {}).get("lid"),
+                }:
                     values.update(
                         state="degraded",
-                        reason="identity_mismatch",
+                        reason=(
+                            "identity_unverified"
+                            if observed_identity.endswith("@lid") and not own_lid_pair
+                            else "identity_mismatch"
+                        ),
                         identity_matches=False,
                     )
                 else:
@@ -4362,6 +4390,8 @@ class WuzapiAdapter(WuzapiDirectStartMixin, WuzapiGroupMetadataMixin, ProviderAd
                 "wuzapi_own_identity_json",
                 "health_configuration_revision",
                 "identity_mismatch_latched",
+                "wuzapi_pairing_state",
+                "wuzapi_pairing_revision",
             ]
         )
         account = connection.account_id
@@ -4385,39 +4415,71 @@ class WuzapiAdapter(WuzapiDirectStartMixin, WuzapiGroupMetadataMixin, ProviderAd
                 stream=True,
             )
         except requests.RequestException:
-            return dict(baseline, state="error", reason="unreachable")
+            return dict(baseline, state="error", reason="unreachable", conclusive=False)
         payload, terminal = self._health_response_payload(response, baseline)
         if terminal:
             return terminal
         configured_identity = str(account.own_external_identity or "").strip()
-        health = self._health_payload_values(baseline, payload, configured_identity)
         own = _normalize_session_identity(configured_identity)
+        data = _lookup(payload, "data") or {}
+        observed = _normalize_session_identity(_jid_string(_lookup(data, "jid")))
+        pair = _cached_own_lid_pair(connection)
+        acquired_pair = None
+        retry_after = 0
         if (
-            health.get("identity_matches") is True
+            _optional_boolean(_lookup(data, "connected")) is True
+            and _optional_boolean(_lookup(data, "loggedIn")) is True
             and own.endswith("@s.whatsapp.net")
-            and not _cached_own_lid_pair(connection)
+            and (
+                (observed == own and not pair)
+                or (observed.endswith("@lid") and pair.get("lid") != observed)
+            )
         ):
             try:
-                data = self._identity_profile_request(
+                mapping = self._identity_profile_request(
                     connection,
                     "GET",
                     "/user/lid/%s" % own,
                     "own LID mapping",
                     maximum_bytes=8192,
                 )
-                health["wuzapi_own_identity"] = _validated_own_lid_pair(data, own)
+                pair = acquired_pair = _validated_own_lid_pair(mapping, own)
             except AdapterError as error:
-                # A profile lookup failure must not block ordinary messages.
-                # Calls requiring the missing proof remain in the durable queue.
+                # PN status can prove messaging health even if optional LID
+                # lookup fails. A LID-only status still needs the missing proof.
                 if isinstance(error, ProviderRateLimitError):
-                    # Reuse the core health deadline without declaring a healthy
-                    # messaging session disconnected because profile reads lag.
-                    health["retry_after_seconds"] = getattr(
-                        error, "retry_after_seconds", 60
-                    )
+                    retry_after = getattr(error, "retry_after_seconds", 60)
                 _logger.info(
                     "Own LID mapping unavailable for connection %s (%s)",
                     connection.id,
                     error.__class__.__name__,
                 )
+        health = self._health_payload_values(
+            baseline,
+            payload,
+            configured_identity,
+            own_lid_pair=pair,
+            pairing_state=connection.sudo().wuzapi_pairing_state,
+        )
+        if acquired_pair and health.get("identity_matches") is True:
+            health["wuzapi_own_identity"] = acquired_pair
+        if retry_after:
+            health["retry_after_seconds"] = retry_after
+        observation = connection.env.context.get(HEALTH_OBSERVATION_CONTEXT_KEY)
+        if isinstance(observation, dict):
+            # The reconnect operation compares configuration without retaining
+            # the token, proxy credentials or any other raw status fields.
+            events = _lookup(data, "events")
+            proxy = _lookup(data, "proxy_url")
+            proxy = proxy if isinstance(proxy, str) else ""
+            pool = _lookup(data, "proxy_pool_id")
+            observation.update(
+                events=events
+                if isinstance(events, str) and len(events) <= 8192
+                else None,
+                proxy_present=bool(proxy),
+                proxy_digest=hashlib.sha256(proxy.encode()).hexdigest(),
+                proxy_pool_id=str(pool or "")[:128],
+                passkey_pending=_lookup(data, "passkeyPending") is True,
+            )
         return health

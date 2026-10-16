@@ -152,7 +152,10 @@ class ContactCenterChannelBinding(models.Model):
             and (not adapter_key or connection.adapter_key == adapter_key)
         )
         return (
-            candidates.filtered(lambda item: item.state == "connected")[:1]
+            candidates.filtered(
+                lambda item: item.state == "connected"
+                and not item._contact_center_has_probe_diagnostic()
+            )[:1]
             or candidates[:1]
         )
 

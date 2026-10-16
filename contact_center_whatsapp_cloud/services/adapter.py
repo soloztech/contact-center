@@ -152,6 +152,7 @@ class WhatsAppCloudAdapter(ProviderAdapter):
             return {
                 "state": "degraded",
                 "reason": "rate_limited",
+                "conclusive": False,
                 "retry_after_seconds": getattr(error, "retry_after_seconds", 0) or 60,
             }
         except ProviderPausedError:
@@ -161,9 +162,17 @@ class WhatsAppCloudAdapter(ProviderAdapter):
                 "reason": "authentication_required",
             }
         except TransientAdapterError:
-            return {"state": "disconnected", "reason": "unreachable"}
+            return {
+                "state": "disconnected",
+                "reason": "unreachable",
+                "conclusive": False,
+            }
         if not isinstance(payload, dict):
-            return {"state": "degraded", "reason": "invalid_response"}
+            return {
+                "state": "degraded",
+                "reason": "invalid_response",
+                "conclusive": False,
+            }
         if str(payload.get("id") or "") != phone_number_id:
             return {
                 "state": "degraded",
@@ -189,6 +198,7 @@ class WhatsAppCloudAdapter(ProviderAdapter):
             return {
                 "state": "degraded",
                 "reason": "invalid_response",
+                "conclusive": False,
                 "identity_matches": True,
             }
         if status == "RATE_LIMITED":

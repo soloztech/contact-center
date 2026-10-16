@@ -433,16 +433,8 @@ class ContactCenterWhatsAppCloudConnection(models.Model):
     def _wac_outbound_is_ready(self):
         self.ensure_one()
         return bool(
-            self.adapter_key == WHATSAPP_CLOUD_ADAPTER_KEY
-            and self.active
-            and self.account_id.active
-            and self.role == "primary"
+            self._contact_center_outbound_is_available()
             and self.inbound_active
-            and self.outbound_active
-            and not self.identity_mismatch_latched
-            and self.state == "connected"
-            and self.health_detail in {"healthy", "metadata_limited"}
-            and self._contact_center_observation_is_fresh()
             and self._wac_runtime_topology_is_ready(require_subscription=False)
         )
 

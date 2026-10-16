@@ -39,6 +39,22 @@ def _adapter_error(error):
     ):
         if hasattr(error, attribute):
             setattr(translated, attribute, getattr(error, attribute))
+    status = getattr(error, "http_status", 0) or 0
+    translated.check_connection = bool(
+        status != 429
+        and not isinstance(translated, ProviderRateLimitError)
+        and (
+            isinstance(translated, ProviderPausedError)
+            or status >= 500
+            or (
+                status in (0, 408, 425)
+                and isinstance(
+                    translated, (TransientAdapterError, AmbiguousTimeoutError)
+                )
+            )
+        )
+        and not isinstance(translated, ProviderRateLimitError)
+    )
     return translated
 
 

@@ -2,6 +2,39 @@
 <templates xml:space="preserve">
     <t t-name="contact_center_ui.ConnectionHealth" owl="1">
         <section
+            t-if="props.mode === 'banner' &amp;&amp; alerts.length"
+            class="cc-connection-health--banner"
+            role="alert"
+            aria-label="Conexões que precisam de atenção"
+        >
+            <div
+                t-foreach="alerts"
+                t-as="item"
+                t-key="item.id"
+                class="cc-connection-alert"
+            >
+                <i class="fa fa-exclamation-triangle" aria-hidden="true" />
+                <div>
+                    <strong><t t-esc="displayName(item)" /> · <t
+                            t-esc="stateMeta(item.state).label"
+                        /></strong>
+                    <p t-esc="detailLabel(item)" />
+                    <small
+                        t-if="!canFix(item)"
+                    >Solicite a correção ao administrador do Contact Center.</small>
+                </div>
+                <button
+                    t-if="canFix(item)"
+                    type="button"
+                    class="btn btn-danger"
+                    t-att-disabled="Boolean(local.fixing)"
+                    t-on-click="() => this.fix(item)"
+                    t-esc="fixLabel(item)"
+                />
+            </div>
+        </section>
+        <section
+            t-if="props.mode !== 'banner'"
             class="cc-connection-health cc-connection-health--compact"
             t-att-data-health-revision="state.connectionHealthRevision"
             t-on-keydown="onKeydown"
@@ -163,6 +196,14 @@
                             />
                         </span>
                         <span class="cc-connection-row__actions">
+                            <button
+                                t-if="canFix(item)"
+                                type="button"
+                                class="cc-connection-row__check"
+                                t-att-disabled="Boolean(local.fixing)"
+                                t-on-click="() => this.fix(item)"
+                                t-esc="fixLabel(item)"
+                            />
                             <span
                                 t-attf-class="cc-health-state cc-health-state--#{item.state}"
                                 t-esc="stateMeta(item.state).label"

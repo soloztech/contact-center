@@ -22,6 +22,7 @@ from ..controllers.webhook import (
     _read_bounded_body,
     sanitize_webhook_envelope,
 )
+from ..models.provider_connection import _WUZAPI_OWN_IDENTITY_TOKEN
 
 
 @tagged("post_install", "-at_install")
@@ -1772,3 +1773,51 @@ class TestWuzapiWebhook(HttpCase):
         replay = self._post(body)
         self.assertEqual(replay.status_code, 200, replay.text)
         self.assertTrue(replay.json()["duplicate"])
+
+    def test_reconnect_qr_quarantines_before_preview_and_never_auto_replays(self):
+        self.connection.with_context(
+            wuzapi_own_identity_token=_WUZAPI_OWN_IDENTITY_TOKEN
+        ).write(
+            {
+                "wuzapi_pairing_revision": 1,
+                "wuzapi_pairing_state": "qr",
+                "identity_mismatch_latched": True,
+            }
+        )
+        envelope = self._load_fixture("message_ad_origin.json")
+        body = json.dumps(envelope).encode()
+        with mock.patch.object(
+            webhook_controller,
+            "_capture_ad_origin_preview",
+            side_effect=AssertionError("Pairing content cannot reach preview"),
+        ):
+            response = self._post(body)
+        self.assertEqual(response.status_code, 202)
+        event = self._connection_inboxes().ensure_one()
+        self.assertEqual(event.state, "blocked")
+        self.assertEqual(event.last_error_class, "PairingUnverified")
+        self.assertEqual(event.metadata_json["hold_epoch"], 1)
+        self.assertFalse(event.normalized_dto_json)
+        self.assertFalse(event.queue_job_uuid)
+        self.connection._apply_health_result(
+            {"state": "connected", "identity_matches": True},
+            records_health_probe=True,
+            observed_at=fields.Datetime.now() + datetime.timedelta(seconds=2),
+        )
+        event.invalidate_recordset()
+        self.assertEqual(event.state, "blocked")
+        with self.assertRaises(ValidationError):
+            event.action_requeue()
+
+    def test_identity_latch_without_a_new_qr_keeps_existing_ingress_policy(self):
+        self.connection.identity_mismatch_latched = True
+        response = self._post(
+            json.dumps(self._load_fixture("message_text_lid.json")).encode()
+        )
+        self.assertEqual(response.status_code, 202)
+        event = self._connection_inboxes().ensure_one()
+        self.assertEqual(event.state, "pending")
+        self.assertTrue(event.queue_job_uuid)
+        self.assertNotEqual(
+            event.metadata_json.get("blocked_reason"), "pairing_unverified"
+        )

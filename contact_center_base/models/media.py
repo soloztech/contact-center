@@ -230,6 +230,8 @@ class ContactCenterMediaBinding(models.Model):
                 "identity_mismatch_latched",
                 "last_state_observed_at",
                 "last_health_at",
+                "last_probe_detail",
+                "last_state_source",
             ]
         )
         connection.account_id.invalidate_recordset(["active"])

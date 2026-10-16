@@ -42,6 +42,7 @@
                 </main>
             </t>
             <t t-else="">
+                <ConnectionHealth store="store" state="store.state" mode="'banner'" />
                 <ConversationList store="store" state="store.state" />
 
                 <main

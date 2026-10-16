@@ -70,7 +70,9 @@ def _valid_message_id(value):
 
 def _active_route(connection):
     if not connection._wac_outbound_is_ready():
-        raise ProviderPausedError("WhatsApp Cloud outbound route is unavailable")
+        error = ProviderPausedError("WhatsApp Cloud outbound route is unavailable")
+        error.check_connection = True
+        raise error
     return connection.sudo()
 
 

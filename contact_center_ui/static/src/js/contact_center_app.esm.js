@@ -15,6 +15,7 @@ import {
 import {useOwnedDialogs, useService} from "@web/core/utils/hooks";
 import {BrowserAttention} from "./browser_attention.esm";
 import {ContactPanel} from "./contact_panel.esm";
+import {ConnectionHealth} from "./connection_health.esm";
 import {ConversationList} from "./conversation_list.esm";
 import {ConversationResolution} from "./conversation_resolution.esm";
 import {ConversationTags} from "./conversation_tags.esm";
@@ -111,6 +112,9 @@ export class ContactCenterApp extends Component {
         }
         if (this.store.state.inboxDensity === "compact") {
             classes.push("cc-inbox-compact");
+        }
+        if (this.store.connectionAlerts().length) {
+            classes.push("cc-has-connection-alerts");
         }
         return classes.join(" ");
     }
@@ -313,6 +317,7 @@ export class ContactCenterApp extends Component {
 }
 
 ContactCenterApp.components = {
+    ConnectionHealth,
     ContactPanel,
     ConversationList,
     ConversationTimeline,

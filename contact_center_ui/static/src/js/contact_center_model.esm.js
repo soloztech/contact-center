@@ -372,6 +372,10 @@ const CONNECTION_HEALTH_DETAIL_LABELS = Object.freeze({
         "Mensageria operacional; metadados do ativo não puderam ser validados.",
     authentication_required: "Faça login novamente para restabelecer a sessão.",
     session_not_authenticated: "Faça login novamente para restabelecer a sessão.",
+    session_inactive:
+        "A sessão foi desconectada. Reconecte para retomar o atendimento.",
+    pairing_required:
+        "Escaneie o QR com o número desta caixa para concluir o pareamento.",
     unavailable: "O provedor não respondeu à última verificação.",
     unreachable: "O provedor não pôde ser alcançado.",
     timeout: "A verificação excedeu o tempo de resposta.",
@@ -1158,6 +1162,9 @@ function normalizeConnectionHealthItem(value) {
         state_changed_at: healthText(value.state_changed_at, 40),
         detail: healthText(value.detail, 240),
         can_check: value.can_check === true,
+        fix_kind: ["configuration", "reconnect"].includes(value.fix_kind)
+            ? value.fix_kind
+            : "none",
     };
 }
 

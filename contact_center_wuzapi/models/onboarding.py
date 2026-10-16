@@ -340,7 +340,6 @@ class ContactCenterProviderConnection(models.Model):
         if _ONBOARDING_CONCURRENT_MUTATION_FIELDS.intersection(values):
             running = self.filtered(
                 lambda item: item.adapter_key == "wuzapi"
-                and item.onboarding_ref
                 and item._wuzapi_active_onboarding_job()
             )
             if running:
@@ -421,7 +420,11 @@ class ContactCenterProviderConnection(models.Model):
         if self.adapter_key != "wuzapi":
             return blockers
         now = fields.Datetime.to_datetime(now or fields.Datetime.now())
-        last_health_at = fields.Datetime.to_datetime(self.last_health_at)
+        last_health_at = (
+            fields.Datetime.to_datetime(self.last_state_observed_at)
+            if self.last_state_source == "health_job"
+            else False
+        )
         if self.onboarding_ref and self.wuzapi_onboarding_state != "ready":
             blockers.append(_("guided setup has not completed"))
         if self.state != "connected" or self.health_detail != "healthy":
@@ -431,6 +434,7 @@ class ContactCenterProviderConnection(models.Model):
             or last_health_at < now - datetime.timedelta(minutes=3)
             or not self._contact_center_observation_is_fresh(now=now)
             or self.health_check_pending
+            or self.last_probe_detail
         ):
             blockers.append(_("provider health proof is stale"))
         if self.identity_mismatch_latched or not self.account_id.own_external_identity:
@@ -464,7 +468,7 @@ class ContactCenterProviderConnection(models.Model):
             or self.wuzapi_server_id.state != "available"
         ):
             blockers.append(_("managed WuzAPI server is not verified"))
-        if self.onboarding_ref and self.last_health_at:
+        if self.onboarding_ref and last_health_at:
             self.env.cr.execute(
                 """
                 SELECT 1
@@ -482,7 +486,7 @@ class ContactCenterProviderConnection(models.Model):
                     self.id,
                     self.onboarding_ref,
                     list(_RESTRICTIVE_LIFECYCLE_EVENTS),
-                    self.last_health_at,
+                    last_health_at,
                 ],
             )
             if self.env.cr.fetchone():

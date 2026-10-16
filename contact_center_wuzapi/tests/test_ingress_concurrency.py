@@ -1,5 +1,6 @@
 """Exercise webhook admission with independent PostgreSQL transactions."""
 
+import datetime
 import hashlib
 import hmac
 import json
@@ -12,7 +13,8 @@ from unittest import mock
 
 from psycopg2.errors import SerializationFailure
 
-from odoo import SUPERUSER_ID, api
+from odoo import SUPERUSER_ID, api, fields
+from odoo.exceptions import ValidationError
 from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
 
@@ -21,6 +23,7 @@ from odoo.addons.contact_center_base.services.tokens import (
 )
 
 from ..controllers import webhook
+from ..models.provider_connection import _WUZAPI_OWN_IDENTITY_TOKEN
 
 
 @tagged("-at_install", "post_install")
@@ -108,7 +111,7 @@ class TestWuzapiIngressConcurrency(TransactionCase):
             )
         return envelope
 
-    def _admit(self, env, fixture, envelope):
+    def _admit(self, env, fixture, envelope, *, allow_pairing=False):
         connection = env["contact.center.provider.connection"].browse(
             fixture["connection"]
         )
@@ -121,13 +124,16 @@ class TestWuzapiIngressConcurrency(TransactionCase):
         response, reason = webhook._conversation_ingress_response(
             connection, connection.get_adapter(), headers, body, envelope
         )
-        self.assertFalse(reason)
+        if not allow_pairing:
+            self.assertFalse(reason)
+        else:
+            self.assertEqual(reason, "pairing_unverified")
         if response is not None:
             return json.loads(response.data)
         sanitized = webhook.sanitize_webhook_envelope(envelope)
         digest = hashlib.sha256(body).hexdigest()
         values = webhook._inbox_ledger_values(
-            connection, envelope, sanitized, body, digest, "race:" + digest, ""
+            connection, envelope, sanitized, body, digest, "race:" + digest, reason
         )
         inbox, duplicate = webhook._find_or_create_inbox(
             env["contact.center.inbox.event"].with_context(
@@ -488,3 +494,105 @@ class TestWuzapiIngressConcurrency(TransactionCase):
                             connection, webhook.sanitize_webhook_envelope(envelope)
                         ),
                     )
+
+    def test_qr_commit_rejects_stale_admission_then_fresh_callback_is_held(self):
+        fixture = self._fixture()
+        envelope = self._envelope(group=False)
+        with self.registry.cursor() as stale_cr:
+            stale_env = api.Environment(stale_cr, SUPERUSER_ID, {})
+            connection = stale_env["contact.center.provider.connection"].browse(
+                fixture["connection"]
+            )
+            self.assertFalse(connection._wuzapi_pairing_pending())
+            with self.registry.cursor() as qr_cr:
+                qr_env = api.Environment(qr_cr, SUPERUSER_ID, {})
+                qr_cr.execute(
+                    "SELECT id FROM contact_center_provider_connection "
+                    "WHERE id = %s FOR UPDATE",
+                    [connection.id],
+                )
+                qr_env["contact.center.provider.connection"].browse(
+                    connection.id
+                ).with_context(
+                    wuzapi_own_identity_token=_WUZAPI_OWN_IDENTITY_TOKEN
+                ).write(
+                    {"wuzapi_pairing_state": "qr", "wuzapi_pairing_revision": 1}
+                )
+                qr_cr.commit()  # pylint: disable=invalid-commit
+            with mock.patch.object(
+                webhook, "request", SimpleNamespace(env=stale_env)
+            ), self.assertRaises(SerializationFailure):
+                self._admit(stale_env, fixture, envelope)
+            stale_cr.rollback()
+        with self.registry.cursor() as fresh_cr:
+            fresh_env = api.Environment(fresh_cr, SUPERUSER_ID, {})
+            with mock.patch.object(webhook, "request", SimpleNamespace(env=fresh_env)):
+                result = self._admit(fresh_env, fixture, envelope, allow_pairing=True)
+            self.assertEqual(result["state"], "blocked")
+            event = fresh_env["contact.center.inbox.event"].browse(result["inbox_id"])
+            self.assertEqual(event.metadata_json["hold_epoch"], 1)
+            self.assertFalse(event.normalized_dto_json)
+            fresh_cr.commit()  # pylint: disable=invalid-commit
+
+    def test_committed_negative_receipt_is_seen_outside_old_release_snapshot(self):
+        fixture = self._fixture()
+        with self.registry.cursor() as setup_cr:
+            env = api.Environment(setup_cr, SUPERUSER_ID, {})
+            connection = env["contact.center.provider.connection"].browse(
+                fixture["connection"]
+            )
+            connection.with_context(
+                wuzapi_own_identity_token=_WUZAPI_OWN_IDENTITY_TOKEN
+            ).write({"wuzapi_pairing_revision": 1, "wuzapi_pairing_state": "verified"})
+            event = env["contact.center.inbox.event"].create(
+                {
+                    "provider_connection_id": connection.id,
+                    "inbox_dedupe_key": "origin-held",
+                    "provider_schema_version": "v1.0.8",
+                    "raw_envelope_json": {"type": "Message"},
+                    "state": "blocked",
+                    "metadata_json": {
+                        "blocked_reason": "pairing_unverified",
+                        "hold_epoch": 1,
+                        "hold_configuration_revision": connection.health_configuration_revision,
+                    },
+                }
+            )
+            event_id = event.id
+            connection._apply_health_result(
+                {"state": "connected", "identity_matches": True},
+                records_health_probe=True,
+                observed_at=fields.Datetime.now() + datetime.timedelta(seconds=2),
+            )
+            setup_cr.commit()  # pylint: disable=invalid-commit
+        with self.registry.cursor() as stale_cr:
+            env = api.Environment(stale_cr, SUPERUSER_ID, {})
+            held = env["contact.center.inbox.event"].browse(event_id)
+            self.assertEqual(held.pairing_hold_status, "verified")
+            with self.registry.cursor() as callback_cr:
+                callback_env = api.Environment(callback_cr, SUPERUSER_ID, {})
+                connection = callback_env["contact.center.provider.connection"].browse(
+                    fixture["connection"]
+                )
+                connection._contact_center_lock_ingress_admission()
+                callback_env["contact.center.inbox.event"].with_context(
+                    contact_center_skip_enqueue=True
+                ).create(
+                    {
+                        "provider_connection_id": connection.id,
+                        "inbox_dedupe_key": "negative-held",
+                        "provider_schema_version": "v1.0.8",
+                        "raw_envelope_json": {"type": "LoggedOut"},
+                        "metadata_json": {
+                            "event_type": "LoggedOut",
+                            "pairing_epoch_at_receipt": 1,
+                            "pairing_phase_at_receipt": "qr",
+                        },
+                    }
+                )
+                callback_cr.commit()  # pylint: disable=invalid-commit
+            with self.assertRaises(ValidationError):
+                held.action_confirm_pairing_origin()
+            self.assertEqual(held.state, "blocked")
+            self.assertFalse(held.metadata_json.get("pairing_origin_confirmed_by"))
+            stale_cr.rollback()

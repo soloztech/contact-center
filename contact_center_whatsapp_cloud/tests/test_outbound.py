@@ -503,7 +503,24 @@ class TestWhatsAppCloudOutbound(
                     MetaApiError("synthetic", http_status=status, provider_code=code)
                 )
                 self.assertIs(type(error), AmbiguousTimeoutError)
+                self.assertTrue(error.check_connection)
         refused = send_error(
             MetaApiError("synthetic", http_status=400, provider_code=131047)
         )
         self.assertIs(type(refused), AdapterError)
+
+    def test_rate_limits_never_request_connection_health_but_auth_does(self):
+        for code in (4, 130429, 131056):
+            error = send_error(
+                MetaApiError("synthetic", http_status=400, provider_code=code)
+            )
+            self.assertIsInstance(error, ProviderRateLimitError)
+            self.assertFalse(error.check_connection)
+        error = send_error(
+            MetaApiError("synthetic", http_status=401, provider_code=190)
+        )
+        self.assertTrue(error.check_connection)
+        error = send_error(
+            MetaApiError("synthetic", http_status=400, provider_code=131047)
+        )
+        self.assertFalse(error.check_connection)

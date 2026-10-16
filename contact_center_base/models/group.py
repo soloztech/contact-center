@@ -788,9 +788,7 @@ class ContactCenterGroupProfile(models.Model):
         return bool(
             connection.active
             and connection.account_id.active
-            and connection.state == "connected"
-            and not connection.identity_mismatch_latched
-            and connection._contact_center_observation_is_fresh()
+            and connection._contact_center_health_status() == "connected"
         )
 
     def _provider_read_preflight(self, connection):

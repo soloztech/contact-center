@@ -882,7 +882,7 @@ class TestWuzapiOnboarding(SavepointCase):
             ]
         )
         self.assertEqual(connection.state, "authentication_required")
-        self.assertEqual(connection.health_detail, "authentication_required")
+        self.assertEqual(connection.health_detail, "session_inactive")
         self.assertEqual(connection.last_health_at, canonical_probe_at)
         self.assertFalse(connection.health_check_pending)
         self.assertFalse(connection.health_job_uuid)

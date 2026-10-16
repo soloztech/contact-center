@@ -23,6 +23,7 @@ class AdapterError(Exception):
     """Base error raised by a provider adapter."""
 
     classification = "permanent"
+    check_connection = False
 
 
 class TransientAdapterError(AdapterError):
@@ -392,10 +393,7 @@ class ProviderAdapter(abc.ABC):
         provider may explicitly support a narrower degraded read-only state.
         """
 
-        return bool(
-            connection.state == "connected"
-            and connection._contact_center_observation_is_fresh()
-        )
+        return connection._contact_center_health_status() == "connected"
 
 
 class AdapterRegistry:

@@ -7,6 +7,20 @@ from odoo.http import request
 from odoo.addons.contact_center_base.services.adapter import AdapterError
 
 
+def _qr_response(content):
+    return Response(
+        content,
+        status=200,
+        content_type="image/png",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Content-Security-Policy": "default-src 'none'",
+            "Pragma": "no-cache",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 class ContactCenterWuzapiOnboardingController(http.Controller):
     @http.route(
         "/contact-center/onboarding/wuzapi/qr/<string:setup_ref>/<int:revision>",
@@ -41,14 +55,32 @@ class ContactCenterWuzapiOnboardingController(http.Controller):
             content = wizard.connection_id._wuzapi_onboarding_qr_png()
         except (AccessError, AdapterError, ValidationError):
             return request.not_found()
-        return Response(
-            content,
-            status=200,
-            content_type="image/png",
-            headers={
-                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-                "Content-Security-Policy": "default-src 'none'",
-                "Pragma": "no-cache",
-                "X-Content-Type-Options": "nosniff",
-            },
+        return _qr_response(content)
+
+    @http.route(
+        "/contact-center/reconnect/wuzapi/qr/<int:wizard_id>/<int:revision>",
+        type="http",
+        auth="user",
+        methods=["GET"],
+        csrf=False,
+    )
+    def reconnect_qr(self, wizard_id, revision, **_kwargs):
+        if not request.env.user.has_group(
+            "contact_center_base.group_contact_center_admin"
+        ):
+            return request.not_found()
+        wizard = request.env["contact.center.wuzapi.reconnect.wizard"].search(
+            [
+                ("id", "=", wizard_id),
+                ("create_uid", "=", request.env.uid),
+                ("company_id", "in", request.env.companies.ids),
+            ],
+            limit=1,
         )
+        if not wizard:
+            return request.not_found()
+        try:
+            content = wizard._qr_png(revision)
+        except (AccessError, AdapterError, ValidationError):
+            return request.not_found()
+        return _qr_response(content)

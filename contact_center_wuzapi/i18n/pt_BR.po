@@ -63,6 +63,7 @@ msgstr "Não iniciada"
 
 #. module: contact_center_wuzapi
 #: model:ir.model.fields.selection,name:contact_center_wuzapi.selection__contact_center_account_setup_wizard__wuzapi_onboarding_state__queued
+#: model:ir.model.fields.selection,name:contact_center_wuzapi.selection__contact_center_wuzapi_reconnect_wizard__state__queued
 msgid "Queued"
 msgstr "Na fila"
 
@@ -88,6 +89,7 @@ msgstr "Pronta para ativar"
 
 #. module: contact_center_wuzapi
 #: model:ir.model.fields.selection,name:contact_center_wuzapi.selection__contact_center_account_setup_wizard__wuzapi_onboarding_state__error
+#: model:ir.model.fields.selection,name:contact_center_wuzapi.selection__contact_center_wuzapi_reconnect_wizard__state__error
 msgid "Needs Attention"
 msgstr "Requer atenção"
 
@@ -222,3 +224,180 @@ msgstr "A conexão WuzAPI preparada não corresponde a esta configuração."
 #. module: contact_center_wuzapi
 msgid "The WuzAPI server and instance mode cannot change during repair."
 msgstr "O servidor WuzAPI e o modo da instância não podem mudar durante a correção."
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "Reconnect WhatsApp"
+msgstr "Reconectar WhatsApp"
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "Messages Awaiting Origin Confirmation"
+msgstr "Mensagens aguardando confirmação de origem"
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "Confirm that the selected events belong to this inbox's number."
+msgstr "Confirme que os eventos selecionados pertencem ao número desta caixa."
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "The selected events belong to another connection."
+msgstr "Os eventos selecionados pertencem a outra conexão."
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "A valid provider connection is required."
+msgstr "É necessária uma conexão válida com o provedor."
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "Only Contact Center administrators can reconnect."
+msgstr "Somente administradores do Contact Center podem reconectar."
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "This connection is not available for reconnection."
+msgstr "Esta conexão não está disponível para reconexão."
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "A reconnect request cannot change its connection."
+msgstr "Uma solicitação de reconexão não pode trocar de conexão."
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "This reconnect request belongs to another session."
+msgstr "Esta solicitação de reconexão pertence a outra sessão."
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "Open a separate reconnect request to restore the session."
+msgstr "Abra uma solicitação de reconexão separada para restabelecer a sessão."
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "Wait for the webhook signature rotation."
+msgstr "Aguarde a troca da assinatura do webhook."
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "Wait for the messages currently being sent."
+msgstr "Aguarde as mensagens que estão sendo enviadas."
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "This QR code is no longer available."
+msgstr "Este QR não está mais disponível."
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "The provider is unavailable. Check the connection again."
+msgstr "O provedor está indisponível. Verifique a conexão novamente."
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "Reconnect must run through queue_job."
+msgstr "A reconexão deve ser executada pela fila de tarefas."
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "Select the connection's company before reconnecting."
+msgstr "Selecione a empresa da conexão antes de reconectar."
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "Reconnect observations are managed by the operation."
+msgstr "As observações da reconexão são controladas pela operação."
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "A connection operation is already running. Check again shortly."
+msgstr "Já existe uma operação em andamento nesta conexão. Verifique novamente em instantes."
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "The provider could not restore the session. Review its configuration and try again."
+msgstr "O provedor não conseguiu restabelecer a sessão. Revise a configuração e tente novamente."
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/provider_connection.py:0
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "The reconnect operation is no longer current."
+msgstr "Esta operação de reconexão não está mais vigente."
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "The connection changed. Check again."
+msgstr "A conexão mudou. Verifique novamente."
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "The provider applied its configured network policy."
+msgstr "O provedor aplicou a política de rede configurada nele."
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "The paired number does not match this inbox. Unlink this session on the incorrect phone, then reconnect with the inbox's number."
+msgstr "O número pareado não corresponde a esta caixa. Desvincule esta sessão no telefone incorreto e reconecte com o número desta caixa."
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "Complete the additional authorization at the provider."
+msgstr "Conclua a autorização adicional no provedor."
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "Scan with the number configured for this inbox, then click Check."
+msgstr "Escaneie com o número configurado para esta caixa e clique em Verificar."
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "The session is starting. Check again shortly."
+msgstr "A sessão está iniciando. Verifique novamente em instantes."
+
+#. module: contact_center_wuzapi
+#: model:ir.model.fields.selection,name:contact_center_wuzapi.selection__contact_center_wuzapi_reconnect_wizard__state__new
+msgid "Ready to Check"
+msgstr "Pronta para verificar"
+
+#. module: contact_center_wuzapi
+#: model:ir.model.fields.selection,name:contact_center_wuzapi.selection__contact_center_wuzapi_reconnect_wizard__state__waiting
+msgid "Waiting"
+msgstr "Aguardando"
+
+#. module: contact_center_wuzapi
+#: model:ir.model.fields.selection,name:contact_center_wuzapi.selection__contact_center_wuzapi_reconnect_wizard__state__qr
+msgid "Scan the QR"
+msgstr "Escaneie o QR"
+
+#. module: contact_center_wuzapi
+#: model:ir.model.fields.selection,name:contact_center_wuzapi.selection__contact_center_wuzapi_reconnect_wizard__state__ready
+msgid "Connected"
+msgstr "Conectada"

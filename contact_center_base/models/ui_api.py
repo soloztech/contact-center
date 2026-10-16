@@ -1417,6 +1417,9 @@ class ContactCenterUiApi(models.AbstractModel):
                 ),
                 "manage_assignment": is_supervisor,
                 "check_connection_health": is_supervisor,
+                "fix_connection": self.env.user.has_group(
+                    "contact_center_base.group_contact_center_admin"
+                ),
                 "manage_tags": True,
                 "link_contact": True,
                 # This capability follows create_and_link_partner's dedicated,
@@ -1517,6 +1520,30 @@ class ContactCenterUiApi(models.AbstractModel):
             ]
         )
         return self._connection_health_snapshot(visible)
+
+    @api.model
+    def fix_connection(self, connection_id):
+        """Open the provider's repair flow after checking the caller's scope."""
+
+        self._application()._check_agent()
+        if not self.env.user.has_group(
+            "contact_center_base.group_contact_center_admin"
+        ):
+            raise AccessError(
+                _("Only Contact Center administrators can repair connections.")
+            )
+        parsed_id = self._positive_id(connection_id, _("provider connection ID"))
+        connection = self._visible_connections().filtered(
+            lambda item: item.id == parsed_id
+        )
+        if not connection:
+            raise ValidationError(
+                _("The provider connection is not available for this request.")
+            )
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "action": connection._contact_center_fix_action(),
+        }
 
     @api.model
     def _conversation_list_domain(self, filters):

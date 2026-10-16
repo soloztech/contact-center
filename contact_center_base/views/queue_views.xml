@@ -20,6 +20,8 @@
                 <field name="first_group_roster_wait_at" optional="hide" />
                 <field name="queue_job_uuid" optional="hide" />
                 <field name="last_error_class" />
+                <field name="pairing_hold_epoch" optional="hide" />
+                <field name="pairing_hold_status" optional="hide" />
             </tree>
         </field>
     </record>
@@ -31,13 +33,21 @@
             <form create="0" delete="0" edit="0">
                 <header>
                     <field name="has_active_queue_job" invisible="1" />
+                    <field name="pairing_hold_status" invisible="1" />
+                    <button
+                        name="action_prepare_pairing_release"
+                        type="object"
+                        string="Confirm Origin and Requeue"
+                        groups="contact_center_base.group_contact_center_admin"
+                        attrs="{'invisible': ['|', ('state', '!=', 'blocked'), ('pairing_hold_status', '=', False)]}"
+                    />
                     <button
                         name="action_requeue"
                         type="object"
                         string="Requeue"
                         confirm="Requeue only this event? Terminal events may fail again until their cause is resolved."
                         groups="contact_center_base.group_contact_center_admin"
-                        attrs="{'invisible': ['|', ('state', 'not in', ('pending', 'retry', 'blocked', 'unsupported', 'dead')), ('has_active_queue_job', '=', True)]}"
+                        attrs="{'invisible': ['|', '|', ('state', 'not in', ('pending', 'retry', 'blocked', 'unsupported', 'dead')), ('has_active_queue_job', '=', True), ('pairing_hold_status', '!=', False)]}"
                     />
                 </header>
                 <sheet>
@@ -47,6 +57,14 @@
                             <field name="inbox_dedupe_key" />
                             <field name="provider_schema_version" />
                             <field name="state" />
+                            <field
+                                name="pairing_hold_epoch"
+                                attrs="{'invisible': [('pairing_hold_status', '=', False)]}"
+                            />
+                            <field
+                                name="pairing_hold_status"
+                                attrs="{'invisible': [('pairing_hold_status', '=', False)]}"
+                            />
                         </group>
                         <group>
                             <field name="attempts" />
@@ -79,6 +97,18 @@
         <field name="name">Inbox Events</field>
         <field name="res_model">contact.center.inbox.event</field>
         <field name="view_mode">tree,form</field>
+    </record>
+
+    <record id="action_confirm_inbox_origin" model="ir.actions.server">
+        <field name="name">Confirm Origin and Requeue</field>
+        <field name="model_id" ref="model_contact_center_inbox_event" />
+        <field name="binding_model_id" ref="model_contact_center_inbox_event" />
+        <field
+            name="groups_id"
+            eval="[(4, ref('contact_center_base.group_contact_center_admin'))]"
+        />
+        <field name="state">code</field>
+        <field name="code">action = records.action_prepare_pairing_release()</field>
     </record>
 
     <record id="view_contact_center_outbox_tree" model="ir.ui.view">

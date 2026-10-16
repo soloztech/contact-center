@@ -158,6 +158,131 @@ class ContactCenterProviderConnection(models.Model):
         groups="contact_center_base.group_contact_center_admin",
         help="Own PN/LID pair verified by the health job for this connection revision.",
     )
+    wuzapi_pairing_state = fields.Selection(
+        [
+            ("none", "No Reconnection Pairing"),
+            ("qr", "Waiting for QR Scan"),
+            ("expired", "QR Session Ended"),
+            ("mismatch", "Unverified Pairing Revoked or Mismatched"),
+            ("verified", "Pairing Verified"),
+            ("rejected", "Current Identity Verified; Earlier Events Quarantined"),
+        ],
+        default="none",
+        readonly=True,
+        copy=False,
+        groups="contact_center_base.group_contact_center_admin",
+    )
+
+    def _contact_center_health_observation_token(self):
+        token = super()._contact_center_health_observation_token()
+        self.invalidate_recordset(
+            ["role", "wuzapi_pairing_revision", "wuzapi_pairing_state"]
+        )
+        if self.adapter_key == "wuzapi" and self.role == "primary":
+            return token + (
+                self.sudo().wuzapi_pairing_revision,
+                self.sudo().wuzapi_pairing_state,
+            )
+        return token
+
+    def _contact_center_fix_kind(self):
+        if self.adapter_key == "wuzapi" and self.role == "primary":
+            if (
+                self._contact_center_has_probe_diagnostic()
+                and self.last_probe_detail != "rate_limited"
+            ):
+                return "configuration"
+            if (
+                self.state == "disconnected"
+                or self.health_detail in ("session_inactive", "pairing_required")
+                or self.sudo().wuzapi_pairing_state == "mismatch"
+            ):
+                return "reconnect"
+        return super()._contact_center_fix_kind()
+
+    def _contact_center_fix_action(self):
+        if self._contact_center_fix_kind() != "reconnect":
+            return super()._contact_center_fix_action()
+        wizard = self.env["contact.center.wuzapi.reconnect.wizard"].create(
+            {"connection_id": self.id}
+        )
+        return wizard._reopen()
+
+    def _wuzapi_pairing_pending(self):
+        return self.sudo().wuzapi_pairing_state in ("qr", "expired", "mismatch")
+
+    def _contact_center_pairing_release_action(self, events):
+        if self.adapter_key != "wuzapi":
+            return super()._contact_center_pairing_release_action(events)
+        return self.env[
+            "contact.center.wuzapi.reconnect.wizard"
+        ]._create_release_request(events)
+
+    def _contact_center_pairing_release_status(self, events, *, locked=False):
+        if self.adapter_key != "wuzapi":
+            return super()._contact_center_pairing_release_status(events, locked=locked)
+        self.ensure_one()
+        for event in events:
+            metadata = event.metadata_json or {}
+            if metadata.get("blocked_reason") != "pairing_unverified":
+                return "unverified"
+            if (
+                metadata.get("hold_epoch") != self.wuzapi_pairing_revision
+                or metadata.get("hold_configuration_revision")
+                != self.health_configuration_revision
+            ):
+                return "obsolete"
+        if self.wuzapi_pairing_state in ("mismatch", "rejected"):
+            return self.wuzapi_pairing_state
+        if (
+            not events
+            or self.wuzapi_pairing_state != "verified"
+            or not self._contact_center_inbound_is_available()
+            or self.last_state_source != "health_job"
+            or not self._contact_center_identity_is_verified()
+            or any(event.create_date >= self.last_state_observed_at for event in events)
+        ):
+            return "unverified"
+        query = (
+            "SELECT 1 FROM contact_center_inbox_event WHERE provider_connection_id = %s "
+            "AND metadata_json ->> 'event_type' = 'LoggedOut' "
+            "AND metadata_json ->> 'pairing_epoch_at_receipt' = %s "
+            "AND metadata_json ->> 'pairing_phase_at_receipt' IN ('qr', 'expired') LIMIT 1"
+        )
+        params = [self.id, str(self.wuzapi_pairing_revision)]
+        self.env.cr.execute(query, params)
+        if self.env.cr.fetchone():
+            return "rejected"
+        if locked:
+            # The connection FOR UPDATE serializes ingress. This read-only cursor
+            # also sees receipts committed before that lock, outside our older
+            # REPEATABLE READ snapshot. One cursor per connection/batch.
+            with self.env.registry.cursor() as cursor:
+                cursor.execute(query, params)
+                if cursor.fetchone():
+                    return "rejected"
+        return "verified"
+
+    def _wuzapi_begin_pairing_epoch(self):
+        """The reconnect job owns the row and has obtained a real, private PNG."""
+
+        self.ensure_one()
+        if not self.env.context.get("job_uuid") or (
+            self.wuzapi_onboarding_job_uuid != self.env.context["job_uuid"]
+            or self.role != "primary"
+            or not self.active
+            or not self.account_id.active
+        ):
+            raise ValidationError(_("The reconnect operation is no longer current."))
+        self.with_context(wuzapi_own_identity_token=_WUZAPI_OWN_IDENTITY_TOKEN).write(
+            {
+                "wuzapi_pairing_revision": self.wuzapi_pairing_revision + 1,
+                "wuzapi_pairing_state": "qr",
+                "wuzapi_own_identity_json": False,
+                "identity_mismatch_latched": True,
+            }
+        )
+        return self.wuzapi_pairing_revision
 
     def _normalize_health_result(self, health):
         normalized = super()._normalize_health_result(health)
@@ -184,6 +309,27 @@ class ContactCenterProviderConnection(models.Model):
 
     def _health_probe_values(self, normalized, **kwargs):
         values = super()._health_probe_values(normalized, **kwargs)
+        if self.adapter_key == "wuzapi" and self.role == "primary":
+            phase = self.sudo().wuzapi_pairing_state
+            fresh = self._state_observation_is_fresh(
+                kwargs["observed_at"], "health_job", kwargs["new_state"]
+            )
+            if fresh and normalized.get("conclusive") is not False:
+                if (
+                    normalized.get("identity_matches") is True
+                    and kwargs["new_state"] == "connected"
+                ):
+                    if phase in ("qr", "expired", "mismatch"):
+                        values["wuzapi_pairing_state"] = (
+                            "rejected" if phase == "mismatch" else "verified"
+                        )
+                elif normalized.get("detail") == "identity_mismatch" and phase in (
+                    "qr",
+                    "expired",
+                ):
+                    values["wuzapi_pairing_state"] = "mismatch"
+                elif normalized.get("detail") == "session_inactive" and phase == "qr":
+                    values["wuzapi_pairing_state"] = "expired"
         if self.adapter_key == "wuzapi" and normalized.get("wuzapi_own_identity"):
             # Called under the core health lock, after job/revision and probe
             # freshness checks. Never learn a session identity from a webhook.
@@ -208,9 +354,33 @@ class ContactCenterProviderConnection(models.Model):
         if (
             self.adapter_key == "wuzapi"
             and kwargs["new_state"] == "authentication_required"
+            and kwargs["new_detail"] != "session_inactive"
         ):
             # A delayed logout still invalidates the proof, without reverting state.
             values["wuzapi_own_identity_json"] = False
+        if self.adapter_key == "wuzapi" and kwargs["source"] == "provider_event":
+            event = (
+                self.env["contact.center.inbox.event"]
+                .sudo()
+                .browse(kwargs["observation_sequence"])
+                .exists()
+            )
+            metadata = event.metadata_json or {} if event else {}
+            if metadata.get(
+                "pairing_epoch_at_receipt"
+            ) == self.wuzapi_pairing_revision and metadata.get(
+                "pairing_phase_at_receipt"
+            ) in (
+                "qr",
+                "expired",
+            ):
+                phase = self.sudo().wuzapi_pairing_state
+                if metadata.get("event_type") == "LoggedOut":
+                    values["wuzapi_pairing_state"] = (
+                        "rejected" if phase in ("verified", "rejected") else "mismatch"
+                    )
+                elif metadata.get("event_type") == "QRTimeout" and phase == "qr":
+                    values["wuzapi_pairing_state"] = "expired"
         return values
 
     def _default_wuzapi_webhook_event_ids(self):
@@ -418,7 +588,9 @@ class ContactCenterProviderConnection(models.Model):
     def create(self, vals_list):
         prepared_values = []
         for original_values in vals_list:
-            if "wuzapi_own_identity_json" in original_values:
+            if {"wuzapi_own_identity_json", "wuzapi_pairing_state"}.intersection(
+                original_values
+            ):
                 raise AccessError(_("Session identity is managed by health checks."))
             if _WUZAPI_HMAC_MANAGED_FIELDS.intersection(original_values) and (
                 self.env.context.get(_WUZAPI_HMAC_INTERNAL_CONTEXT)
@@ -546,7 +718,9 @@ class ContactCenterProviderConnection(models.Model):
 
     def write(self, values):
         values = dict(values)
-        if "wuzapi_own_identity_json" in values and (
+        if {"wuzapi_own_identity_json", "wuzapi_pairing_state"}.intersection(
+            values
+        ) and (
             self.env.context.get("wuzapi_own_identity_token")
             is not _WUZAPI_OWN_IDENTITY_TOKEN
         ):

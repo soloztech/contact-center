@@ -4,6 +4,7 @@ from odoo.addons.contact_center_base.services.adapter import (
     AdapterError,
     ProviderAdapter,
     ProviderPausedError,
+    ProviderRateLimitError,
     adapter_registry,
 )
 from odoo.addons.meta_api_base.services import (
@@ -198,6 +199,13 @@ class MetaAdapter(ProviderAdapter):
         try:
             runtime, page_token, _page_revision = resolve_graph_runtime(connection)
             observation = _token_observation(graph_debug_token(runtime, page_token))
+        except ProviderRateLimitError as error:
+            return {
+                "state": "degraded",
+                "reason": "rate_limited",
+                "conclusive": False,
+                "retry_after_seconds": getattr(error, "retry_after_seconds", 0) or 60,
+            }
         except ProviderPausedError:
             return {
                 "state": "authentication_required",
@@ -263,6 +271,7 @@ class MetaAdapter(ProviderAdapter):
             topology_ready
             and connection.state == "connected"
             and not connection.identity_mismatch_latched
+            and not connection._contact_center_has_probe_diagnostic()
         )
 
     def download_media(self, connection, media):

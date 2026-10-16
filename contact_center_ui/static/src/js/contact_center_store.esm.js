@@ -3,6 +3,7 @@
 import {
     CONNECTION_HEALTH_EVENT_TYPE,
     compareTimelineItems,
+    connectionHealthNeedsAttention,
     contactCenterNotifications,
     conversationPreference,
     conversationStateMeta,
@@ -2041,6 +2042,15 @@ export class ContactCenterStore {
 
     get connectionHealth() {
         return this.state.connectionHealth;
+    }
+
+    connectionAlerts(accountId = false) {
+        return ((this.connectionHealth && this.connectionHealth.items) || []).filter(
+            (item) =>
+                item.connection_role === "primary" &&
+                (!accountId || item.account_id === accountId) &&
+                connectionHealthNeedsAttention(item)
+        );
     }
 
     get teams() {

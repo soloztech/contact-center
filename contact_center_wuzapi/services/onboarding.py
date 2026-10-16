@@ -253,6 +253,8 @@ class WuzapiOnboardingClient:
     def qr_png(self):
         payload = self._request("GET", "/session/qr")
         data = self._validated_data(payload, dict)
+        if _lookup(data, "passkeyPending") is True:
+            raise AdapterError("WuzAPI requires additional authorization")
         encoded = _lookup(data, "QRCode", "qrCode")
         if not isinstance(encoded, str) or not encoded.startswith(
             "data:image/png;base64,"

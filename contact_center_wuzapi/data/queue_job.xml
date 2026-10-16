@@ -79,4 +79,13 @@
         />
         <field name="retry_pattern" eval="{1: 10, 2: 30, 3: 60, 4: 120, 5: 300}" />
     </record>
+    <record id="queue_job_function_wuzapi_reconnect" model="queue.job.function">
+        <field name="model_id" ref="model_contact_center_wuzapi_reconnect_wizard" />
+        <field name="method">_job_reconnect</field>
+        <field
+            name="channel_id"
+            ref="queue_job_channel_contact_center_wuzapi_webhook"
+        />
+        <field name="retry_pattern" eval="{1: 10, 2: 30, 3: 60, 4: 120, 5: 300}" />
+    </record>
 </odoo>

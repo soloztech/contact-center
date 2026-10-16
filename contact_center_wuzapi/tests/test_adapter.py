@@ -632,13 +632,13 @@ class TestWuzapiAdapter(WuzapiCase):
         )
         self.assertEqual(
             self.connection._contact_center_health_status(
-                now=clock + datetime.timedelta(seconds=1800)
+                now=clock + datetime.timedelta(seconds=10800)
             ),
             "connected",
         )
         self.assertEqual(
             self.connection._contact_center_health_status(
-                now=clock + datetime.timedelta(seconds=1801)
+                now=clock + datetime.timedelta(seconds=10801)
             ),
             "unknown",
         )
@@ -3111,9 +3111,9 @@ class TestWuzapiAdapter(WuzapiCase):
             (
                 "LoggedOut",
                 {"OnConnect": False, "Reason": 401},
-                "authentication_required",
+                "disconnected",
             ),
-            ("QRTimeout", "timeout", "authentication_required"),
+            ("QRTimeout", "timeout", "disconnected"),
             ("ClientOutdated", {}, "error"),
             ("TemporaryBan", {"Code": 101, "Expire": 60000000000}, "paused"),
         )
@@ -4990,6 +4990,9 @@ class TestWuzapiAdapter(WuzapiCase):
             ):
                 result = self.adapter.execute_command(self.connection, self._command())
                 self.assertEqual(result.status, expected_status)
+                self.assertEqual(
+                    result.check_connection, status_code in (401, 403, 408, 425, 503)
+                )
                 self.assertEqual(result.retry_after_seconds, retry_after)
                 if status_code == 429:
                     self.assertEqual(result.error_code, "http_429")
@@ -5023,7 +5026,8 @@ class TestWuzapiAdapter(WuzapiCase):
                 REQUEST_PATCH, side_effect=exception
             ):
                 result = self.adapter.execute_command(self.connection, self._command())
-                self.assertEqual(result.status, "transient")
+                self.assertEqual(result.status, "paused")
+                self.assertTrue(result.check_connection)
                 self.assertEqual(result.error_code, "transport_not_connected")
 
     def test_post_connect_transport_failures_remain_uncertain(self):
@@ -5116,8 +5120,8 @@ class TestWuzapiAdapter(WuzapiCase):
         cases = (
             (True, True, "connected", "ready"),
             (False, True, "disconnected", "session_disconnected"),
-            (True, False, "authentication_required", "session_not_authenticated"),
-            (False, False, "authentication_required", "session_not_authenticated"),
+            (True, False, "disconnected", "session_inactive"),
+            (False, False, "disconnected", "session_inactive"),
         )
         for connected, logged_in, expected_state, expected_reason in cases:
             with self.subTest(connected=connected, logged_in=logged_in):
@@ -5327,3 +5331,49 @@ class TestWuzapiAdapter(WuzapiCase):
         args, kwargs = request.call_args_list[0]
         self.assertEqual(args, ("GET", "https://rotated.wuzapi.invalid/session/status"))
         self.assertEqual(kwargs["headers"]["Token"], "rotated-api-token")
+
+    @mock.patch(REQUEST_PATCH)
+    def test_runtime_lid_status_reuses_proof_without_an_extra_lid_read(self, request):
+        self._record_own_call_identity(
+            "5511888888888@s.whatsapp.net", "200000000000002@lid"
+        )
+        request.return_value = self._session_status_response(
+            jid="200000000000002:12@lid"
+        )
+        health = self.adapter.get_health(self.connection)
+        self.assertEqual(health["state"], "connected")
+        self.assertIs(health["identity_matches"], True)
+        self.assertEqual(request.call_count, 1)
+
+    @mock.patch(REQUEST_PATCH)
+    def test_runtime_lid_without_cache_queries_only_the_configured_pn(self, request):
+        self.account.own_external_identity = "5511888888888@s.whatsapp.net"
+        request.side_effect = [
+            self._session_status_response(jid="200000000000002@lid"),
+            FakeResponse(
+                200,
+                {
+                    "code": 200,
+                    "success": True,
+                    "data": {
+                        "jid": self.account.own_external_identity,
+                        "lid": "200000000000002@lid",
+                    },
+                },
+            ),
+        ]
+        health = self.adapter.get_health(self.connection)
+        self.assertEqual(health["state"], "connected")
+        self.assertEqual(request.call_count, 2)
+        self.assertTrue(
+            request.call_args.args[1].endswith("/user/lid/5511888888888@s.whatsapp.net")
+        )
+
+    @mock.patch(REQUEST_PATCH)
+    def test_runtime_nil_status_is_inconclusive_and_never_connected(self, request):
+        request.return_value = self._session_status_response(
+            connected=None, loggedIn=None
+        )
+        health = self.adapter.get_health(self.connection)
+        self.assertIs(health["conclusive"], False)
+        self.assertNotEqual(health["state"], "connected")

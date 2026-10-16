@@ -1,7 +1,7 @@
 {
     "name": "Contact Center WuzAPI",
     "summary": "WuzAPI provider adapter for Contact Center",
-    "version": "16.0.1.3.7",
+    "version": "16.0.1.3.8",
     "author": "Soloz Technologies",
     "website": "https://github.com/soloztech/contact-center",
     "license": "AGPL-3",
@@ -15,6 +15,7 @@
         "data/queue_job.xml",
         "views/wuzapi_config_views.xml",
         "views/onboarding_views.xml",
+        "views/reconnect_views.xml",
     ],
     "assets": {
         "web.assets_backend": [

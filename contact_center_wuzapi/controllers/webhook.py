@@ -375,6 +375,21 @@ def _read_bounded_body(http_request, maximum_bytes):
     return body
 
 
+def _pairing_receipt_metadata(connection, envelope):
+    if (
+        envelope.get("type") not in WUZAPI_LIFECYCLE_EVENT_TYPES
+        or connection.role != "primary"
+    ):
+        return {}
+    phase = connection.wuzapi_pairing_state
+    if phase == "none":
+        return {}
+    return {
+        "pairing_epoch_at_receipt": connection.wuzapi_pairing_revision,
+        "pairing_phase_at_receipt": phase,
+    }
+
+
 def _inbox_dedupe_key(inbox_model, connection, envelope, digest):
     """Deduplicate lifecycle retries without suppressing a later state cycle."""
 
@@ -390,7 +405,16 @@ def _inbox_dedupe_key(inbox_model, connection, envelope, digest):
         limit=1,
     )
     last_metadata = (last_lifecycle.metadata_json or {}) if last_lifecycle else {}
-    if last_lifecycle and last_metadata.get("event_type") == event_type:
+    pairing = _pairing_receipt_metadata(connection, envelope)
+    same_pairing = all(
+        last_metadata.get(key) == pairing.get(key)
+        for key in ("pairing_epoch_at_receipt", "pairing_phase_at_receipt")
+    )
+    if (
+        last_lifecycle
+        and last_metadata.get("event_type") == event_type
+        and same_pairing
+    ):
         if last_lifecycle.state in _ACTIVE_LIFECYCLE_INBOX_STATES:
             return last_lifecycle.inbox_dedupe_key
         target_state = WUZAPI_LIFECYCLE_EVENT_STATES[event_type]
@@ -478,11 +502,16 @@ def _inbox_ledger_values(
         },
     }
     account_ready = connection.account_id._contact_center_access_is_ready()
+    values["metadata_json"].update(_pairing_receipt_metadata(connection, envelope))
     if ingress_block_reason:
         values.update(
             {
                 "state": "blocked",
-                "last_error_class": "OnboardingNotActivated",
+                "last_error_class": (
+                    "PairingUnverified"
+                    if ingress_block_reason == "pairing_unverified"
+                    else "OnboardingNotActivated"
+                ),
                 "last_error_message": (
                     "The paired provider is waiting for explicit inbox activation."
                 ),
@@ -494,6 +523,14 @@ def _inbox_ledger_values(
                 "onboarding_ref": connection.onboarding_ref,
             }
         )
+        if ingress_block_reason == "pairing_unverified":
+            values[
+                "last_error_message"
+            ] = "The inbox identity must be verified after pairing."
+            values["metadata_json"].update(
+                hold_epoch=connection.wuzapi_pairing_revision,
+                hold_configuration_revision=connection.health_configuration_revision,
+            )
     elif not account_ready:
         values.update(
             {
@@ -562,6 +599,13 @@ def _conversation_ingress_response(connection, adapter, headers, body, envelope)
         "contact.center.retention"
     ]._retention_envelope_is_expired(connection, envelope):
         response = _json_response({"accepted": True, "expired": True}, 200)
+    if (
+        response is None
+        and not block_reason
+        and envelope.get("type") not in WUZAPI_LIFECYCLE_EVENT_TYPES
+        and connection._wuzapi_pairing_pending()
+    ):
+        block_reason = "pairing_unverified"
     return response, block_reason
 
 
@@ -579,12 +623,13 @@ def _persist_webhook_event(connection, envelope, body, ingress_block_reason):
         ("provider_connection_id", "=", connection.id),
         ("inbox_dedupe_key", "=", dedupe_key),
     ]
-    _capture_ad_origin_preview(
-        connection,
-        envelope,
-        persisted_envelope,
-        existing_inbox=inbox_model.search(domain, limit=1),
-    )
+    if ingress_block_reason != "pairing_unverified":
+        _capture_ad_origin_preview(
+            connection,
+            envelope,
+            persisted_envelope,
+            existing_inbox=inbox_model.search(domain, limit=1),
+        )
     values = _inbox_ledger_values(
         connection,
         envelope,

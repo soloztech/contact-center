@@ -1564,11 +1564,14 @@ class AdapterResult:
     error_code: str = ""
     error_message: str = ""
     retry_after_seconds: int = 0
+    check_connection: bool = False
 
     def __post_init__(self):
         allowed = {"success", "permanent", "transient", "uncertain", "paused"}
         if self.status not in allowed:
             raise DTOValidationError("invalid adapter result status")
+        if not isinstance(self.check_connection, bool):
+            raise DTOValidationError("check_connection must be a boolean")
         for field_name in ("external_message_id", "error_code", "error_message"):
             _bounded_string(
                 getattr(self, field_name),

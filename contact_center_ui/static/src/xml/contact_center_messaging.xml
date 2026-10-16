@@ -168,6 +168,12 @@
                 role="status"
             >Carregando conversa…</div>
             <t t-elif="conversation">
+                <ConnectionHealth
+                    store="store"
+                    state="store.state"
+                    mode="'banner'"
+                    accountId="conversation.account ? conversation.account.id : false"
+                />
                 <div
                     class="cc-chat-account text-muted px-2 py-1 border-bottom"
                     t-if="conversation.account"

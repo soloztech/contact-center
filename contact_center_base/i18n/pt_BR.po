@@ -1484,3 +1484,76 @@ msgstr "Usuário da transação; vazio em processos automáticos."
 #: model:ir.model.fields,field_description:contact_center_base.field_contact_center_attendance_episode__wait_seconds
 msgid "Wait (seconds)"
 msgstr "Espera (segundos)"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/queue.py:0
+#, python-format
+msgid "Only Contact Center administrators can confirm origin."
+msgstr "Somente administradores do Contact Center podem confirmar a origem."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/queue.py:0
+#, python-format
+msgid "Select up to 200 events from the current company."
+msgstr "Selecione até 200 eventos da empresa atual."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/queue.py:0
+#, python-format
+msgid "Review events from one connection at a time."
+msgstr "Revise os eventos de uma conexão por vez."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/queue.py:0
+#, python-format
+msgid "This pairing epoch is not eligible for origin confirmation. Check the connection and the selected events."
+msgstr "Este ciclo de pareamento não permite confirmar a origem. Confira a conexão e os eventos selecionados."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/queue.py:0
+#, python-format
+msgid "Use the explicit origin confirmation action for pairing events."
+msgstr "Use a ação explícita de confirmação de origem para os eventos do pareamento."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/account.py:0
+#, python-format
+msgid "Provider Connection"
+msgstr "Conexão com o provedor"
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/account.py:0
+#, python-format
+msgid "The provider does not support origin confirmation."
+msgstr "O provedor não oferece confirmação de origem."
+
+#. module: contact_center_base
+#: code:addons/contact_center_base/models/ui_api.py:0
+#, python-format
+msgid "Only Contact Center administrators can repair connections."
+msgstr "Somente administradores do Contact Center podem corrigir conexões."
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_inbox_event__pairing_hold_status__unverified
+msgid "Not Verified"
+msgstr "Não verificado"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_inbox_event__pairing_hold_status__verified
+msgid "Verified"
+msgstr "Verificado"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_inbox_event__pairing_hold_status__mismatch
+msgid "Identity Mismatch"
+msgstr "Identidade divergente"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_inbox_event__pairing_hold_status__rejected
+msgid "Epoch Rejected"
+msgstr "Ciclo rejeitado"
+
+#. module: contact_center_base
+#: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_inbox_event__pairing_hold_status__obsolete
+msgid "Earlier Epoch — Do Not Release"
+msgstr "Ciclo anterior — não liberar"

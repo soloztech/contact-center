@@ -6,6 +6,7 @@ import {
     connectionHealthDetail,
     connectionHealthNeedsAttention,
     connectionHealthStateMeta,
+    validateEnvelope,
 } from "./contact_center_model.esm";
 import {deserializeDateTime} from "@web/core/l10n/dates";
 
@@ -14,7 +15,10 @@ const {DateTime} = luxon;
 export class ConnectionHealth extends Component {
     setup() {
         this.toggleRef = useRef("toggle");
-        this.local = useState({view: this.attentionCount ? "attention" : "all"});
+        this.local = useState({
+            view: this.attentionCount ? "attention" : "all",
+            fixing: false,
+        });
     }
 
     get state() {
@@ -26,7 +30,56 @@ export class ConnectionHealth extends Component {
     }
 
     get health() {
-        return this.store.connectionHealth;
+        return this.store.connectionHealth || {items: [], summary: {}};
+    }
+
+    get alerts() {
+        return this.store.connectionAlerts(this.props.accountId);
+    }
+
+    canFix(item) {
+        return (
+            this.store.capabilities.fix_connection === true && item.fix_kind !== "none"
+        );
+    }
+
+    fixLabel(item) {
+        return item.fix_kind === "reconnect" ? "Reconectar" : "Corrigir conexão";
+    }
+
+    async fix(item) {
+        if (this.local.fixing || !this.canFix(item)) {
+            return;
+        }
+        this.local.fixing = item.id;
+        try {
+            const payload = await this.store.call("fix_connection", [item.id]);
+            validateEnvelope(payload);
+            await this.env.services.action.doAction(payload.action, {
+                onClose: () => {
+                    if (!this.store.destroyed) {
+                        this.store.connectionHealthBusRevision += 1;
+                        this.store.connectionHealthInvalidationRevision += 1;
+                        if (this.store.sharedReads) {
+                            this.store.sharedReads.invalidate(
+                                "contact.center.ui.api",
+                                "get_connection_health"
+                            );
+                        }
+                        this.store.refreshConnectionHealth();
+                        this.store.scheduleConnectionHealthRefresh();
+                        this.store.refreshSelectedConversation();
+                    }
+                },
+            });
+        } catch (error) {
+            this.store.notify(
+                error.message || "Não foi possível abrir a correção da conexão.",
+                {type: "danger"}
+            );
+        } finally {
+            this.local.fixing = false;
+        }
     }
 
     get summary() {
@@ -188,5 +241,10 @@ export class ConnectionHealth extends Component {
     }
 }
 
-ConnectionHealth.props = {state: Object, store: Object};
+ConnectionHealth.props = {
+    state: Object,
+    store: Object,
+    mode: {type: String, optional: true},
+    accountId: {type: [Number, Boolean], optional: true},
+};
 ConnectionHealth.template = "contact_center_ui.ConnectionHealth";
