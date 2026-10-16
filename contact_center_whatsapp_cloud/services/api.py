@@ -8,6 +8,7 @@ from odoo.addons.contact_center_base.services.adapter import (
     ProviderPausedError,
     ProviderRateLimitError,
     TransientAdapterError,
+    should_check_connection,
 )
 from odoo.addons.meta_api_base.services import graph as shared_graph
 from odoo.addons.meta_api_base.services.credentials import MetaCredentialResolutionError
@@ -49,21 +50,7 @@ def _copy_diagnostics(source, translated):
     ):
         if hasattr(source, attribute):
             setattr(translated, attribute, getattr(source, attribute))
-    status = getattr(source, "http_status", 0) or 0
-    translated.check_connection = bool(
-        status != 429
-        and not isinstance(translated, ProviderRateLimitError)
-        and (
-            isinstance(translated, ProviderPausedError)
-            or status >= 500
-            or (
-                status in (0, 408, 425)
-                and isinstance(
-                    translated, (TransientAdapterError, AmbiguousTimeoutError)
-                )
-            )
-        )
-    )
+    translated.check_connection = should_check_connection(translated)
     return translated
 
 

@@ -54,6 +54,22 @@ class UnsupportedEventError(AdapterError):
     classification = "unsupported"
 
 
+def should_check_connection(error):
+    """Classify generic transport/auth failures without interpreting provider codes."""
+
+    status = getattr(error, "http_status", 0) or 0
+    return bool(
+        status != 429
+        and not isinstance(error, ProviderRateLimitError)
+        and (
+            isinstance(error, ProviderPausedError)
+            or status >= 500
+            or status in (0, 408, 425)
+            and isinstance(error, (TransientAdapterError, AmbiguousTimeoutError))
+        )
+    )
+
+
 _PROVIDER_REQUEST_FORBIDDEN_KEYS = {
     "authorization",
     "cookie",

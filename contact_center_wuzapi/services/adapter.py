@@ -4473,12 +4473,17 @@ class WuzapiAdapter(WuzapiDirectStartMixin, WuzapiGroupMetadataMixin, ProviderAd
             proxy = _lookup(data, "proxy_url")
             proxy = proxy if isinstance(proxy, str) else ""
             pool = _lookup(data, "proxy_pool_id")
+            try:
+                endpoint = urlsplit(proxy)
+                endpoint = (endpoint.scheme, endpoint.hostname, endpoint.port)
+            except ValueError:
+                endpoint = ()
             observation.update(
                 events=events
                 if isinstance(events, str) and len(events) <= 8192
                 else None,
                 proxy_present=bool(proxy),
-                proxy_digest=hashlib.sha256(proxy.encode()).hexdigest(),
+                proxy_digest=hashlib.sha256(json.dumps(endpoint).encode()).hexdigest(),
                 proxy_pool_id=str(pool or "")[:128],
                 passkey_pending=_lookup(data, "passkeyPending") is True,
             )

@@ -592,7 +592,7 @@ class TestWuzapiIngressConcurrency(TransactionCase):
                 )
                 callback_cr.commit()  # pylint: disable=invalid-commit
             with self.assertRaises(ValidationError):
-                held.action_confirm_pairing_origin()
+                held._contact_center_confirm_pairing_origin()
             self.assertEqual(held.state, "blocked")
             self.assertFalse(held.metadata_json.get("pairing_origin_confirmed_by"))
             stale_cr.rollback()

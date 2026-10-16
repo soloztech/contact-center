@@ -93,7 +93,14 @@ class TestWuzapiReconnect(WuzapiCase):
             }
         )
 
-    def _job(self, request, health, observation=None, after_health=None):
+    def _job(
+        self,
+        request,
+        health,
+        observation=None,
+        after_health=None,
+        after_observation=None,
+    ):
         with trap_jobs() as trap:
             request.action_start()
         token = self.connection._contact_center_health_observation_token()
@@ -108,7 +115,12 @@ class TestWuzapiReconnect(WuzapiCase):
             "_health_snapshot",
             side_effect=[
                 snapshots,
-                (after_health or health, snapshots[1], token, self.clock),
+                (
+                    after_health or health,
+                    snapshots[1] if after_observation is None else after_observation,
+                    token,
+                    self.clock,
+                ),
             ],
         ), mock.patch(CLIENT) as client:
             request.with_context(job_uuid=trap.enqueued_jobs[0].uuid)._job_reconnect(
@@ -209,6 +221,7 @@ class TestWuzapiReconnect(WuzapiCase):
             "state": "disconnected",
             "reason": "session_inactive",
             "connected": True,
+            "logged_in": False,
         }
         self._job(request, health)
         self.assertEqual(request.state, "qr")
@@ -275,7 +288,7 @@ class TestWuzapiReconnect(WuzapiCase):
         self.assertFalse(self.connection._wuzapi_pairing_pending())
         self.assertFalse(self.connection.identity_mismatch_latched)
         with self.assertRaises(ValidationError):
-            event.with_user(self.admin).action_confirm_pairing_origin()
+            event.with_user(self.admin)._contact_center_confirm_pairing_origin()
         self.assertEqual(event.state, "blocked")
 
     def test_only_current_verified_epoch_can_be_confirmed_explicitly(self):
@@ -303,7 +316,9 @@ class TestWuzapiReconnect(WuzapiCase):
         current = self._held(epoch=2)
         self._proof()
         with self.assertRaises(ValidationError), trap_jobs() as trap:
-            (old | current).with_user(self.admin).action_confirm_pairing_origin()
+            (old | current).with_user(
+                self.admin
+            )._contact_center_confirm_pairing_origin()
             trap.assert_jobs_count(0)
         self.assertEqual((old | current).mapped("state"), ["blocked", "blocked"])
         self.assertEqual(old.pairing_hold_status, "obsolete")
@@ -328,7 +343,7 @@ class TestWuzapiReconnect(WuzapiCase):
         self.assertEqual(self.connection.wuzapi_pairing_state, "verified")
         self.assertEqual(held.pairing_hold_status, "rejected")
         with self.assertRaises(ValidationError):
-            held.with_user(self.admin).action_confirm_pairing_origin()
+            held.with_user(self.admin)._contact_center_confirm_pairing_origin()
 
     def test_lifecycle_receipt_only_affects_its_original_epoch(self):
         self._phase()
@@ -402,23 +417,24 @@ class TestWuzapiReconnect(WuzapiCase):
         with trap_jobs() as trap:
             request.action_start()
         old_job = trap.enqueued_jobs[0]
+        revision = request.request_revision
         self.connection.write({"wuzapi_onboarding_job_uuid": "superseding-operation"})
         with mock.patch(CLIENT) as client:
             self.assertFalse(
-                request.with_context(job_uuid=old_job.uuid)._job_reconnect(
-                    request.request_revision
-                )
+                request.with_context(job_uuid=old_job.uuid)._job_reconnect(revision)
             )
             client.assert_not_called()
         self.connection.write({"wuzapi_onboarding_job_uuid": old_job.uuid})
         self.admin.groups_id -= self.env.ref(
             "contact_center_base.group_contact_center_admin"
         )
-        with mock.patch(CLIENT) as client, self.assertRaises(AccessError):
-            request.with_context(job_uuid=old_job.uuid)._job_reconnect(
-                request.request_revision
+        with mock.patch(CLIENT) as client:
+            self.assertFalse(
+                request.with_context(job_uuid=old_job.uuid)._job_reconnect(revision)
             )
         client.assert_not_called()
+        self.assertEqual(request.sudo().state, "error")
+        self.assertFalse(request.sudo().retry_at)
 
     def test_qr_route_fences_owner_company_epoch_and_configuration_before_io(self):
         request = self._request()
@@ -469,6 +485,7 @@ class TestWuzapiReconnect(WuzapiCase):
                     "state": "disconnected",
                     "reason": "session_inactive",
                     "connected": True,
+                    "logged_in": False,
                 },
             )
         client.return_value.connect.assert_called_once_with(())
@@ -478,4 +495,195 @@ class TestWuzapiReconnect(WuzapiCase):
         self.assertEqual(self.connection.wuzapi_pairing_state, "verified")
         self.assertEqual(held.pairing_hold_status, "obsolete")
         with self.assertRaises(ValidationError):
-            held.with_user(self.admin).action_confirm_pairing_origin()
+            held.with_user(self.admin)._contact_center_confirm_pairing_origin()
+
+    def test_confirmed_pairing_event_can_recover_a_later_processing_failure(self):
+        self._phase()
+        event = self._held()
+        self._proof()
+        with trap_jobs() as trap:
+            event.with_user(self.admin)._contact_center_confirm_pairing_origin()
+        for job in trap.enqueued_jobs:
+            if job.db_record():
+                job.db_record().write({"state": "done"})
+        self.assertNotIn("blocked_reason", event.metadata_json)
+        self.assertEqual(event.metadata_json["hold_epoch"], 1)
+        self.assertEqual(
+            event.metadata_json["pairing_origin_confirmed_by"], self.admin.id
+        )
+        self._phase(epoch=2)
+        event.write({"state": "dead", "last_error_class": "AdapterError"})
+        event.invalidate_recordset(["pairing_hold_status", "pairing_hold_epoch"])
+        self.assertFalse(event.pairing_hold_status)
+        request = self._request()
+        self.assertEqual(request.quarantined_count, 0)
+        with trap_jobs() as trap:
+            event.with_user(self.admin).action_requeue()
+            trap.assert_jobs_count(1)
+        self.assertEqual(event.state, "pending")
+
+    def test_logged_in_unverified_identity_never_requests_a_qr(self):
+        request = self._request()
+        client = self._job(
+            request,
+            {
+                "state": "degraded",
+                "reason": "identity_unverified",
+                "connected": True,
+                "logged_in": True,
+                "identity_matches": False,
+            },
+        )
+        client.return_value.connect.assert_not_called()
+        client.return_value.qr_png.assert_not_called()
+        self.assertEqual(request.state, "waiting")
+        self.assertFalse(self.connection.wuzapi_onboarding_job_uuid)
+
+    def test_subscription_drift_fails_closed_with_a_specific_diagnostic(self):
+        request = self._request()
+        with trap_jobs() as trap:
+            request.action_start()
+        token = self.connection._contact_center_health_observation_token()
+        with mock.patch.object(
+            type(request),
+            "_health_snapshot",
+            side_effect=[
+                (
+                    {"state": "disconnected", "connected": False, "logged_in": False},
+                    {"events": "Message,Connected"},
+                    token,
+                    self.clock,
+                ),
+                (
+                    {
+                        "state": "connected",
+                        "connected": True,
+                        "logged_in": True,
+                        "identity_matches": True,
+                    },
+                    {"events": "Connected"},
+                    token,
+                    self.clock,
+                ),
+            ],
+        ), mock.patch(CLIENT) as client:
+            self.assertFalse(
+                request.with_context(
+                    job_uuid=trap.enqueued_jobs[0].uuid
+                )._job_reconnect(request.request_revision)
+            )
+        client.return_value.qr_png.assert_not_called()
+        self.assertEqual(request.state, "error")
+        self.assertEqual(self.connection.wuzapi_webhook_sync_state, "drift")
+        self.assertFalse(self.connection._contact_center_outbound_is_available())
+        self.assertFalse(request.pending_observation_json)
+
+    def test_unfinished_subscription_comparison_is_rechecked_without_another_connect(
+        self,
+    ):
+        for failed in (
+            {"state": "degraded", "reason": "unreachable", "conclusive": False},
+            {"state": "authentication_required", "reason": "unauthorized"},
+        ):
+            request = self._request()
+            with trap_jobs() as trap:
+                request.action_start()
+            token = self.connection._contact_center_health_observation_token()
+            baseline = {"events": "Message,Connected", "proxy_present": False}
+            with mock.patch.object(
+                type(request),
+                "_health_snapshot",
+                side_effect=[
+                    (
+                        {
+                            "state": "disconnected",
+                            "connected": False,
+                            "logged_in": False,
+                        },
+                        baseline,
+                        token,
+                        self.clock,
+                    ),
+                    (failed, {}, token, self.clock),
+                ],
+            ), mock.patch(CLIENT):
+                request.with_context(
+                    job_uuid=trap.enqueued_jobs[0].uuid
+                )._job_reconnect(request.request_revision)
+            self.assertEqual(request.state, "waiting")
+            self.assertEqual(request.pending_observation_json, baseline)
+            self.assertNotEqual(self.connection.wuzapi_webhook_sync_state, "drift")
+            with trap_jobs() as check_jobs:
+                request.action_check()
+                check_jobs.assert_jobs_count(1, only=request._job_reconnect)
+            good = {
+                "state": "connected",
+                "connected": True,
+                "logged_in": True,
+                "identity_matches": True,
+            }
+            token = self.connection._contact_center_health_observation_token()
+            with mock.patch.object(
+                type(request),
+                "_health_snapshot",
+                return_value=(
+                    good,
+                    baseline,
+                    token,
+                    self.clock + datetime.timedelta(seconds=1),
+                ),
+            ), mock.patch(CLIENT) as client:
+                self.assertTrue(
+                    request.with_context(
+                        job_uuid=check_jobs.enqueued_jobs[0].uuid
+                    )._job_reconnect(request.request_revision)
+                )
+            client.return_value.connect.assert_not_called()
+            client.return_value.qr_png.assert_not_called()
+            self.assertFalse(request.pending_observation_json)
+            self.assertEqual(request.state, "ready")
+
+    def test_pending_subscription_baseline_cannot_cross_configuration_change(self):
+        request = self._request()
+        self._job(
+            request,
+            {"state": "disconnected", "connected": False, "logged_in": False},
+            after_observation={},
+            after_health={
+                "state": "degraded",
+                "reason": "unreachable",
+                "conclusive": False,
+            },
+        )
+        self.assertTrue(request.pending_observation_json)
+        self.connection.health_configuration_revision += 1
+        with trap_jobs() as trap, mock.patch(CLIENT) as client:
+            request.action_check()
+            trap.assert_jobs_count(0)
+        client.assert_not_called()
+        self.assertEqual(request.state, "error")
+        self.assertFalse(request.pending_observation_json)
+
+    def test_banner_reopens_the_same_owners_unfinished_comparison(self):
+        request = self._request()
+        self._job(
+            request,
+            {"state": "disconnected", "connected": False, "logged_in": False},
+            after_observation={},
+            after_health={
+                "state": "degraded",
+                "reason": "unreachable",
+                "conclusive": False,
+            },
+        )
+        self.assertTrue(request.pending_observation_json)
+        self._request()  # An unused newer modal must not hide the pending check.
+        before = self.wizards.search_count([("connection_id", "=", self.connection.id)])
+        action = self.connection.with_user(self.admin)._contact_center_fix_action()
+        self.assertEqual(action["res_model"], request._name)
+        self.assertEqual(action["res_id"], request.id)
+        self.assertTrue(self.wizards.browse(action["res_id"]).pending_observation_json)
+        self.assertEqual(
+            self.wizards.search_count([("connection_id", "=", self.connection.id)]),
+            before,
+        )

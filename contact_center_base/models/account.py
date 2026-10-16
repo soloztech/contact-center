@@ -2746,6 +2746,11 @@ class ContactCenterProviderConnection(models.Model):
 
     def _contact_center_fix_kind(self):
         self.ensure_one()
+        if (
+            self.last_probe_detail == "rate_limited"
+            and self._contact_center_identity_is_verified()
+        ):
+            return "none"
         return (
             "none"
             if self._contact_center_health_status() == "connected"

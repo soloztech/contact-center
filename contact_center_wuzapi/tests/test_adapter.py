@@ -5377,3 +5377,45 @@ class TestWuzapiAdapter(WuzapiCase):
         health = self.adapter.get_health(self.connection)
         self.assertIs(health["conclusive"], False)
         self.assertNotEqual(health["state"], "connected")
+
+    @mock.patch(REQUEST_PATCH)
+    def test_health_network_observation_is_independent_of_proxy_credentials(
+        self, request
+    ):
+        digests = []
+        for host, password in (
+            ("proxy.invalid", "weak-one"),
+            ("proxy.invalid", "weak-two"),
+            ("other.invalid", "weak-two"),
+        ):
+            proxy = "socks5://private-user:%s@%s:1080/private-path?token=secret" % (
+                password,
+                host,
+            )
+            request.return_value = FakeResponse(
+                200,
+                {
+                    "success": True,
+                    "data": {
+                        "connected": False,
+                        "loggedIn": False,
+                        "events": "Message,Connected",
+                        "proxy_url": proxy,
+                    },
+                },
+            )
+            observation = {}
+            self.adapter.get_health(
+                self.connection.with_context(
+                    contact_center_wuzapi_health_observation=observation
+                )
+            )
+            self.assertTrue(observation["proxy_present"])
+            self.assertNotIn(
+                hashlib.sha256(proxy.encode()).hexdigest(), repr(observation)
+            )
+            for secret in (password, "private-user", "private-path", "token=secret"):
+                self.assertNotIn(secret, repr(observation))
+            digests.append(observation["proxy_digest"])
+        self.assertEqual(digests[0], digests[1])
+        self.assertNotEqual(digests[1], digests[2])

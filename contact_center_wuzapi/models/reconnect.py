@@ -45,6 +45,7 @@ class ContactCenterWuzapiReconnectWizard(models.TransientModel):
     )
     message = fields.Text(readonly=True)
     retry_at = fields.Datetime(readonly=True)
+    pending_observation_json = fields.Json(readonly=True, copy=False)
     qr_url = fields.Char(compute="_compute_runtime")
     connected = fields.Boolean(compute="_compute_runtime")
     running = fields.Boolean(compute="_compute_runtime")
@@ -71,7 +72,7 @@ class ContactCenterWuzapiReconnectWizard(models.TransientModel):
             raise ValidationError(
                 _("The selected events belong to another connection.")
             )
-        self.inbox_event_ids.action_confirm_pairing_origin()
+        self.inbox_event_ids._contact_center_confirm_pairing_origin()
         return {"type": "ir.actions.act_window_close"}
 
     @api.model
@@ -222,6 +223,15 @@ class ContactCenterWuzapiReconnectWizard(models.TransientModel):
                 }
             )
             return self._reopen()
+        if self.pending_observation_json and (
+            self.configuration_revision != connection.health_configuration_revision
+            or self.webhook_revision != connection.wuzapi_webhook_sync_revision
+            or self.hmac_revision != connection.wuzapi_hmac_rotation_revision
+            or self.request_revision != connection.wuzapi_onboarding_revision
+            or self.pairing_revision != connection.wuzapi_pairing_revision
+        ):
+            self._finish_error(self.request_revision)
+            return self._reopen()
         if (
             connection.wuzapi_hmac_rotation_state != "stable"
             or connection.wuzapi_hmac_rotation_job_uuid
@@ -273,6 +283,8 @@ class ContactCenterWuzapiReconnectWizard(models.TransientModel):
 
     def action_check(self):
         connection = self._connection()
+        if self.pending_observation_json:
+            return self.action_start()
         connection._enqueue_health_check()
         return self._reopen()
 
@@ -369,103 +381,140 @@ class ContactCenterWuzapiReconnectWizard(models.TransientModel):
             raise ValidationError(_("This QR code is no longer available."))
 
     def _read_reconnect(self, connection):
-        """Read and restore the existing session without holding database locks."""
+        """Read/restore outside row locks, retaining an unfinished comparison."""
 
         network_changed = False
-        health, before, token, observed_at = self._health_snapshot(connection)
-        if health.get("conclusive") is False or health.get("reason") == "unauthorized":
-            result = (
-                "waiting",
-                _("The provider is unavailable. Check the connection again."),
-            )
-            qr = False
-        else:
-            client = WuzapiOnboardingClient(
+        baseline = self.pending_observation_json or False
+        health, observation, token, observed_at = self._health_snapshot(connection)
+        unavailable = (
+            health.get("conclusive") is False or health.get("reason") == "unauthorized"
+        )
+        client = (
+            None
+            if unavailable
+            else WuzapiOnboardingClient(
                 connection.wuzapi_base_url, api_token=connection.wuzapi_api_token
             )
-            if health.get("connected") is not True:
-                if before.get("events") is None:
-                    raise AdapterError("Provider event configuration is unavailable")
-                if not self._current(self.request_revision):
-                    raise ValidationError(
-                        _("The reconnect operation is no longer current.")
-                    )
-                client.connect(())
-                health, after, token, observed_at = self._health_snapshot(connection)
-                if health.get("conclusive") is not False and before.get(
-                    "events"
-                ) != after.get("events"):
-                    raise AdapterError(
-                        "Provider event configuration changed during reconnect"
-                    )
-                if after and any(
-                    before.get(key) != after.get(key)
-                    for key in ("proxy_present", "proxy_digest", "proxy_pool_id")
-                ):
-                    network_changed = True
-                before = after
-            if (
-                health.get("conclusive") is False
-                or health.get("reason") == "unauthorized"
-            ):
-                result, qr = (
-                    "waiting",
-                    _("The provider is unavailable. Check the connection again."),
-                ), False
-            elif (
-                health.get("identity_matches") is True
-                and health.get("state") == "connected"
-            ):
-                result, qr = ("ready", False), False
-            elif health.get("reason") == "identity_mismatch":
+        )
+        if not unavailable and not baseline and health.get("connected") is not True:
+            if observation.get("events") is None:
+                raise AdapterError("Provider event configuration is unavailable")
+            if not self._current(self.request_revision):
+                raise ValidationError(
+                    _("The reconnect operation is no longer current.")
+                )
+            baseline = observation
+            client.connect(())
+            health, observation, token, observed_at = self._health_snapshot(connection)
+        if baseline and observation.get("events") is not None:
+            network_changed = any(
+                baseline.get(key) != observation.get(key)
+                for key in ("proxy_present", "proxy_digest", "proxy_pool_id")
+            )
+            if baseline["events"] != observation["events"]:
+                health = dict(
+                    health,
+                    state="degraded",
+                    reason="invalid_response",
+                    conclusive=False,
+                    wuzapi_events_changed=True,
+                )
                 result, qr = (
                     "error",
                     _(
-                        "The paired number does not match this inbox. "
-                        "Unlink this session on the incorrect phone, then "
-                        "reconnect with the inbox's number."
+                        "The provider's subscribed events changed. "
+                        "Review the webhook configuration."
                     ),
                 ), False
-            elif before.get("passkey_pending"):
-                result, qr = (
-                    "error",
-                    _("Complete the additional authorization at the provider."),
-                ), False
-            else:
-                try:
-                    if not self._current(self.request_revision):
-                        raise ValidationError(
-                            _("The reconnect operation is no longer current.")
-                        )
-                    client.qr_png()
-                    qr = True
-                except (ProviderRateLimitError, TransientAdapterError):
-                    raise
-                except AdapterError:
-                    qr = False
-                result = (
-                    (
-                        "qr",
-                        _(
-                            "Scan with the number configured for this inbox, then click Check."
-                        ),
-                    )
-                    if qr
-                    else (
-                        "waiting",
-                        _("The session is starting. Check again shortly."),
-                    )
+                return health, token, observed_at, result, qr, network_changed, False
+            baseline = False
+        if baseline:
+            # No empty observation may masquerade as a subscription change.
+            # Check reuses this operation with GET only and the saved safe baseline.
+            if (
+                health.get("conclusive") is not False
+                and health.get("reason") != "unauthorized"
+            ):
+                health = dict(
+                    health,
+                    state="degraded",
+                    reason="invalid_response",
+                    conclusive=False,
                 )
-        return health, token, observed_at, result, qr, network_changed
+            result, qr = (
+                "waiting",
+                _(
+                    "The provider's subscribed events could not be confirmed. "
+                    "Wait, then click Check again."
+                ),
+            ), False
+        elif (
+            health.get("conclusive") is False or health.get("reason") == "unauthorized"
+        ):
+            result, qr = (
+                "waiting",
+                _("The provider is unavailable. Check the connection again."),
+            ), False
+        elif (
+            health.get("identity_matches") is True
+            and health.get("state") == "connected"
+        ):
+            result, qr = ("ready", False), False
+        elif health.get("reason") == "identity_mismatch":
+            result, qr = (
+                "error",
+                _(
+                    "The paired number does not match this inbox. "
+                    "Unlink this session on the incorrect phone, then "
+                    "reconnect with the inbox's number."
+                ),
+            ), False
+        elif observation.get("passkey_pending"):
+            result, qr = (
+                "error",
+                _("Complete the additional authorization at the provider."),
+            ), False
+        elif health.get("logged_in") is not False:
+            result, qr = (
+                "waiting",
+                _(
+                    "The session identity could not be verified. "
+                    "Check its configured number and try Check again."
+                ),
+            ), False
+        else:
+            qr = self._read_reconnect_qr(client)
+            result = (
+                (
+                    "qr",
+                    _(
+                        "Scan with the number configured for this inbox, then click Check."
+                    ),
+                )
+                if qr
+                else ("waiting", _("The session is starting. Check again shortly."))
+            )
+        return health, token, observed_at, result, qr, network_changed, baseline
+
+    def _read_reconnect_qr(self, client):
+        if not self._current(self.request_revision):
+            raise ValidationError(_("The reconnect operation is no longer current."))
+        try:
+            client.qr_png()
+        except (ProviderRateLimitError, TransientAdapterError):
+            raise
+        except AdapterError:
+            return False
+        return True
 
     def _job_reconnect(self, revision):
         self.ensure_one()
         if not self.env.context.get("job_uuid"):
             raise ValidationError(_("Reconnect must run through queue_job."))
-        connection = self._current(revision)
-        if not connection:
-            return False
         try:
+            connection = self._current(revision)
+            if not connection:
+                return self._finish_error(revision)
             (
                 health,
                 token,
@@ -473,11 +522,13 @@ class ContactCenterWuzapiReconnectWizard(models.TransientModel):
                 result,
                 qr,
                 network_changed,
+                pending_observation,
             ) = self._read_reconnect(connection)
             current = self._current(revision, lock=True)
             if not current:
-                return False
+                return self._finish_error(revision)
             if current._contact_center_health_observation_token() != token:
+                pending_observation = False
                 result, qr = (
                     "waiting",
                     _("The connection changed. Check again."),
@@ -501,7 +552,7 @@ class ContactCenterWuzapiReconnectWizard(models.TransientModel):
                     "state": "authentication_required",
                     "reason": "pairing_required",
                 }
-            current._apply_health_result(
+            applied = current._apply_health_result(
                 health,
                 source="health_job",
                 observed_at=observed_at,
@@ -509,6 +560,15 @@ class ContactCenterWuzapiReconnectWizard(models.TransientModel):
                 expected_observation_token=token,
                 records_health_probe=True,
             )
+            if applied and health.get("wuzapi_events_changed"):
+                current.write(
+                    {
+                        "wuzapi_webhook_sync_state": "drift",
+                        "wuzapi_webhook_last_error": (
+                            "Subscribed events changed during reconnect"
+                        ),
+                    }
+                )
             current.write({"wuzapi_onboarding_job_uuid": False})
             message = result[1] or ""
             if network_changed:
@@ -518,7 +578,12 @@ class ContactCenterWuzapiReconnectWizard(models.TransientModel):
                     + _("The provider applied its configured network policy.")
                 ).strip()
             self._update(
-                {"state": result[0], "message": message or False, "retry_at": False}
+                {
+                    "state": result[0],
+                    "message": message or False,
+                    "retry_at": False,
+                    "pending_observation_json": pending_observation,
+                }
             )
             return result[0] == "ready"
         except (ProviderRateLimitError, TransientAdapterError) as error:
@@ -531,19 +596,27 @@ class ContactCenterWuzapiReconnectWizard(models.TransientModel):
             return self._finish_error(revision)
 
     def _finish_error(self, revision):
-        current = self._current(revision, lock=True)
+        try:
+            current = self._current(revision, lock=True)
+        except (AccessError, ValidationError):
+            current = False
         if current:
             current.write({"wuzapi_onboarding_job_uuid": False})
-            self._update(
-                {
-                    "state": "error",
-                    "message": _(
-                        "The provider could not restore the session. "
-                        "Review its configuration and try again."
-                    ),
-                    "retry_at": False,
-                }
-            )
+        self._update(
+            {
+                "state": "error",
+                "message": _(
+                    "The provider could not restore the session. "
+                    "Review its configuration and try again."
+                )
+                if current
+                else _(
+                    "This reconnect request is no longer current. Close and reopen it."
+                ),
+                "retry_at": False,
+                "pending_observation_json": False,
+            }
+        )
         return False
 
     def action_quarantined_events(self):

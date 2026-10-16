@@ -42,7 +42,6 @@ from ..services.media import (
 from .application import GroupRosterRefreshRequired, IdentityConflictError
 
 _logger = logging.getLogger(__name__)
-_PAIRING_RELEASE_TOKEN = object()
 
 _ACTIVE_QUEUE_JOB_STATES = ACTIVE_QUEUE_JOB_STATES
 _QUEUE_RECOVERY_GRACE_SECONDS = 300
@@ -262,7 +261,7 @@ class ContactCenterInboxEvent(models.Model):
             raise ValidationError(_("Review events from one connection at a time."))
         return connections._contact_center_pairing_release_action(self)
 
-    def action_confirm_pairing_origin(self):
+    def _contact_center_confirm_pairing_origin(self):
         """Explicit administrator confirmation; never an automatic recovery lane."""
 
         self._check_pairing_release_access()
@@ -308,6 +307,7 @@ class ContactCenterInboxEvent(models.Model):
                 )
         for event in self:
             metadata = dict(event.metadata_json or {})
+            metadata.pop("blocked_reason", None)
             metadata.update(
                 pairing_origin_confirmed_by=self.env.uid,
                 pairing_origin_confirmed_at=fields.Datetime.to_string(
@@ -316,11 +316,7 @@ class ContactCenterInboxEvent(models.Model):
                 pairing_origin_reason="administrator_confirmed_inbox_origin",
             )
             event.sudo().write({"metadata_json": metadata})
-        return (
-            self.sudo()
-            .with_context(contact_center_pairing_release_token=_PAIRING_RELEASE_TOKEN)
-            .action_requeue()
-        )
+        return self.sudo().action_requeue()
 
     provider_connection_id = fields.Many2one(
         "contact.center.provider.connection",
@@ -584,11 +580,7 @@ class ContactCenterInboxEvent(models.Model):
                     _("Erased conversation content cannot be replayed.")
                 )
             metadata = dict(event.metadata_json or {})
-            if (
-                metadata.get("blocked_reason") == "pairing_unverified"
-                and self.env.context.get("contact_center_pairing_release_token")
-                is not _PAIRING_RELEASE_TOKEN
-            ):
+            if metadata.get("blocked_reason") == "pairing_unverified":
                 raise ValidationError(
                     _("Use the explicit origin confirmation action for pairing events.")
                 )

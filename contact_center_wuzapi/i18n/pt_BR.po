@@ -401,3 +401,27 @@ msgstr "Escaneie o QR"
 #: model:ir.model.fields.selection,name:contact_center_wuzapi.selection__contact_center_wuzapi_reconnect_wizard__state__ready
 msgid "Connected"
 msgstr "Conectada"
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "The provider's subscribed events could not be confirmed. Wait, then click Check again."
+msgstr "Não foi possível confirmar os eventos assinados. Aguarde e clique em Verificar novamente."
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "This reconnect request is no longer current. Close and reopen it."
+msgstr "Esta solicitação de reconexão não está mais vigente. Feche e abra uma nova solicitação."
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "The provider's subscribed events changed. Review the webhook configuration."
+msgstr "Os eventos assinados pelo provedor mudaram. Revise a configuração do webhook."
+
+#. module: contact_center_wuzapi
+#: code:addons/contact_center_wuzapi/models/reconnect.py:0
+#, python-format
+msgid "The session identity could not be verified. Check its configured number and try Check again."
+msgstr "Não foi possível verificar a identidade da sessão. Confira o número configurado e clique em Verificar novamente."

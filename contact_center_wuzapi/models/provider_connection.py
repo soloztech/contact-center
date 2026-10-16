@@ -201,6 +201,28 @@ class ContactCenterProviderConnection(models.Model):
         return super()._contact_center_fix_kind()
 
     def _contact_center_fix_action(self):
+        if self.adapter_key == "wuzapi" and self.role == "primary":
+            pending = self.env["contact.center.wuzapi.reconnect.wizard"].search(
+                [
+                    ("connection_id", "=", self.id),
+                    ("create_uid", "=", self.env.uid),
+                    ("pending_observation_json", "!=", False),
+                ],
+                order="id desc",
+                limit=1,
+            )
+            # Odoo stores a zero Integer as NULL: compare normalized revisions.
+            revisions = {
+                "configuration_revision": self.health_configuration_revision,
+                "webhook_revision": self.wuzapi_webhook_sync_revision,
+                "hmac_revision": self.wuzapi_hmac_rotation_revision,
+                "request_revision": self.wuzapi_onboarding_revision,
+                "pairing_revision": self.wuzapi_pairing_revision,
+            }
+            if pending.pending_observation_json and all(
+                pending[name] == revision for name, revision in revisions.items()
+            ):
+                return pending._reopen()
         if self._contact_center_fix_kind() != "reconnect":
             return super()._contact_center_fix_action()
         wizard = self.env["contact.center.wuzapi.reconnect.wizard"].create(

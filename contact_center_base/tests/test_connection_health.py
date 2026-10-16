@@ -1875,6 +1875,9 @@ class TestConnectionHealth(SavepointCase):
         )
         self.assertTrue(self.connection._contact_center_outbound_is_available())
         self.assertEqual(
+            self.connection._contact_center_health_item()["fix_kind"], "none"
+        )
+        self.assertEqual(
             self.connection.health_retry_not_before,
             now + datetime.timedelta(seconds=300),
         )

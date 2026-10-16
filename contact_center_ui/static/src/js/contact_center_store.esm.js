@@ -3186,14 +3186,18 @@ export class ContactCenterStore {
         } finally {
             // A mutation settles a causal barrier even when its answer failed.
             // Already scheduled poll timers cannot join a GET started before it.
-            if (this.sharedReads) {
-                this.sharedReads.invalidate(API_MODEL, "get_connection_health");
-            }
-            this.connectionHealthBusRevision += 1;
-            this.connectionHealthInvalidationRevision += 1;
+            this.invalidateConnectionHealth();
             this.state.connectionHealthPhase = "idle";
             this.state.connectionHealthCheckingId = false;
         }
+    }
+
+    invalidateConnectionHealth() {
+        if (this.sharedReads) {
+            this.sharedReads.invalidate(API_MODEL, "get_connection_health");
+        }
+        this.connectionHealthBusRevision += 1;
+        this.connectionHealthInvalidationRevision += 1;
     }
 
     toggleConnectionHealth() {

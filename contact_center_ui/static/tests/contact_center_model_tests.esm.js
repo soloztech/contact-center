@@ -14156,6 +14156,24 @@ QUnit.module("contact_center_ui > multi-file and structured messages", () => {
                 });
                 await nextTick();
                 assert.notOk(target.querySelector('[role="alert"]'));
+                store.applyConnectionHealthItem({
+                    id: 1,
+                    account_id: 10,
+                    connection_role: "primary",
+                    state: "degraded",
+                    detail: "rate_limited",
+                    fix_kind: "none",
+                });
+                await nextTick();
+                assert.notOk(
+                    target.querySelector('[role="alert"]'),
+                    "probe-only throttling stays advisory"
+                );
+                assert.strictEqual(
+                    store.connectionHealth.items.find((item) => item.id === 1).state,
+                    "degraded",
+                    "the diagnostic panel retains the warning"
+                );
             } finally {
                 store.destroy();
             }

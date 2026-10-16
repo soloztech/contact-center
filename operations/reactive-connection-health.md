@@ -22,8 +22,9 @@ caminho normal de cada mensagem.
   Erros de conteúdo ou destinatário e recusas por limite não pedem saúde.
 - Uma leitura de saúde inconclusiva preserva a última prova, registra
   `last_probe_detail` e pausa novos envios antes do HTTP, devolvendo a tentativa. Um
-  rate limit apenas do probe preserva o envio verificado. Uma observação conclusiva
-  posterior limpa o diagnóstico e retoma somente pendentes seguros.
+  rate limit apenas do probe preserva o envio verificado e fica como aviso do painel,
+  sem alerta de falha ou botão de configuração. Uma observação conclusiva posterior
+  limpa o diagnóstico e retoma somente pendentes seguros.
 - Timeout após a fronteira de envio continua `uncertain`. Uma consulta saudável nunca
   reenvia essa mensagem automaticamente.
 - Se todas as tentativas locais de gravar o pedido antecipado falharem, a recuperação
@@ -56,6 +57,14 @@ Uma sessão não logada pode continuar pareada. O wizard tenta restabelecer/veri
 oferece QR quando o provedor retorna um PNG válido. Desafio adicional por passkey deve
 ser concluído no provedor. API indisponível ou credencial recusada não é motivo para
 mostrar QR.
+
+Se a leitura após restabelecer a sessão falhar, o wizard guarda somente a observação
+segura necessária para conferir eventos e rede. **Verificar** refaz essa leitura sem
+repetir o restabelecimento. Ao reabrir a correção, o mesmo administrador retoma sua
+verificação pendente enquanto as revisões continuam válidas. Mudança de configuração
+exige uma nova solicitação. O indicador de rede exclui usuário, senha, caminho e query
+do proxy; nenhuma credencial é guardada. Uma divergência real de eventos aparece com
+mensagem específica e no diagnóstico de webhook existente.
 
 A política de rede do provedor permanece aplicável: o runtime pode atribuir proxy do seu
 pool ao iniciar uma sessão que ainda não tenha proxy. O wizard compara indicadores

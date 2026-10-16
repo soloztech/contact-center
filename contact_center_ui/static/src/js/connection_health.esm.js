@@ -59,14 +59,7 @@ export class ConnectionHealth extends Component {
             await this.env.services.action.doAction(payload.action, {
                 onClose: () => {
                     if (!this.store.destroyed) {
-                        this.store.connectionHealthBusRevision += 1;
-                        this.store.connectionHealthInvalidationRevision += 1;
-                        if (this.store.sharedReads) {
-                            this.store.sharedReads.invalidate(
-                                "contact.center.ui.api",
-                                "get_connection_health"
-                            );
-                        }
+                        this.store.invalidateConnectionHealth();
                         this.store.refreshConnectionHealth();
                         this.store.scheduleConnectionHealthRefresh();
                         this.store.refreshSelectedConversation();
