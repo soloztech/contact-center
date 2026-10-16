@@ -27,7 +27,7 @@
                     t-if="canFix(item)"
                     type="button"
                     class="btn btn-danger"
-                    t-att-disabled="Boolean(local.fixing)"
+                    t-att-disabled="local.fixing"
                     t-on-click="() => this.fix(item)"
                     t-esc="fixLabel(item)"
                 />
@@ -200,7 +200,7 @@
                                 t-if="canFix(item)"
                                 type="button"
                                 class="cc-connection-row__check"
-                                t-att-disabled="Boolean(local.fixing)"
+                                t-att-disabled="local.fixing"
                                 t-on-click="() => this.fix(item)"
                                 t-esc="fixLabel(item)"
                             />
