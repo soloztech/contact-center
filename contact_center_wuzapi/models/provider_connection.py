@@ -208,6 +208,7 @@ class ContactCenterProviderConnection(models.Model):
             )
             # Odoo stores a zero Integer as NULL: compare normalized revisions.
             revisions = {
+                "company_id": self.company_id,
                 "configuration_revision": self.health_configuration_revision,
                 "webhook_revision": self.wuzapi_webhook_sync_revision,
                 "hmac_revision": self.wuzapi_hmac_rotation_revision,

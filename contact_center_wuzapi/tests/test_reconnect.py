@@ -968,3 +968,38 @@ class TestWuzapiReconnect(WuzapiCase):
             self.wizards.search_count([("connection_id", "=", self.connection.id)]),
             before,
         )
+
+    def test_banner_does_not_reuse_a_pending_request_from_another_company(self):
+        self.connection._apply_health_result(
+            {"state": "disconnected", "reason": "session_inactive"},
+            observed_at=self.clock,
+        )
+        request = self._request()
+        self._job(
+            request,
+            {"state": "disconnected", "connected": False, "logged_in": False},
+            after_observation={},
+            after_health={
+                "state": "degraded",
+                "reason": "unreachable",
+                "conclusive": False,
+            },
+        )
+        baseline = request.pending_observation_json
+        company = self.env["res.company"].create({"name": "Pending other company"})
+        self.admin.company_ids |= company
+        self.connection.company_id = company
+        connection = self.connection.with_user(self.admin).with_context(
+            allowed_company_ids=self.admin.company_ids.ids
+        )
+        with trap_jobs() as jobs, mock.patch(CLIENT) as client:
+            action = connection._contact_center_fix_action()
+            jobs.assert_jobs_count(0)
+        client.assert_not_called()
+        self.assertNotEqual(action["res_id"], request.id)
+        fresh = connection.env[self.wizards._name].browse(action["res_id"])
+        self.assertEqual(fresh.company_id, company)
+        self.assertFalse(fresh.pending_observation_json)
+        self.assertEqual(request.pending_observation_json, baseline)
+        self.assertEqual(action["views"], [[False, "form"]])
+        self.assertFalse(self.connection.wuzapi_onboarding_job_uuid)
