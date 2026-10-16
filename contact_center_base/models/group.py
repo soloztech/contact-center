@@ -758,12 +758,18 @@ class ContactCenterGroupProfile(models.Model):
                 continue
             if not (force or technical or profile._metadata_sync_due(now)):
                 continue
-            continuing = bool(
-                technical
+            uncovered = profile._uncovered_roster_waiters(limit=1) if technical else ()
+            # The oldest uncovered event identifies an unfinished read cycle.
+            unfinished = bool(
+                uncovered
                 and (
-                    profile._uncovered_roster_waiters()
-                    or profile._technical_metadata_eta(now) > now
+                    profile.applied_revision != profile.sync_revision
+                    or not profile.last_synced_at
+                    or uncovered.waiting_group_roster_after <= profile.last_synced_at
                 )
+            )
+            continuing = bool(
+                technical and (unfinished or profile._technical_metadata_eta(now) > now)
             )
             profile._start_metadata_request(
                 now, technical=technical, continuing=continuing

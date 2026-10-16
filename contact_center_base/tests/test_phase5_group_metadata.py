@@ -518,6 +518,47 @@ class TestContactCenterGroupMetadata(SavepointCase):
         self.assertEqual(profile.attempts, 1)
         self.assertEqual(profile.metadata_state, "ready")
 
+    def test_new_technical_cycle_does_not_inherit_completed_read_budget(self):
+        _binding, profile = self._create_group()
+        now = fields.Datetime.now()
+        profile.write(
+            {
+                "metadata_state": "ready",
+                "roster_complete": True,
+                "last_synced_at": now - datetime.timedelta(days=1),
+                "sync_requested_at": now - datetime.timedelta(days=1),
+                "applied_revision": profile.sync_revision,
+                "attempts": 12,
+                "next_sync_at": now + datetime.timedelta(days=6),
+            }
+        )
+        waiter = self._roster_waiter(profile, after=now)
+        profile._request_sync(technical=True)
+        self.assertTrue(profile.queue_job_uuid)
+        self.assertEqual(profile.attempts, 0)
+        self.assertFalse(profile.last_error_class)
+        self.assertEqual(waiter.state, "pending")
+
+    def test_late_waiter_from_previous_read_keeps_exhausted_cycle_budget(self):
+        _binding, profile = self._create_group()
+        old = fields.Datetime.now() - datetime.timedelta(days=1)
+        profile.write(
+            {
+                "metadata_state": "ready",
+                "roster_complete": True,
+                "last_synced_at": old,
+                "sync_requested_at": old - datetime.timedelta(seconds=2),
+                "applied_revision": profile.sync_revision,
+                "attempts": 12,
+            }
+        )
+        waiter = self._roster_waiter(profile, after=old - datetime.timedelta(seconds=1))
+        with trap_jobs() as trap:
+            profile._request_sync(technical=True)
+            trap.assert_jobs_count(0)
+        self.assertEqual(profile.metadata_state, "failed")
+        self.assertEqual(waiter.state, "dead")
+
     def test_supersession_before_read_keeps_budget_and_accepted_eta(self):
         _binding, profile = self._create_group()
         eta = fields.Datetime.now() + datetime.timedelta(minutes=10)
