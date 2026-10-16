@@ -12,6 +12,8 @@ from odoo.addons.contact_center_base.services.adapter import (
     TransientAdapterError,
 )
 
+from .adapter import _retry_after
+
 _MAX_ADMIN_RESPONSE_BYTES = 512 * 1024
 _MAX_SESSION_RESPONSE_BYTES = 64 * 1024
 _MAX_QR_BYTES = 1024 * 1024
@@ -134,9 +136,15 @@ class WuzapiOnboardingClient:
             status = response.status_code
             response.close()
             if status == 429:
-                raise ProviderRateLimitError("WuzAPI setup was rate limited")
+                error = ProviderRateLimitError("WuzAPI setup was rate limited")
+                error.retry_after_seconds = _retry_after(response)
+                raise error
             if status in (408, 425) or status >= 500:
-                raise TransientAdapterError("WuzAPI setup failed with HTTP %s" % status)
+                error = TransientAdapterError(
+                    "WuzAPI setup failed with HTTP %s" % status
+                )
+                error.retry_after_seconds = _retry_after(response)
+                raise error
             raise AdapterError("WuzAPI setup failed with HTTP %s" % status)
         return _bounded_json(response, maximum_bytes, "WuzAPI setup")
 

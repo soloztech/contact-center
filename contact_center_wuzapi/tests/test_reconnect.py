@@ -1,4 +1,5 @@
 """Existing-session repair, pairing fences and explicit inbox-origin review."""
+import base64
 import datetime
 import uuid
 from unittest import mock
@@ -11,6 +12,7 @@ from odoo.addons.queue_job.tests.common import trap_jobs
 from ..controllers import webhook
 from ..models.provider_connection import _WUZAPI_OWN_IDENTITY_TOKEN
 from .common import WuzapiCase
+from .test_adapter import REQUEST_PATCH, FakeResponse
 
 CLIENT = "odoo.addons.contact_center_wuzapi.models.reconnect.WuzapiOnboardingClient"
 
@@ -140,6 +142,216 @@ class TestWuzapiReconnect(WuzapiCase):
             request.with_user(self.agent).action_start()
         with self.assertRaises(AccessError):
             self.connection.write({"wuzapi_pairing_state": "verified"})
+
+    def test_fix_rpc_returns_a_complete_action_for_the_real_action_service(self):
+        self.connection._apply_health_result(
+            {"state": "disconnected", "reason": "session_inactive"},
+            observed_at=self.clock,
+        )
+        result = (
+            self.env["contact.center.ui.api"]
+            .with_user(self.admin)
+            .fix_connection(self.connection.id)
+        )
+        action = result["action"]
+        self.assertEqual(action["res_model"], self.wizards._name)
+        self.assertEqual(action["views"], [[False, "form"]])
+        request = self.wizards.browse(action["res_id"])
+        self.assertEqual(request.company_id, self.connection.company_id)
+        self.assertEqual(request._reopen()["views"], [[False, "form"]])
+
+    def _perform_http_step(self, request, *, check=False):
+        with mock.patch.object(
+            fields.Datetime, "now", return_value=self.clock
+        ), trap_jobs() as jobs:
+            (request.action_check if check else request.action_start)()
+            jobs.assert_jobs_count(1, only=request._job_reconnect)
+        job = jobs.enqueued_jobs[0]
+        self.clock = max(self.clock, job.eta or self.clock)
+        with mock.patch.object(fields.Datetime, "now", return_value=self.clock):
+            request.with_context(job_uuid=job.uuid)._job_reconnect(
+                request.request_revision
+            )
+        return job
+
+    def _http_startup(self, connected_states, qr_responses, connect_statuses=(200,)):
+        """Exercise the real adapter and setup client, faking only HTTP responses."""
+        statuses = iter(connected_states)
+        qrs = iter(qr_responses)
+        connects = iter(connect_statuses)
+        calls = []
+
+        def request(method, url, **values):
+            endpoint = url.removeprefix(self.connection.wuzapi_base_url)
+            calls.append((method, endpoint))
+            if (method, endpoint) == ("POST", "/session/connect"):
+                self.assertEqual(values["json"], {"Subscribe": [], "Immediate": True})
+                status = next(connects)
+                return FakeResponse(status, {"code": status, "success": True})
+            if (method, endpoint) == ("GET", "/session/status"):
+                started = ("POST", "/session/connect") in calls
+                return FakeResponse(
+                    200,
+                    {
+                        "code": 200,
+                        "success": True,
+                        "data": {
+                            "connected": next(statuses),
+                            "loggedIn": False,
+                            "events": "Message,Connected",
+                            "proxy_url": "http://proxy.invalid:8080" if started else "",
+                            "proxy_pool_id": "synthetic-pool" if started else "",
+                        },
+                    },
+                )
+            self.assertEqual((method, endpoint), ("GET", "/session/qr"))
+            return next(qrs)
+
+        return request, calls
+
+    def _png_response(self):
+        return FakeResponse(
+            200,
+            {
+                "code": 200,
+                "success": True,
+                "data": {
+                    "QRCode": "data:image/png;base64,"
+                    + base64.b64encode(
+                        b"\x89PNG\r\n\x1a\n" + b"synthetic-image" * 8
+                    ).decode()
+                },
+            },
+        )
+
+    def test_real_http_startup_waits_until_qr_without_reconnecting_an_open_session(
+        self,
+    ):
+        request = self._request()
+        transport, calls = self._http_startup(
+            (False, False, True, True),
+            (
+                FakeResponse(500, {"error": "not connected"}),
+                FakeResponse(
+                    200, {"code": 200, "success": True, "data": {"QRCode": ""}}
+                ),
+                self._png_response(),
+            ),
+        )
+        with mock.patch(REQUEST_PATCH, side_effect=transport):
+            self._perform_http_step(request)
+            self.assertEqual(request.state, "waiting")
+            self.assertFalse(self.connection.wuzapi_pairing_revision)
+            self.assertFalse(request.pending_observation_json["proxy_present"])
+            self.assertEqual(len(request.message.splitlines()), 2)
+            first_deadline = self.clock + datetime.timedelta(seconds=60)
+            self.assertEqual(request.retry_at, first_deadline)
+            self.clock += datetime.timedelta(seconds=1)
+            second = self._perform_http_step(request, check=True)
+            self.assertEqual(second.eta, first_deadline)
+            self.assertEqual(request.state, "waiting")
+            self.assertFalse(self.connection.wuzapi_pairing_revision)
+            self.assertFalse(request.pending_observation_json["proxy_present"])
+            self.assertEqual(len(request.message.splitlines()), 2)
+            self.assertEqual(
+                request.retry_at, self.clock + datetime.timedelta(seconds=5)
+            )
+            self._perform_http_step(request, check=True)
+        self.assertEqual(request.state, "qr")
+        self.assertEqual(self.connection.wuzapi_pairing_revision, 1)
+        self.assertFalse(request.pending_observation_json)
+        self.assertEqual(len(request.message.splitlines()), 2)
+        self.assertEqual(calls.count(("POST", "/session/connect")), 1)
+        self.assertEqual(calls.count(("GET", "/session/qr")), 3)
+
+    def test_real_http_failed_startup_can_reconnect_idempotently(self):
+        for second_status in (200, 409):
+            with self.subTest(second_status=second_status):
+                request = self._request()
+                transport, calls = self._http_startup(
+                    (False, False, False, True),
+                    (FakeResponse(500, {"error": "no session"}), self._png_response()),
+                    (200, second_status),
+                )
+                before_epoch = self.connection.wuzapi_pairing_revision
+                with mock.patch(REQUEST_PATCH, side_effect=transport):
+                    self._perform_http_step(request)
+                    self.assertEqual(request.state, "waiting")
+                    self.assertFalse(request.pending_observation_json["proxy_present"])
+                    self.assertEqual(calls.count(("POST", "/session/connect")), 1)
+                    self._perform_http_step(request, check=True)
+                self.assertEqual(request.state, "qr")
+                self.assertEqual(
+                    self.connection.wuzapi_pairing_revision, before_epoch + 1
+                )
+                self.assertFalse(request.pending_observation_json)
+                self.assertEqual(len(request.message.splitlines()), 2)
+                self.assertEqual(calls.count(("POST", "/session/connect")), 2)
+
+    def test_qr_rate_limit_commits_observation_and_honors_retry_after(self):
+        request = self._request()
+        transport, calls = self._http_startup(
+            (False, True, True),
+            (
+                FakeResponse(429, {}, headers={"Retry-After": "180"}),
+                self._png_response(),
+            ),
+        )
+        with mock.patch(REQUEST_PATCH, side_effect=transport):
+            self._perform_http_step(request)
+            self.assertEqual(request.state, "waiting")
+            self.assertTrue(request.pending_observation_json)
+            deadline = self.clock + datetime.timedelta(seconds=180)
+            self.assertEqual(request.retry_at, deadline)
+            self.assertEqual(self.connection.health_retry_not_before, deadline)
+            self.clock += datetime.timedelta(seconds=1)
+            followup = self._perform_http_step(request, check=True)
+        self.assertEqual(followup.eta, deadline)
+        self.assertEqual(request.state, "qr")
+        self.assertFalse(request.pending_observation_json)
+        self.assertEqual(calls.count(("POST", "/session/connect")), 1)
+
+    def test_company_change_after_enqueue_is_rejected_even_for_a_multicompany_admin(
+        self,
+    ):
+        request = self._request()
+        with trap_jobs() as jobs:
+            request.action_start()
+        company = self.env["res.company"].create({"name": "Reconnect other company"})
+        self.admin.company_ids |= company
+        self.connection.company_id = company
+        self.assertNotEqual(request.company_id, self.connection.company_id)
+        with mock.patch(CLIENT) as client:
+            self.assertFalse(
+                request.with_context(
+                    allowed_company_ids=self.admin.company_ids.ids,
+                    job_uuid=jobs.enqueued_jobs[0].uuid,
+                )._job_reconnect(request.request_revision)
+            )
+        client.assert_not_called()
+        self.assertEqual(request.state, "error")
+        self.assertFalse(request.request_revision)
+
+    def test_company_change_after_qr_cannot_expose_the_image(self):
+        request = self._request()
+        self._job(
+            request,
+            {
+                "state": "disconnected",
+                "reason": "session_inactive",
+                "connected": True,
+                "logged_in": False,
+            },
+        )
+        self.assertEqual(request.state, "qr")
+        company = self.env["res.company"].create({"name": "QR other company"})
+        self.admin.company_ids |= company
+        self.connection.company_id = company
+        with mock.patch(CLIENT) as client, self.assertRaises(ValidationError):
+            request.with_context(
+                allowed_company_ids=self.admin.company_ids.ids
+            )._qr_png(request.pairing_revision)
+        client.assert_not_called()
 
     def test_paired_restore_preserves_lid_group_metadata_and_configuration(self):
         self.connection._apply_health_result(

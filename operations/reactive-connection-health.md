@@ -70,12 +70,18 @@ ser concluído no provedor. API indisponível ou credencial recusada não é mot
 mostrar QR.
 
 Se a leitura após restabelecer a sessão falhar, o wizard guarda somente a observação
-segura necessária para conferir eventos e rede. **Verificar** refaz essa leitura sem
-repetir o restabelecimento. Ao reabrir a correção, o mesmo administrador retoma sua
-verificação pendente enquanto as revisões continuam válidas. Mudança de configuração
-exige uma nova solicitação. O indicador de rede exclui usuário, senha, caminho e query
-do proxy; nenhuma credencial é guardada. Uma divergência real de eventos aparece com
-mensagem específica e no diagnóstico de webhook existente.
+segura necessária para conferir eventos e rede, inclusive enquanto o QR ainda não está
+disponível. **Verificar** refaz a leitura com espera controlada. Se a sessão já está
+aberta, não repete Connect; se o status confirma que ela não abriu, pode tentar Connect
+idempotente uma vez nessa ação, conservando a observação original. Ao reabrir a
+correção, o mesmo administrador retoma sua verificação pendente enquanto as revisões
+continuam válidas. Mudança de configuração exige uma nova solicitação. O indicador de
+rede exclui usuário, senha, caminho e query do proxy; nenhuma credencial é guardada. Uma
+divergência real de eventos aparece com mensagem específica e no diagnóstico de webhook
+existente.
+
+O pedido guarda sua empresa de origem. Mudança da empresa da conexão torna a solicitação
+obsoleta, mesmo que o administrador tenha acesso às duas empresas.
 
 A política de rede do provedor permanece aplicável: o runtime pode atribuir proxy do seu
 pool ao iniciar uma sessão que ainda não tenha proxy. O wizard compara indicadores

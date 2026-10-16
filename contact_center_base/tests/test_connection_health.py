@@ -2084,6 +2084,7 @@ class TestConnectionHealth(SavepointCase):
             result["action"]["res_model"], "contact.center.provider.connection"
         )
         self.assertEqual(result["action"]["res_id"], self.connection.id)
+        self.assertEqual(result["action"]["views"], [[False, "form"]])
         self.assertEqual(
             self.connection._contact_center_health_item()["fix_kind"], "configuration"
         )

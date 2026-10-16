@@ -25,7 +25,7 @@ class ContactCenterWuzapiReconnectWizard(models.TransientModel):
         readonly=True,
         ondelete="cascade",
     )
-    company_id = fields.Many2one(related="connection_id.company_id", readonly=True)
+    company_id = fields.Many2one("res.company", readonly=True)
     request_revision = fields.Integer(readonly=True)
     configuration_revision = fields.Integer(readonly=True)
     webhook_revision = fields.Integer(readonly=True)
@@ -121,7 +121,9 @@ class ContactCenterWuzapiReconnectWizard(models.TransientModel):
                 raise AccessError(
                     _("Select the connection's company before reconnecting.")
                 )
-            prepared.append({"connection_id": connection.id})
+            prepared.append(
+                {"connection_id": connection.id, "company_id": connection.company_id.id}
+            )
         return super().create(prepared)
 
     def write(self, values):
@@ -154,16 +156,24 @@ class ContactCenterWuzapiReconnectWizard(models.TransientModel):
     def _connection(self, *, queued=False):
         self.ensure_one()
         request = self.sudo()
-        if not queued and (
-            self.env.user != request.create_uid
-            or request.company_id not in self.env.companies
-        ):
+        if not queued and self.env.user != request.create_uid:
             raise AccessError(_("This reconnect request belongs to another session."))
-        if not queued and request.state == "error" and not request.request_revision:
+        if not request.company_id or (
+            not queued and request.state == "error" and not request.request_revision
+        ):
             raise ValidationError(
                 _("This reconnect request is no longer current. Close and reopen it.")
             )
-        return self._allowed_connection(request.connection_id.id, request.create_uid)
+        if not queued and request.company_id not in self.env.companies:
+            raise AccessError(_("This reconnect request belongs to another session."))
+        connection = self._allowed_connection(
+            request.connection_id.id, request.create_uid
+        )
+        if connection.company_id != request.company_id:
+            raise ValidationError(
+                _("This reconnect request is no longer current. Close and reopen it.")
+            )
+        return connection
 
     def _current(self, revision, *, lock=False):
         self.invalidate_recordset()
@@ -203,6 +213,7 @@ class ContactCenterWuzapiReconnectWizard(models.TransientModel):
             "res_model": self._name,
             "res_id": self.id,
             "view_mode": "form",
+            "views": [[False, "form"]],
             "target": "new",
         }
 
@@ -378,6 +389,7 @@ class ContactCenterWuzapiReconnectWizard(models.TransientModel):
         )
         if (
             self.state != "qr"
+            or connection.company_id != self.company_id
             or self.pairing_revision != expected[-1]
             or current != expected
             or connection.wuzapi_pairing_state != "qr"
@@ -400,17 +412,18 @@ class ContactCenterWuzapiReconnectWizard(models.TransientModel):
                 connection.wuzapi_base_url, api_token=connection.wuzapi_api_token
             )
         )
-        if not unavailable and not baseline and health.get("connected") is not True:
-            if observation.get("events") is None:
+        if not unavailable and health.get("connected") is False:
+            if not baseline and observation.get("events") is None:
                 raise AdapterError("Provider event configuration is unavailable")
             if not self._current(self.request_revision):
                 raise ValidationError(
                     _("The reconnect operation is no longer current.")
                 )
-            baseline = observation
+            baseline = baseline or observation
             client.connect(())
             health, observation, token, observed_at = self._health_snapshot(connection)
-        if baseline and observation.get("events") is not None:
+        comparison_pending = bool(baseline and observation.get("events") is None)
+        if baseline and not comparison_pending:
             network_changed = any(
                 baseline.get(key) != observation.get(key)
                 for key in ("proxy_present", "proxy_digest", "proxy_pool_id")
@@ -431,8 +444,7 @@ class ContactCenterWuzapiReconnectWizard(models.TransientModel):
                     ),
                 ), False
                 return health, token, observed_at, result, qr, network_changed, False
-            baseline = False
-        if baseline:
+        if comparison_pending:
             # No empty observation may masquerade as a subscription change.
             # Check reuses this operation with GET only and the saved safe baseline.
             if (
@@ -487,7 +499,20 @@ class ContactCenterWuzapiReconnectWizard(models.TransientModel):
                 ),
             ), False
         else:
-            qr = self._read_reconnect_qr(client)
+            delay = 5
+            try:
+                qr = self._read_reconnect_qr(client)
+            except (ProviderRateLimitError, TransientAdapterError) as error:
+                qr = False
+                delay = max(60, getattr(error, "retry_after_seconds", 0) or 0)
+            if not qr:
+                baseline = baseline or observation
+                health = dict(
+                    health,
+                    retry_after_seconds=max(
+                        health.get("retry_after_seconds", 0), delay
+                    ),
+                )
             result = (
                 (
                     "qr",
@@ -498,7 +523,15 @@ class ContactCenterWuzapiReconnectWizard(models.TransientModel):
                 if qr
                 else ("waiting", _("The session is starting. Check again shortly."))
             )
-        return health, token, observed_at, result, qr, network_changed, baseline
+        return (
+            health,
+            token,
+            observed_at,
+            result,
+            qr,
+            network_changed,
+            baseline if result[0] == "waiting" else False,
+        )
 
     def _read_reconnect_qr(self, client):
         if not self._current(self.request_revision):
@@ -587,7 +620,9 @@ class ContactCenterWuzapiReconnectWizard(models.TransientModel):
                 {
                     "state": result[0],
                     "message": message or False,
-                    "retry_at": False,
+                    "retry_at": current.health_retry_not_before
+                    if result[0] == "waiting" and pending_observation
+                    else False,
                     "pending_observation_json": pending_observation,
                 }
             )
