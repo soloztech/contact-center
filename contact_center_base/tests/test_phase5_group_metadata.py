@@ -559,6 +559,35 @@ class TestContactCenterGroupMetadata(SavepointCase):
         self.assertEqual(profile.metadata_state, "failed")
         self.assertEqual(waiter.state, "dead")
 
+    def test_expired_failure_closes_budget_but_keeps_longer_technical_eta(self):
+        _binding, profile = self._create_group()
+        self.env.company.write(
+            {
+                "contact_center_profile_failure_hours": 1,
+                "contact_center_roster_retry_minutes": 120,
+            }
+        )
+        now = fields.Datetime.now()
+        last_read = now - datetime.timedelta(minutes=65)
+        profile.write(
+            {
+                "metadata_state": "failed",
+                "attempts": 12,
+                "last_synced_at": last_read,
+                "sync_requested_at": last_read,
+                "last_error_class": "AdapterError",
+                "next_sync_at": last_read + datetime.timedelta(hours=1),
+            }
+        )
+        waiter = self._roster_waiter(profile, after=now)
+        profile._request_sync(technical=True)
+        owner = self.env["queue.job"].search([("uuid", "=", profile.queue_job_uuid)])
+        self.assertEqual(len(owner), 1)
+        self.assertGreaterEqual(owner.eta, last_read + datetime.timedelta(minutes=120))
+        self.assertEqual(profile.attempts, 0)
+        self.assertFalse(profile.last_error_class)
+        self.assertEqual(waiter.state, "pending")
+
     def test_supersession_before_read_keeps_budget_and_accepted_eta(self):
         _binding, profile = self._create_group()
         eta = fields.Datetime.now() + datetime.timedelta(minutes=10)

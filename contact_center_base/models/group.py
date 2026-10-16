@@ -769,7 +769,9 @@ class ContactCenterGroupProfile(models.Model):
                 )
             )
             continuing = bool(
-                technical and (unfinished or profile._technical_metadata_eta(now) > now)
+                technical
+                and not profile.last_error_class
+                and (unfinished or profile._technical_metadata_eta(now) > now)
             )
             profile._start_metadata_request(
                 now, technical=technical, continuing=continuing
