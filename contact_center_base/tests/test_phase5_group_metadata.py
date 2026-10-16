@@ -20,6 +20,7 @@ from ..services.adapter import (
     AdapterResult,
     ProviderAdapter,
     ProviderRateLimitError,
+    TransientAdapterError,
     UnsupportedEventError,
     adapter_registry,
 )
@@ -586,6 +587,132 @@ class TestContactCenterGroupMetadata(SavepointCase):
         self.assertGreaterEqual(owner.eta, last_read + datetime.timedelta(minutes=120))
         self.assertEqual(profile.attempts, 0)
         self.assertFalse(profile.last_error_class)
+        self.assertEqual(waiter.state, "pending")
+
+    def test_failure_wait_covers_the_last_unsaved_technical_read(self):
+        _binding, profile = self._create_group()
+        self.env.company.write(
+            {
+                "contact_center_profile_failure_hours": 1,
+                "contact_center_roster_retry_minutes": 120,
+            }
+        )
+        start = fields.Datetime.now()
+        old = start - datetime.timedelta(days=2)
+        profile.last_synced_at = old
+        profile._enqueue_sync(technical=True)
+        owner = self.env["queue.job"].search([("uuid", "=", profile.queue_job_uuid)])
+        owner.state = "started"
+        with patch.object(
+            GroupMetadataTestAdapter,
+            "fetch_group_metadata",
+            autospec=True,
+            side_effect=TransientAdapterError("unsaved read"),
+        ) as fetch:
+            for retry in range(12):
+                read_at = start + datetime.timedelta(minutes=120 * retry)
+                owner.retry = retry
+                with patch.object(fields.Datetime, "now", return_value=read_at):
+                    self.connection.write(
+                        {"last_state_observed_at": read_at, "last_health_at": read_at}
+                    )
+                    if retry < 11:
+                        with self.assertRaises(RetryableJobError):
+                            profile.with_context(
+                                job_uuid=owner.uuid
+                            )._job_sync_metadata(profile.sync_revision, technical=True)
+                    else:
+                        self.assertFalse(
+                            profile.with_context(
+                                job_uuid=owner.uuid
+                            )._job_sync_metadata(profile.sync_revision, technical=True)
+                        )
+            self.assertEqual(fetch.call_count, 12)
+        self.assertEqual(profile.last_synced_at, old)
+        self.assertGreaterEqual(
+            profile.next_sync_at, read_at + datetime.timedelta(minutes=120)
+        )
+        owner.state = "done"
+        with patch.object(
+            fields.Datetime,
+            "now",
+            return_value=read_at + datetime.timedelta(minutes=61),
+        ), trap_jobs() as trap:
+            profile._request_sync(technical=True)
+            trap.assert_jobs_count(0)
+        after = read_at + datetime.timedelta(minutes=121)
+        with patch.object(fields.Datetime, "now", return_value=after):
+            waiter = self._roster_waiter(profile, after=after)
+            profile._request_sync(technical=True)
+        successor = self.env["queue.job"].search(
+            [("uuid", "=", profile.queue_job_uuid)]
+        )
+        self.assertEqual(len(successor), 1)
+        self.assertGreaterEqual(
+            successor.eta, read_at + datetime.timedelta(minutes=120)
+        )
+        self.assertEqual(profile.attempts, 0)
+        self.assertEqual(waiter.state, "pending")
+
+    def test_configuration_closes_idle_budget_but_preserves_active_owner(self):
+        _binding, profile = self._create_group()
+        now = fields.Datetime.now()
+        profile.write(
+            {
+                "attempts": 12,
+                "last_synced_at": now,
+                "metadata_state": "failed",
+                "last_error_class": "AdapterError",
+                "next_sync_at": now + datetime.timedelta(days=1),
+            }
+        )
+        with trap_jobs() as trap:
+            self.connection.health_configuration_revision += 1
+            trap.assert_jobs_count(0)
+        self.assertEqual(profile.attempts, 0)
+        waiter = self._roster_waiter(profile, after=now)
+        profile._request_sync(technical=True)
+        owner = self.env["queue.job"].search([("uuid", "=", profile.queue_job_uuid)])
+        self.assertEqual(len(owner), 1)
+        self.assertGreaterEqual(owner.eta, now + datetime.timedelta(minutes=15))
+        self.assertEqual(waiter.state, "pending")
+        profile.attempts = 7
+        with trap_jobs() as trap:
+            self.connection.health_configuration_revision += 1
+            trap.assert_jobs_count(0)
+        self.assertEqual(profile.attempts, 7)
+        self.assertEqual(profile.queue_job_uuid, owner.uuid)
+
+    def test_primary_rebind_closes_idle_budget_without_creating_a_job(self):
+        _binding, profile = self._create_group()
+        replacement = self.connection.copy(
+            {
+                "name": "New metadata primary",
+                "role": "standby",
+                "inbound_active": False,
+                "outbound_active": False,
+            }
+        )
+        replacement.action_use_as_primary()
+        now = fields.Datetime.now()
+        profile.write(
+            {
+                "attempts": 12,
+                "last_synced_at": now,
+                "metadata_state": "failed",
+                "last_error_class": "AdapterError",
+                "next_sync_at": now + datetime.timedelta(days=1),
+            }
+        )
+        with trap_jobs() as trap:
+            profile._bind_current_connection(replacement)
+            trap.assert_jobs_count(0)
+        self.assertEqual(profile.attempts, 0)
+        self.assertFalse(profile.last_error_class)
+        with patch.object(self, "connection", replacement):
+            waiter = self._roster_waiter(profile, after=now)
+        profile._request_sync(replacement, technical=True)
+        self.assertTrue(profile.queue_job_uuid)
         self.assertEqual(waiter.state, "pending")
 
     def test_supersession_before_read_keeps_budget_and_accepted_eta(self):

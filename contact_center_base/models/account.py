@@ -4174,6 +4174,9 @@ class ContactCenterProviderConnection(models.Model):
             )
         )
         if profiles:
+            profiles.filtered(
+                lambda profile: not profile._has_active_queue_job(adopt=False)
+            ).write({"attempts": 0})
             profiles.write(
                 {
                     "own_protocol_participant_json": {},

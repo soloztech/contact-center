@@ -656,7 +656,9 @@ class ContactCenterGroupProfile(models.Model):
             if profile._has_active_queue_job(adopt=False):
                 values["sync_revision"] = profile.sync_revision + 1
             else:
-                values.update({"queue_job_uuid": False, "sync_requested_at": False})
+                values.update(
+                    {"queue_job_uuid": False, "sync_requested_at": False, "attempts": 0}
+                )
             profile.write(values)
         return True
 
@@ -1648,6 +1650,15 @@ class ContactCenterGroupProfile(models.Model):
             "avatar_provider_revision": avatar.provider_revision or False,
         }
 
+    def _failure_retry_at(self):
+        retry_at = fields.Datetime.now() + datetime.timedelta(
+            hours=self.company_id.contact_center_profile_failure_hours
+        )
+        read_started = self.env.context.get("contact_center_metadata_read_started_at")
+        if self.env.context.get("contact_center_technical_roster") and read_started:
+            retry_at = max(retry_at, read_started + self._roster_retry_delta())
+        return retry_at
+
     def _finish_failure(self, error, attempt):
         self.ensure_one()
         self.write(
@@ -1655,10 +1666,7 @@ class ContactCenterGroupProfile(models.Model):
                 "metadata_state": "failed",
                 "attempts": attempt,
                 "queue_job_uuid": False,
-                "next_sync_at": fields.Datetime.now()
-                + datetime.timedelta(
-                    hours=self.company_id.contact_center_profile_failure_hours
-                ),
+                "next_sync_at": self._failure_retry_at(),
                 "last_error_class": error.__class__.__name__[:128],
                 "last_error_message": str(error)[:4000],
             }
@@ -1673,10 +1681,7 @@ class ContactCenterGroupProfile(models.Model):
                 "metadata_state": ("stale" if self.last_synced_at else "unavailable"),
                 "attempts": attempt,
                 "queue_job_uuid": False,
-                "next_sync_at": fields.Datetime.now()
-                + datetime.timedelta(
-                    hours=self.company_id.contact_center_profile_failure_hours
-                ),
+                "next_sync_at": self._failure_retry_at(),
                 "last_error_class": error.__class__.__name__[:128],
                 "last_error_message": str(error)[:4000],
             }
