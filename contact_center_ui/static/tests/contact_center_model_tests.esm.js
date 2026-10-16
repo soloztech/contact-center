@@ -233,7 +233,20 @@ QUnit.module("contact_center_ui > conversation lifecycle", (hooks) => {
     QUnit.test(
         "profile demand requires explicit selection, including reselect",
         async (assert) => {
-            const {store, calls} = e2Store();
+            const {store, calls} = e2Store({
+                respond(method, args) {
+                    if (method === "get_timeline") {
+                        return Promise.resolve({
+                            schema_version: 1,
+                            channel_id: args[0],
+                            items: [e2Full(args[0]).last_message],
+                            has_more: false,
+                            next_before_message_id: false,
+                        });
+                    }
+                    return undefined;
+                },
+            });
             const requests = () =>
                 calls.filter((call) => call.method === "request_conversation_profile");
             try {
@@ -8428,8 +8441,11 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             assert.strictEqual(store.state.selectedChannelId, 10);
             unregister();
             store.call = async (method, args) => {
-                assert.strictEqual(method, "get_conversation");
                 assert.deepEqual(args, [20]);
+                if (method === "request_conversation_profile") {
+                    return {schema_version: SUPPORTED_SCHEMA_VERSION};
+                }
+                assert.strictEqual(method, "get_conversation");
                 return {schema_version: SUPPORTED_SCHEMA_VERSION, item: e2Full(20)};
             };
             store.loadTimeline = async () => true;
@@ -11468,7 +11484,10 @@ QUnit.module("contact_center_ui > model", (hooks) => {
             store.state.timelineChannelId = 10;
             store.state.messages = [{message_id: 10, body_text: "Only A"}];
             store.call = (method, args) => {
-                if (method === "mark_seen") {
+                if (
+                    method === "mark_seen" ||
+                    method === "request_conversation_profile"
+                ) {
                     return Promise.resolve({schema_version: SUPPORTED_SCHEMA_VERSION});
                 }
                 if (method === "get_conversation") {
