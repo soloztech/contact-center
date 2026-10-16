@@ -14104,8 +14104,6 @@ QUnit.module("contact_center_ui > multi-file and structured messages", () => {
     QUnit.test(
         "persistent repair banner is scoped, keyboard reachable and disappears after recovery",
         async (assert) => {
-            makeFakeLocalizationService();
-            const env = await makeTestEnv();
             const store = new ContactCenterStore({
                 orm: {},
                 busService: new EventTarget(),
@@ -14137,7 +14135,6 @@ QUnit.module("contact_center_ui > multi-file and structured messages", () => {
                 });
                 const target = getFixture();
                 await mount(ConnectionHealth, target, {
-                    env,
                     props: {store, state: store.state, mode: "banner", accountId: 10},
                 });
                 assert.strictEqual(target.querySelectorAll('[role="alert"]').length, 1);

@@ -1761,6 +1761,15 @@ export function connectionHealthNeedsAttention(item) {
     return Boolean(normalized && normalized.state !== "connected");
 }
 
+export function connectionHealthAlerts(health, accountId = false) {
+    return ((health && health.items) || []).filter(
+        (item) =>
+            item.connection_role === "primary" &&
+            (!accountId || item.account_id === accountId) &&
+            connectionHealthNeedsAttention(item)
+    );
+}
+
 export function normalizeConnectionHealth(value) {
     if (!isPlainObject(value)) {
         return false;

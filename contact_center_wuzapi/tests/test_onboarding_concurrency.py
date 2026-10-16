@@ -36,6 +36,8 @@ class TestWuzapiOnboardingConcurrency(TransactionCase):
                     "outbound_active": False,
                     "onboarding_ref": str(uuid.uuid4()),
                     "last_health_at": fields.Datetime.now(),
+                    "last_state_observed_at": fields.Datetime.now(),
+                    "last_state_source": "health_job",
                     "wuzapi_base_url": "https://onboarding-fence.invalid",
                     "wuzapi_api_token": "onboarding-fence-token-%s" % token,
                     "wuzapi_hmac_secret": "hmac-%s" % token,

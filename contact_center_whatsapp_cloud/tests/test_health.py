@@ -2,9 +2,10 @@ import datetime
 import os
 from unittest import mock
 
+import requests
+
 from odoo import fields
 
-from odoo.addons.contact_center_base.services.adapter import ProviderPausedError
 from odoo.addons.queue_job.tests.common import trap_jobs
 
 from .common import GRAPH_PATCH, FakeResponse, WhatsAppCloudCase
@@ -109,31 +110,58 @@ class TestWhatsAppCloudHealth(WhatsAppCloudOutboundMixin, WhatsAppCloudCase):
         self.assertEqual(self.connection.state, "degraded")
         self.assertFalse(self.connection._contact_center_outbound_is_available())
 
-    def test_send_after_the_observation_expires_requires_a_new_read(self):
+    def test_old_verified_observation_prepares_send_without_a_health_read(self):
         channel, _inbound = self._conversation()
         outbox = self._send(channel, "Depois da leitura")
         stale = fields.Datetime.now() - datetime.timedelta(
             seconds=self.connection._health_stale_after_seconds + 1
         )
         self.env.cr.execute(
-            "UPDATE contact_center_provider_connection "
-            "SET last_health_at = %s, last_state_observed_at = %s WHERE id = %s",
+            "UPDATE contact_center_provider_connection SET last_health_at = %s, "
+            "last_state_observed_at = %s WHERE id = %s",
             [stale, stale, self.connection.id],
         )
         self.connection.invalidate_recordset()
-        self.assertFalse(self.connection._contact_center_outbound_is_available())
-        with mock.patch(GRAPH_PATCH) as request:
-            with self.assertRaises(ProviderPausedError):
-                outbox._prepare_dispatch()
-        request.assert_not_called()
-        # No webhook renews the observation: only a real (simulated) read does.
-        self.deliver(self.envelope(self.value(messages=[self.text_message()])))
-        self.connection.invalidate_recordset()
-        self.assertFalse(self.connection._contact_center_outbound_is_available())
-        self._run_health_cron({"return_value": self._phone()})
         self.assertTrue(self.connection._contact_center_outbound_is_available())
-        _connection, _command, _adapter, snapshot = outbox._prepare_dispatch()
+        with mock.patch(GRAPH_PATCH) as request:
+            _connection, _command, _adapter, snapshot = outbox._prepare_dispatch()
+        request.assert_not_called()
         self.assertEqual(snapshot["method"], "POST")
+
+    def test_inconclusive_probe_preserves_identity_until_conclusive_recovery(self):
+        before = self.connection.sudo().last_state_observed_at
+        self._run_health_cron(
+            {"side_effect": requests.Timeout("synthetic probe timeout")}
+        )
+        connection = self.connection.sudo()
+        self.assertEqual(connection.state, "connected")
+        self.assertEqual(connection.last_state_observed_at, before)
+        self.assertEqual(connection.last_probe_detail, "unreachable")
+        self.assertFalse(connection._contact_center_outbound_is_available())
+        self._run_health_cron({"return_value": self._phone()})
+        self.assertFalse(connection.last_probe_detail)
+        self.assertTrue(connection._contact_center_outbound_is_available())
+
+    def test_http_rate_limit_is_a_probe_diagnostic_and_preserves_verified_send(self):
+        response = FakeResponse(
+            {"error": {"code": 4, "message": "Synthetic limit"}},
+            status=429,
+            headers={"Retry-After": "19"},
+        )
+        self._run_health_cron({"return_value": response})
+        connection = self.connection.sudo()
+        self.assertEqual(connection.state, "connected")
+        self.assertEqual(connection.last_probe_detail, "rate_limited")
+        self.assertTrue(connection.health_retry_not_before)
+        self.assertTrue(connection._contact_center_outbound_is_available())
+
+    def test_phone_rate_limited_status_is_conclusive_and_blocks_send(self):
+        self._run_health_cron({"return_value": self._phone(status="RATE_LIMITED")})
+        connection = self.connection.sudo()
+        self.assertEqual(connection.state, "degraded")
+        self.assertEqual(connection.health_detail, "rate_limited")
+        self.assertFalse(connection.last_probe_detail)
+        self.assertFalse(connection._contact_center_outbound_is_available())
 
     def test_probe_after_a_backwards_clock_step_still_applies(self):
         # The fixture observed the connection "later" than the host clock now

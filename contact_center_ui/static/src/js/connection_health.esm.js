@@ -3,6 +3,7 @@
 import {Component, useRef, useState} from "@odoo/owl";
 import {
     connectionFleetMeta,
+    connectionHealthAlerts,
     connectionHealthDetail,
     connectionHealthNeedsAttention,
     connectionHealthStateMeta,
@@ -30,11 +31,11 @@ export class ConnectionHealth extends Component {
     }
 
     get health() {
-        return this.store.connectionHealth || {items: [], summary: {}};
+        return this.state.connectionHealth || {items: [], summary: {}};
     }
 
     get alerts() {
-        return this.store.connectionAlerts(this.props.accountId);
+        return connectionHealthAlerts(this.health, this.props.accountId);
     }
 
     canFix(item) {

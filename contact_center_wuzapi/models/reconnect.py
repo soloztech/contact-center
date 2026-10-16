@@ -165,6 +165,10 @@ class ContactCenterWuzapiReconnectWizard(models.TransientModel):
         connection = self._connection(queued=True)
         if lock:
             self.env.cr.execute(
+                "SELECT id FROM contact_center_account WHERE id = %s FOR SHARE",
+                [connection.account_id.id],
+            )
+            self.env.cr.execute(
                 "SELECT id FROM contact_center_provider_connection WHERE id = %s FOR UPDATE",
                 [connection.id],
             )

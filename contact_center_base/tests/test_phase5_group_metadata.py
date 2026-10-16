@@ -101,6 +101,7 @@ class TestContactCenterGroupMetadata(SavepointCase):
                 "provider_schema_version": "fixture-v1",
                 "state": "connected",
                 "last_state_observed_at": now,
+                "last_state_source": "health_job",
                 "last_health_at": now,
                 "active": True,
                 "role": "primary",
@@ -118,6 +119,7 @@ class TestContactCenterGroupMetadata(SavepointCase):
             {
                 "state": "connected",
                 "last_state_observed_at": now,
+                "last_state_source": "health_job",
                 "last_health_at": now,
             }
         )

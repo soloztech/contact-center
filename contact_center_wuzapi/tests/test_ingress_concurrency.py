@@ -596,3 +596,96 @@ class TestWuzapiIngressConcurrency(TransactionCase):
             self.assertEqual(held.state, "blocked")
             self.assertFalse(held.metadata_json.get("pairing_origin_confirmed_by"))
             stale_cr.rollback()
+
+    def test_reconnect_result_does_not_lock_connection_ahead_of_account_writer(self):
+        from odoo.addons.queue_job.tests.common import trap_jobs
+
+        fixture = self._fixture()
+        with self.registry.cursor() as setup_cr:
+            env = api.Environment(setup_cr, SUPERUSER_ID, {})
+            request = env["contact.center.wuzapi.reconnect.wizard"].create(
+                {"connection_id": fixture["connection"]}
+            )
+            with trap_jobs() as trap:
+                request.action_start()
+            wizard_id, revision, job_uuid = (
+                request.id,
+                request.request_revision,
+                trap.enqueued_jobs[0].uuid,
+            )
+            setup_cr.commit()  # pylint: disable=invalid-commit
+        account_locked, share_attempted = threading.Event(), threading.Event()
+        errors, completed = [], []
+        cursor_class = type(self.env.cr)
+        execute = cursor_class.execute
+
+        def observed_execute(cursor, query, *args, **kwargs):
+            if (
+                threading.current_thread().name == "cc-reconnect-result"
+                and isinstance(query, str)
+                and "contact_center_account" in query
+                and "FOR SHARE" in query
+            ):
+                share_attempted.set()
+            return execute(cursor, query, *args, **kwargs)
+
+        def worker(kind):
+            try:
+                with self.registry.cursor() as cr:
+                    cr.execute("SET LOCAL lock_timeout = '8s'")
+                    env = api.Environment(cr, SUPERUSER_ID, {})
+                    if kind == "writer":
+                        cr.execute(
+                            "SELECT id FROM contact_center_account WHERE id = %s FOR UPDATE",
+                            [fixture["account"]],
+                        )
+                        account_locked.set()
+                        if not share_attempted.wait(self.TIMEOUT):
+                            raise TimeoutError(
+                                "Reconnect did not reach account admission"
+                            )
+                        cr.execute(
+                            "SELECT id FROM contact_center_provider_connection "
+                            "WHERE id = %s FOR UPDATE",
+                            [fixture["connection"]],
+                        )
+                    else:
+                        if not account_locked.wait(self.TIMEOUT):
+                            raise TimeoutError("Account writer did not start")
+                        request = (
+                            env["contact.center.wuzapi.reconnect.wizard"]
+                            .browse(wizard_id)
+                            .with_context(job_uuid=job_uuid)
+                        )
+                        connection = request._current(revision, lock=True)
+                        self.assertTrue(connection)
+                        connection._apply_health_result(
+                            {"state": "connected", "identity_matches": True},
+                            records_health_probe=True,
+                        )
+                    cr.commit()  # pylint: disable=invalid-commit
+                    completed.append(kind)
+            except Exception as error:
+                errors.append(error)
+                account_locked.set()
+                share_attempted.set()
+
+        threads = [
+            threading.Thread(
+                target=worker,
+                args=(kind,),
+                name="cc-reconnect-result"
+                if kind == "reconnect"
+                else "cc-account-writer",
+                daemon=True,
+            )
+            for kind in ("writer", "reconnect")
+        ]
+        with mock.patch.object(cursor_class, "execute", new=observed_execute):
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(self.TIMEOUT + 2)
+        self.assertFalse([thread.name for thread in threads if thread.is_alive()])
+        self.assertFalse(errors, [repr(error) for error in errors])
+        self.assertEqual(set(completed), {"writer", "reconnect"})

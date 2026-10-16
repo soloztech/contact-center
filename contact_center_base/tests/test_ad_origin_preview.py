@@ -580,6 +580,7 @@ class TestContactCenterAdOriginPreview(SavepointCase):
         self.connection.write(
             {
                 "last_state_observed_at": fields.Datetime.now(),
+                "last_state_source": "health_job",
                 "last_health_at": fields.Datetime.now(),
             }
         )

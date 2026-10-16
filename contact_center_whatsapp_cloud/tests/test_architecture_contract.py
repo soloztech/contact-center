@@ -60,7 +60,7 @@ class TestWhatsAppCloudArchitectureContract(WhatsAppCloudCase):
             manifest["depends"],
             ["contact_center_base", "meta_api_base", "meta_webhook_base"],
         )
-        self.assertEqual(manifest["version"], "16.0.1.0.0")
+        self.assertEqual(manifest["version"], "16.0.1.0.1")
         self.assertEqual(adapter_registry.owner("whatsapp_cloud"), _MODULE)
 
     def test_no_controller_migration_or_duplicate_ledger(self):

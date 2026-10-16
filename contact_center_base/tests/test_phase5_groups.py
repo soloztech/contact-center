@@ -1090,6 +1090,7 @@ class TestContactCenterGroups(SavepointCase):
             {
                 "last_health_at": now,
                 "last_state_observed_at": now,
+                "last_state_source": "health_job",
             }
         )
         result = (
@@ -1733,7 +1734,11 @@ class TestContactCenterGroups(SavepointCase):
         self.account.outbound_signature_enabled = True
         now = fields.Datetime.now()
         self.connection.sudo().write(
-            {"last_health_at": now, "last_state_observed_at": now}
+            {
+                "last_health_at": now,
+                "last_state_observed_at": now,
+                "last_state_source": "health_job",
+            }
         )
         card = {
             "type": "list",
@@ -1840,6 +1845,7 @@ class TestContactCenterGroups(SavepointCase):
             {
                 "last_health_at": now,
                 "last_state_observed_at": now,
+                "last_state_source": "health_job",
             }
         )
         api = (
@@ -1942,6 +1948,7 @@ class TestContactCenterGroups(SavepointCase):
             {
                 "last_health_at": now,
                 "last_state_observed_at": now,
+                "last_state_source": "health_job",
                 "last_success_at": False,
             }
         )
@@ -2028,6 +2035,7 @@ class TestContactCenterGroups(SavepointCase):
             {
                 "last_health_at": now,
                 "last_state_observed_at": now,
+                "last_state_source": "health_job",
             }
         )
         result = (
@@ -2070,6 +2078,7 @@ class TestContactCenterGroups(SavepointCase):
             {
                 "last_health_at": now,
                 "last_state_observed_at": now,
+                "last_state_source": "health_job",
             }
         )
         result = (
@@ -2244,6 +2253,7 @@ class TestContactCenterGroups(SavepointCase):
         self.connection.write(
             {
                 "last_state_observed_at": now,
+                "last_state_source": "health_job",
                 "last_health_at": now,
             }
         )

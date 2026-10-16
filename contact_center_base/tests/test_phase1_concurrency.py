@@ -72,6 +72,7 @@ class TestPhase1Concurrency(TransactionCase):
                     "outbound_active": True,
                     "capabilities_json": {"send_message": True},
                     "last_state_observed_at": fields.Datetime.now(),
+                    "last_state_source": "health_job",
                 }
             )
             pn = "55%s@s.whatsapp.net" % token[:16]
@@ -1808,6 +1809,7 @@ class TestPhase1Concurrency(TransactionCase):
                     "outbound_active": False,
                     "capabilities_json": {"send_message": True},
                     "last_state_observed_at": fields.Datetime.now(),
+                    "last_state_source": "health_job",
                 }
             )
             result = binding.channel_id.id, replacement.id
