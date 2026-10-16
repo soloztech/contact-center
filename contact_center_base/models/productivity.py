@@ -13,6 +13,7 @@ from odoo.tools.mail import plaintext2html
 
 from odoo.addons.queue_job.exception import RetryableJobError
 
+from ..services.adapter import conversation_capabilities
 from ..services.dto import SCHEMA_VERSION
 from ..services.tokens import (
     CONTACT_CENTER_DELETION_TOKEN,
@@ -894,23 +895,22 @@ class ContactCenterScheduledMessage(models.Model):
                 seconds=max(1, math.ceil((scheduled_at - now).total_seconds())),
             )
 
-        self._service_write({"state": "processing"})
         requester = self.requested_by_id.sudo().exists()
         try:
             if not requester or not requester.active or requester.share:
                 raise AccessError(
                     _("The user who scheduled this message is unavailable.")
                 )
+            api_model = self.env["contact.center.ui.api"].with_user(requester)
+            if self._wait_for_group_identity(api_model):
+                return False
+            self._service_write({"state": "processing"})
             with self.env.cr.savepoint():
-                result = (
-                    self.env["contact.center.ui.api"]
-                    .with_user(requester)
-                    .send_message(
-                        self.channel_id.id,
-                        self.body,
-                        client_request_id=self.outbound_request_id,
-                        media_refs=[],
-                    )
+                result = api_model.send_message(
+                    self.channel_id.id,
+                    self.body,
+                    client_request_id=self.outbound_request_id,
+                    media_refs=[],
                 )
         except (AccessError, UserError, ValidationError) as error:
             self._service_write(
@@ -935,6 +935,68 @@ class ContactCenterScheduledMessage(models.Model):
             }
         )
         self._notify_productivity()
+        return True
+
+    def _wait_for_group_identity(self, api_model):
+        channel, _member = api_model._authorized_channel(self.channel_id.id)
+        binding = api_model._binding_for_channel(channel).sudo()
+        if binding.conversation_type != "group":
+            return False
+        application = self.env["contact.center.application"]
+        current = binding.account_id.connection_ids.filtered(
+            lambda item: item.outbound_active
+            and (
+                item._contact_center_inbound_is_available()
+                or item._contact_center_outbound_is_available()
+            )
+        )[:1]
+        if current:
+            application._group_profile_for_connection(binding, current)
+        connection = application._outbound_connection(
+            binding,
+            "send_message",
+            _("The active provider connection cannot send messages yet."),
+        )
+        capabilities = conversation_capabilities(
+            connection.capabilities_json or {}, "group"
+        )
+        if not capabilities.get(
+            "reply_requires_participant"
+        ) or application._group_own_protocol_participant(binding, connection):
+            return False
+        profile = application._group_profile_for_connection(binding, connection)
+        if (
+            not profile
+            or (
+                profile.last_error_class
+                and profile.next_sync_at
+                and profile.next_sync_at > fields.Datetime.now()
+            )
+            or (
+                profile.metadata_state == "ready"
+                and profile.roster_complete
+                and profile.applied_revision == profile.sync_revision
+                and profile.next_sync_at
+            )
+        ):
+            raise UserError(
+                _(
+                    "The provider could not confirm this session's identity in the group."
+                )
+            )
+        already_active = profile._has_active_queue_job(adopt=False)
+        profile._request_sync(connection, technical=True)
+        if profile.last_error_class or not profile.queue_job_uuid:
+            raise UserError(_("The group participant check could not be scheduled."))
+        if already_active:
+            raise RetryableJobError(
+                _("Waiting for the group participant check."),
+                seconds=60,
+                ignore_retry=True,
+            )
+        # Commit the new roster demand; raising RetryableJobError here would
+        # roll it back. The scheduled recovery lane resumes this release.
+        self._service_write({"queue_job_uuid": False})
         return True
 
     @api.model

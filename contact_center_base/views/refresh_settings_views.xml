@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="res_config_settings_view_contact_center_refresh" model="ir.ui.view">
+        <field name="name">res.config.settings.contact.center.refresh</field>
+        <field name="model">res.config.settings</field>
+        <field
+            name="inherit_id"
+            ref="res_config_settings_view_contact_center_companies"
+        />
+        <field name="arch" type="xml">
+            <xpath expr="//div[@data-key='contact_center_base']" position="inside">
+                <h2>Updates</h2>
+                <div
+                    class="text-muted mb16"
+                >These settings apply to the selected company. Profiles and groups update when a conversation is opened and its cached information has expired. A change notification allows an earlier update on the next opening. Saving these settings does not request updates.</div>
+                <div class="row mt16 o_settings_container">
+                    <div class="col-12 col-lg-6 o_setting_box">
+                        <div class="o_setting_right_pane">
+                            <label for="contact_center_contact_cache_days" />
+                            <div><field
+                                    name="contact_center_contact_cache_days"
+                                /></div>
+                            <div
+                                class="text-muted"
+                            >From 1 to 365 days. All agents share the cached result.</div>
+                        </div>
+                    </div>
+                    <div class="col-12 col-lg-6 o_setting_box">
+                        <div class="o_setting_right_pane">
+                            <label for="contact_center_group_cache_days" />
+                            <div><field name="contact_center_group_cache_days" /></div>
+                            <div
+                                class="text-muted"
+                            >From 1 to 365 days. Participant checks needed for group operations remain available.</div>
+                        </div>
+                    </div>
+                    <div class="col-12 col-lg-6 o_setting_box">
+                        <div class="o_setting_right_pane">
+                            <label for="contact_center_health_interval_minutes" />
+                            <div><field
+                                    name="contact_center_health_interval_minutes"
+                                /></div>
+                            <div
+                                class="text-muted"
+                            >From 1 to 60 minutes, starting with the next scheduled check. Sending does not require a prior check.</div>
+                        </div>
+                    </div>
+                    <div class="col-12 col-lg-6 o_setting_box">
+                        <div class="o_setting_right_pane">
+                            <label for="contact_center_profile_failure_hours" />
+                            <div><field
+                                    name="contact_center_profile_failure_hours"
+                                /></div>
+                            <div
+                                class="text-muted"
+                            >From 1 to 168 hours after a profile or group update exhausts its attempts. Existing waits are preserved.</div>
+                        </div>
+                    </div>
+                    <div class="col-12 col-lg-6 o_setting_box">
+                        <div class="o_setting_right_pane">
+                            <label for="contact_center_roster_retry_minutes" />
+                            <div><field
+                                    name="contact_center_roster_retry_minutes"
+                                /></div>
+                            <div
+                                class="text-muted"
+                            >From 1 to 1440 minutes between participant checks needed to complete pending group operations.</div>
+                        </div>
+                    </div>
+                </div>
+            </xpath>
+        </field>
+    </record>
+</odoo>

@@ -1171,6 +1171,18 @@ class ContactCenterInboxEvent(models.Model):
                 getattr(record, specification["enqueue_method"])()
                 record.invalidate_recordset(["queue_job_uuid"])
                 recovered[lane] += int(bool(record.queue_job_uuid))
+        avatar_recovered = self.env[
+            "contact.center.channel.binding"
+        ]._recover_identity_avatar_requests(cutoff, min(limit_per_model, 100))
+        group_recovered = self.env[
+            "contact.center.group.profile"
+        ]._recover_metadata_requests(cutoff, min(limit_per_model, 100))
+        if avatar_recovered or group_recovered:
+            _logger.info(
+                "Recovered Contact Center profile requests: avatars=%s groups=%s",
+                avatar_recovered,
+                group_recovered,
+            )
         if any(recovered.values()):
             _logger.info("Recovered orphaned Contact Center jobs: %s", recovered)
         return recovered
@@ -1272,6 +1284,7 @@ class ContactCenterInboxEvent(models.Model):
             or error.provider_connection_id != connection.id
             or profile.provider_connection_id != connection
             or profile.account_id != self.account_id
+            or not connection._contact_center_inbound_is_available()
         ):
             scope_error = ValidationError(
                 _("The requested group roster refresh is outside the inbox scope.")
@@ -1297,21 +1310,31 @@ class ContactCenterInboxEvent(models.Model):
             self._finish_failure("dead", ceiling_error, attempts=attempt)
             return False
 
-        profile.invalidate_recordset(["sync_requested_at", "queue_job_uuid"])
-        sync_requested_at = fields.Datetime.to_datetime(profile.sync_requested_at)
-        # Reuse only a refresh requested after this event. An older active job may
-        # return a perfectly valid snapshot that still predates a promotion or
-        # demotion; superseding its revision makes it schedule one successor.
-        refresh_already_covers_event = bool(
-            sync_requested_at
-            and sync_requested_at >= error.required_after
-            and profile._has_active_queue_job(adopt=False)
-        )
+        profile.invalidate_recordset()
+        if (
+            profile.last_error_class
+            and profile.next_sync_at
+            and profile.next_sync_at > now
+        ):
+            self._finish_failure(
+                "dead",
+                GroupRosterMetadataFailedError(
+                    "group metadata is waiting after failure"
+                ),
+                attempts=attempt,
+            )
+            return False
         profile.with_context(contact_center_skip_enqueue=False)._request_sync(
             connection,
-            force=True,
-            skip_if_active=refresh_already_covers_event,
+            technical=True,
         )
+        if profile.last_error_class:
+            self._finish_failure(
+                "dead",
+                GroupRosterMetadataFailedError("group metadata refresh failed"),
+                attempts=attempt,
+            )
+            return False
         metadata = dict(self.metadata_json or {})
         metadata.update(
             {

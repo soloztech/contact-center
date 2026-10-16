@@ -500,7 +500,7 @@ class TestWuzapiOnboarding(SavepointCase):
         self.assertEqual(trap.enqueued_jobs[0].args[2], revision + 1)
         self.assertEqual(profile.own_protocol_participant_health_revision, 0)
         self.assertEqual(profile.metadata_state, "stale")
-        self.assertLessEqual(profile.next_sync_at, fields.Datetime.now())
+        self.assertFalse(profile.next_sync_at)
         with trap_jobs():
             connection._enqueue_wuzapi_onboarding("check")
         self.assertEqual(connection.health_configuration_revision, revision + 1)

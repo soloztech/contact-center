@@ -16,6 +16,7 @@ from ..services.adapter import (
     AdapterResult,
     ProviderAdapter,
     TransientAdapterError,
+    UnsupportedEventError,
     adapter_registry,
 )
 from ..services.dto import (
@@ -201,6 +202,9 @@ class TestContactCenterIdentityAvatar(SavepointCase):
             )
         )
         self.assertTrue(binding)
+        binding.with_context(
+            contact_center_skip_enqueue=True
+        )._request_identity_avatar_sync(self.connection)
         return binding
 
     def _sync(self, binding, avatar):
@@ -221,23 +225,133 @@ class TestContactCenterIdentityAvatar(SavepointCase):
             expected_revision
         )
 
-    def test_first_direct_message_schedules_avatar_without_provider_io(self):
+    def test_first_direct_message_does_not_request_profile(self):
         with trap_jobs() as trap:
             self.env["contact.center.application"]._process_event(
                 self.connection, self._event()
             )
-            trap.assert_jobs_count(1)
-            job = trap.enqueued_jobs[0]
-            binding = self.env["contact.center.channel.binding"].search(
-                [("conversation_ref", "=", self.remote_jid)], limit=1
-            )
-            self.assertEqual(job.channel, "root.contact_center.identity_avatar")
-            self.assertEqual(job.priority, 60)
-            self.assertEqual(
-                job.identity_key,
-                "contact_center:identity_avatar:%s:1" % binding.id,
-            )
+            trap.assert_jobs_count(0)
         self.assertIsNone(IdentityAvatarTestAdapter.observed_address)
+
+    def test_open_requests_profile_once_and_reuses_shared_cache(self):
+        binding = self._create_direct_binding()
+        api_model = self.env["contact.center.ui.api"].with_user(self.agent)
+        api_model.request_conversation_profile(binding.channel_id.id)
+        owner = self.env["queue.job"].search(
+            [("uuid", "=", binding.direct_avatar_queue_job_uuid)]
+        )
+        self.assertEqual(len(owner), 1)
+        with trap_jobs() as trap:
+            api_model.request_conversation_profile(binding.channel_id.id)
+            trap.assert_jobs_count(0)
+        self.assertIsNone(IdentityAvatarTestAdapter.observed_address)
+        self.assertTrue(self._sync(binding, AvatarResult(state="absent")))
+        owner.write({"state": "done"})
+        now = fields.Datetime.now()
+        binding.write(
+            {
+                "direct_avatar_last_synced_at": now - datetime.timedelta(days=6),
+                "direct_avatar_next_sync_at": now - datetime.timedelta(days=5),
+            }
+        )
+        with trap_jobs() as trap:
+            api_model.request_conversation_profile(binding.channel_id.id)
+            trap.assert_jobs_count(0)
+        self.env.company.contact_center_contact_cache_days = 5
+        with trap_jobs() as trap:
+            api_model.request_conversation_profile(binding.channel_id.id)
+            trap.assert_jobs_count(1)
+
+    def test_avatar_error_wait_and_configuration_fix(self):
+        binding = self._create_direct_binding()
+        self._sync(binding, AvatarResult(state="absent"))
+        binding._finish_identity_avatar_unavailable(
+            UnsupportedEventError("temporarily unavailable"), 1
+        )
+        with trap_jobs() as trap:
+            binding._request_identity_avatar_sync(self.connection)
+            binding._invalidate_identity_avatar()
+            binding._request_identity_avatar_sync(self.connection)
+            trap.assert_jobs_count(0)
+            self.connection.write(
+                {
+                    "health_configuration_revision": (
+                        self.connection.health_configuration_revision + 1
+                    )
+                }
+            )
+            trap.assert_jobs_count(0)
+            self.assertFalse(binding.direct_avatar_last_error_class)
+            binding._request_identity_avatar_sync(self.connection)
+            trap.assert_jobs_count(1)
+
+    def test_avatar_terminal_owner_recovery_preserves_queue_history(self):
+        binding = self._create_direct_binding()
+        for state in ("failed", "cancelled"):
+            with self.subTest(state=state):
+                binding.write({"direct_avatar_last_error_class": False})
+                binding._enqueue_identity_avatar_sync()
+                owner = self.env["queue.job"].search(
+                    [("uuid", "=", binding.direct_avatar_queue_job_uuid)]
+                )
+                owner.write({"state": state})
+                binding.direct_avatar_sync_requested_at = (
+                    fields.Datetime.now() - datetime.timedelta(minutes=10)
+                )
+                with trap_jobs() as trap:
+                    self.env[
+                        "contact.center.inbox.event"
+                    ]._cron_recover_orphaned_queue_jobs()
+                    trap.assert_jobs_count(0)
+                self.assertEqual(binding.direct_avatar_state, "failed")
+                self.assertEqual(
+                    binding.direct_avatar_last_error_class, "ProfileQueueJobError"
+                )
+                self.assertFalse(binding.direct_avatar_queue_job_uuid)
+                self.assertEqual(owner.state, state)
+
+    def _assert_avatar_primary_fence(self, during_read):
+        binding = self._create_direct_binding()
+        binding._enqueue_identity_avatar_sync()
+        owner_uuid = binding.direct_avatar_queue_job_uuid
+        replacement = self.connection.copy(
+            {
+                "name": "Avatar new primary",
+                "external_ref": "avatar-primary-%s" % uuid.uuid4(),
+                "role": "standby",
+                "inbound_active": False,
+                "outbound_active": False,
+            }
+        )
+
+        def change_primary(*_args):
+            replacement.action_use_as_primary()
+            return IdentityProfileResult(
+                display_name="Obsolete primary", avatar=AvatarResult(state="absent")
+            )
+
+        if not during_read:
+            replacement.action_use_as_primary()
+        with patch.object(
+            IdentityAvatarTestAdapter,
+            "fetch_identity_profile",
+            autospec=True,
+            side_effect=change_primary,
+        ) as fetch:
+            self.assertFalse(
+                binding.with_context(job_uuid=owner_uuid)._job_sync_identity_avatar(
+                    binding.direct_avatar_sync_revision
+                )
+            )
+        self.assertEqual(fetch.call_count, int(during_read))
+        self.assertFalse(binding.direct_avatar_last_synced_at)
+        self.assertNotEqual(binding.identity_id.name, "Obsolete primary")
+
+    def test_avatar_cannot_read_from_old_primary(self):
+        self._assert_avatar_primary_fence(False)
+
+    def test_avatar_cannot_apply_after_primary_change_during_read(self):
+        self._assert_avatar_primary_fence(True)
 
     def test_identity_avatar_worker_requires_exact_persisted_owner(self):
         binding = self._create_direct_binding()
@@ -417,7 +531,8 @@ class TestContactCenterIdentityAvatar(SavepointCase):
 
         binding.invalidate_recordset()
         self.assertEqual(result, binding)
-        self.assertEqual(binding.direct_avatar_sync_revision, revision + 1)
+        self.assertEqual(binding.direct_avatar_sync_revision, revision)
+        self.assertFalse(binding.direct_avatar_next_sync_at)
         self.assertEqual(
             self.env["mail.message"].sudo().search_count([]), message_count
         )
@@ -640,6 +755,9 @@ class TestContactCenterIdentityAvatar(SavepointCase):
                 limit=1,
             )
         )
+        partner_binding.with_context(
+            contact_center_skip_enqueue=True
+        )._request_identity_avatar_sync(self.connection)
         partner_identity = partner_binding.identity_id
         partner = self.env["res.partner"].create({"name": "Canonical Partner"})
         partner_identity.with_user(self.agent).action_link_partner(partner.id)

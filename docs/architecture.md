@@ -207,6 +207,38 @@ operacional ou no bus. Consulte
 [mídia](../research/wuzapi-media-transport.md) e
 [saúde da sessão](../research/wuzapi-session-lifecycle.md).
 
+## Atualizações sob demanda e Definições
+
+O bloco Contact Center nas Definições nativas permite configurar, por empresa, a
+validade de perfil/foto de contato e de informações/foto de grupo (7 dias), o intervalo
+de status de conexão saudável (60 minutos), a espera após esgotar as tentativas de
+perfil/grupo (24 horas) e o intervalo mínimo de consultas de participantes necessárias a
+operações pendentes (15 minutos).
+
+Uma seleção explícita de conversa solicita enriquecimento sem bloquear a tela. O
+servidor compartilha cache e proprietário do job entre agentes. Lista, restore, refresh,
+mensagens comuns e passagem do prazo não solicitam renovação. Um aviso real do provedor
+invalida o cache para a próxima abertura; não antecipa a espera de uma falha terminal.
+Nem todos os provedores emitem todos esses avisos.
+
+Os antigos crons de enriquecimento permanecem inativos, com métodos compatíveis que não
+fazem trabalho. A recuperação de fila existente resgata apenas pedidos duráveis ou
+dependências não cobertas; não seleciona contatos pela idade do cache. Mudança de
+configuração/primária invalida observações locais, sem criar jobs em lote. Uma conversa
+aberta pode precisar ser reaberta após essa mudança.
+
+Participantes também são evidência de protocolo. Edições, reações, recibos, autorização
+de exclusão e envio agendado podem registrar uma consulta técnica quando falta essa
+evidência. Pedidos compartilham o job, a espera e o teto de 12 tentativas. O job de
+grupo lê informações e foto junto, inclusive nessa exceção. Uma resposta parcial pode
+servir à exibição, mas não comprova um roster completo.
+
+Salvar parâmetros não consulta o provedor, não reprograma jobs aceitos e não reescreve
+caches. A validade atual vale na próxima abertura; os intervalos valem no próximo
+agendamento natural. A validade operacional de saúde permanece em 3 horas, independente
+do intervalo configurado. Envio continua sem healthcheck prévio e LID válido continua
+sem renovação por idade.
+
 ## Conversa, Atendimento e CRM
 
 A conversa usa `open`, `resolved` e `archived`. Uma mensagem nova aceita reabre uma

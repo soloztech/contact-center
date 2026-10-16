@@ -38,6 +38,7 @@ from . import (
     test_productivity,
     test_queue_recovery,
     test_quick_reply_management,
+    test_refresh_settings,
     test_resolution,
     test_retention,
     test_source_webhook_link,

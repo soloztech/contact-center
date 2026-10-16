@@ -294,7 +294,6 @@ class ContactCenterStartConversation(models.AbstractModel):
                 application._enrich_channel_aliases(binding, resolved.addresses)
                 channel, member = self._authorized_channel(binding.channel_id.id)
                 if not existing:
-                    binding._request_identity_avatar_sync(current_connection)
                     application._notify_ui(channel, "conversation_updated", {})
                 return {
                     "schema_version": SCHEMA_VERSION,

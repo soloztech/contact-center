@@ -100,11 +100,7 @@ class TestMetaPhase62Pipeline(MetaCase):
                 for job in trap.enqueued_jobs
                 if job.channel.startswith("root.contact_center.")
             ]
-            self.assertEqual(len(contact_center_jobs), 1)
-            self.assertEqual(
-                contact_center_jobs[0].channel,
-                "root.contact_center.identity_avatar",
-            )
+            self.assertEqual(contact_center_jobs, [])
 
         message_binding = self._message_binding("m_phase62_messenger_inbound")
         self.assertTrue(message_binding)
@@ -145,8 +141,8 @@ class TestMetaPhase62Pipeline(MetaCase):
         self.assertTrue(
             self.connection.get_adapter().supports_identity_profile(self.connection)
         )
-        self.assertEqual(channel_binding.direct_avatar_state, "pending")
-        self.assertTrue(channel_binding.direct_avatar_queue_job_uuid)
+        self.assertEqual(channel_binding.direct_avatar_state, "unavailable")
+        self.assertFalse(channel_binding.direct_avatar_queue_job_uuid)
 
     def test_invalid_referral_never_discards_the_customer_message(self):
         envelope = self.load_fixture("messenger_phase62.json")
@@ -471,11 +467,7 @@ class TestMetaPhase62Pipeline(MetaCase):
                 for job in trap.enqueued_jobs
                 if job.channel.startswith("root.contact_center.")
             ]
-            self.assertEqual(len(contact_center_jobs), 1)
-            self.assertEqual(
-                contact_center_jobs[0].channel,
-                "root.contact_center.identity_avatar",
-            )
+            self.assertEqual(contact_center_jobs, [])
 
         inbox.invalidate_recordset()
         self.assertEqual(inbox.state, "done")

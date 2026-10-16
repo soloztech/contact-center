@@ -20,7 +20,7 @@
         <field name="interval_type">minutes</field>
         <field name="numbercall">-1</field>
         <field name="doall" eval="False" />
-        <field name="active" eval="True" />
+        <field name="active" eval="False" />
     </record>
     <record id="ir_cron_contact_center_identity_avatar" model="ir.cron">
         <field name="name">Contact Center: schedule identity avatar sync</field>
@@ -31,6 +31,6 @@
         <field name="interval_type">minutes</field>
         <field name="numbercall">-1</field>
         <field name="doall" eval="False" />
-        <field name="active" eval="True" />
+        <field name="active" eval="False" />
     </record>
 </odoo>

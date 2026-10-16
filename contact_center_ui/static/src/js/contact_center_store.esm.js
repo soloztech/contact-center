@@ -3868,6 +3868,30 @@ export class ContactCenterStore {
         if (this.selectionRefused(channelId)) {
             return false;
         }
+        const changedConversation = this.state.selectedChannelId !== channelId;
+        if (
+            changedConversation &&
+            this.conversationSelectionGuard &&
+            this.conversationSelectionGuard(channelId) === false
+        ) {
+            // A refused switch changes nothing, the reading pause included.
+            return false;
+        }
+        if (!restored) {
+            Promise.resolve()
+                .then(() => {
+                    if (!this.destroyed && this.state.selectedChannelId === channelId) {
+                        return this.call(
+                            "request_conversation_profile",
+                            [channelId],
+                            {},
+                            {silent: true}
+                        );
+                    }
+                    return false;
+                })
+                .catch(() => false);
+        }
         if (
             this.state.selectedChannelId === channelId &&
             this.state.timelineChannelId === channelId &&
@@ -3881,15 +3905,6 @@ export class ContactCenterStore {
                 this.state.mobilePane = "conversation";
             }
             return true;
-        }
-        const changedConversation = this.state.selectedChannelId !== channelId;
-        if (
-            changedConversation &&
-            this.conversationSelectionGuard &&
-            this.conversationSelectionGuard(channelId) === false
-        ) {
-            // A refused switch changes nothing, the reading pause included.
-            return false;
         }
         if (!restored) {
             // A selection by the agent is an interaction: reading resumes, and

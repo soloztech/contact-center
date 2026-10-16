@@ -380,6 +380,32 @@ class TestConnectionHealth(SavepointCase):
                 )
                 trap.assert_jobs_count(expected)
 
+    def test_setting_changes_future_interval_without_changing_health_or_eta(self):
+        now = fields.Datetime.now()
+        self.connection.write(
+            {
+                "state": "connected",
+                "last_state_observed_at": now,
+                "last_state_source": "health_job",
+                "next_health_check_at": now + datetime.timedelta(hours=1),
+            }
+        )
+        eta = self.connection.next_health_check_at
+        for minutes in (5, 60):
+            with trap_jobs() as trap:
+                self.env.company.contact_center_health_interval_minutes = minutes
+                trap.assert_jobs_count(0)
+            self.assertEqual(self.connection.next_health_check_at, eta)
+            self.assertEqual(self.connection.state, "connected")
+            self.assertEqual(self.connection._health_stale_after_seconds, 10800)
+            values = self.connection._health_retry_values(
+                {"conclusive": True}, now, eta, reschedule=True, new_state="connected"
+            )
+            self.assertEqual(
+                values["next_health_check_at"],
+                now + datetime.timedelta(minutes=minutes),
+            )
+
     def test_checking_expires_before_the_operational_health_window(self):
         now = fields.Datetime.now()
         self.connection.write(
@@ -692,6 +718,7 @@ class TestConnectionHealth(SavepointCase):
         )
         self.assertEqual(contract["priority_floor"], 30)
         self.assertEqual(contract["interval_seconds"], 3600)
+        self.assertEqual(contract["stale_after_seconds"], 10800)
         self.assertEqual(contract["jitter_window_seconds"], 30)
         self.assertNotIn("token", repr(contract).lower())
 

@@ -989,7 +989,7 @@ class TestPhase1Delivery(SavepointCase):
             counts_before["contact.center.outbox.command"],
         )
 
-    def test_unknown_external_device_conversation_requests_remote_profile(self):
+    def test_unknown_external_device_conversation_does_not_request_remote_profile(self):
         event = self._unknown_direct_from_me_event()
         binding_type = type(self.env["contact.center.channel.binding"])
 
@@ -1003,10 +1003,7 @@ class TestPhase1Delivery(SavepointCase):
                 self.connection, event
             )
 
-        self.assertEqual(request_profile.call_count, 1)
-        requested_binding, requested_connection = request_profile.call_args.args[:2]
-        self.assertEqual(requested_binding.conversation_type, "direct")
-        self.assertEqual(requested_connection, self.connection)
+        request_profile.assert_not_called()
 
     def test_unknown_external_device_requires_author_before_creating_records(self):
         event = self._unknown_direct_from_me_event()

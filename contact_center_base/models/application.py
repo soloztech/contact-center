@@ -56,8 +56,12 @@ class IdentityConflictError(Exception):
         )
 
 
+class GroupParticipantMissingError(TransientAdapterError):
+    """An address is absent, rather than temporarily blocked by an alias race."""
+
+
 class GroupRosterRefreshRequired(TransientAdapterError):
-    """Defer one privileged group mutation until a post-event roster exists.
+    """Defer a group operation until a post-event roster exists.
 
     The identifiers are local database keys only.  Inbox processing catches this
     outside its projection savepoint so that the metadata job request can be
@@ -65,9 +69,7 @@ class GroupRosterRefreshRequired(TransientAdapterError):
     """
 
     def __init__(self, group_profile_id, provider_connection_id, required_after):
-        super().__init__(
-            "group administrator authorization is waiting for a current roster"
-        )
+        super().__init__("group operation is waiting for a current roster")
         self.group_profile_id = int(group_profile_id)
         self.provider_connection_id = int(provider_connection_id)
         self.required_after = required_after
@@ -540,6 +542,12 @@ class ContactCenterApplication(models.AbstractModel):
         binding.ensure_one()
         connection.ensure_one()
         profile = binding.group_profile_ids.sudo()[:1]
+        if not profile and connection._contact_center_inbound_is_available():
+            profile = self.env["contact.center.group.profile"]._get_or_create(
+                binding, connection
+            )
+        if profile and profile.provider_connection_id != connection:
+            profile._bind_current_connection(connection)
         if not profile or profile.provider_connection_id != connection:
             raise ValidationError(
                 _("The group conversation is not tied to this provider " "connection.")
@@ -561,7 +569,7 @@ class ContactCenterApplication(models.AbstractModel):
             addresses, active_only=active_only, enrich=enrich
         )
         if not participant:
-            raise TransientAdapterError(
+            raise GroupParticipantMissingError(
                 "group participant aliases are waiting for roster correlation"
             )
         return profile, participant
@@ -600,22 +608,16 @@ class ContactCenterApplication(models.AbstractModel):
         """Resolve participants and the roster authorization horizon."""
 
         profile = self._group_profile_for_connection(binding, connection)
-        roster_is_authoritative = True
-        required_after = None
-        if mutation.get("type") == "delete":
-            (
-                roster_is_authoritative,
-                required_after,
-            ) = self._group_roster_authority_status(
-                profile, event, inbox_event=inbox_event
-            )
+        roster_is_authoritative, required_after = self._group_roster_authority_status(
+            profile, event, inbox_event=inbox_event
+        )
 
-        def refresh_or_original(error):
-            if mutation.get("type") == "delete" and not roster_is_authoritative:
+        def refresh_or_terminal(error):
+            if not roster_is_authoritative:
                 return GroupRosterRefreshRequired(
                     profile.id, connection.id, required_after
                 )
-            return error
+            return ValidationError(str(error))
 
         try:
             _profile, actor_participant = self._group_roster_participant(
@@ -625,16 +627,16 @@ class ContactCenterApplication(models.AbstractModel):
                 active_only=False,
                 enrich=True,
             )
-        except TransientAdapterError as error:
+        except GroupParticipantMissingError as error:
             # A participant that joined after the cached roster cannot be resolved
             # yet. Convert that ordinary retry into the durable refresh dependency.
-            raise refresh_or_original(error) from error
+            raise refresh_or_terminal(error) from error
         try:
             target_participant = self._group_mutation_target_participant(
                 binding, connection, target, mutation
             )
-        except TransientAdapterError as error:
-            raise refresh_or_original(error) from error
+        except GroupParticipantMissingError as error:
+            raise refresh_or_terminal(error) from error
         return (
             profile,
             actor_participant,
@@ -713,8 +715,12 @@ class ContactCenterApplication(models.AbstractModel):
                 # revision is waiting for its first roster.  Corrupt or ambiguous
                 # persisted evidence still raises ValidationError from the resolver
                 # and must remain a permanent inbox failure.
-                raise TransientAdapterError(
-                    "group mutation is waiting for current session roster correlation"
+                if not roster_is_authoritative:
+                    raise GroupRosterRefreshRequired(
+                        profile.id, connection.id, required_after
+                    )
+                raise ValidationError(
+                    _("The current sender is absent from the confirmed group roster.")
                 )
             own_participant = profile._resolve_protocol_participant(
                 (own_address,), active_only=True
@@ -742,8 +748,8 @@ class ContactCenterApplication(models.AbstractModel):
             )
         if mutation_type == "delete":
             # Administrator deletes are the only inbound mutation whose
-            # authorization depends on mutable roster roles.  A six-hour cache is
-            # suitable for display, but it cannot be authoritative for a delete
+            # authorization depends on mutable roster roles. A display cache
+            # cannot be authoritative for a delete
             # received after that snapshot: a participant may have been promoted
             # or demoted in the meantime.  Require one complete provider read at
             # or after local receipt before accepting or rejecting the command.
@@ -841,6 +847,8 @@ class ContactCenterApplication(models.AbstractModel):
             raise UnsupportedEventError(
                 "group metadata hints must be inbound provider invalidations"
             )
+        if not connection._contact_center_inbound_is_available():
+            return connection
         group_addresses = self._group_conversation_addresses(event)
         binding = self._find_channel_binding(
             connection.account_id,
@@ -865,7 +873,8 @@ class ContactCenterApplication(models.AbstractModel):
             raise ValidationError(_("The group metadata hint is invalid."))
         # The webhook is only an invalidation hint. The provider pull remains the
         # authoritative source for group name, avatar and roster.
-        profile._request_sync(connection, force=True)
+        profile._bind_current_connection(connection)
+        profile._invalidate_metadata()
         return profile
 
     def _process_identity_avatar_hint(self, connection, event):
@@ -881,6 +890,8 @@ class ContactCenterApplication(models.AbstractModel):
             raise UnsupportedEventError(
                 "identity avatar hints must be inbound provider invalidations"
             )
+        if not connection._contact_center_inbound_is_available():
+            return connection
         addresses = tuple(
             dict.fromkeys((*event.conversation.addresses, *event.actor.addresses))
         )
@@ -925,7 +936,7 @@ class ContactCenterApplication(models.AbstractModel):
                     else binding.channel_id
                 ),
             )
-        binding._request_identity_avatar_sync(connection, force=True)
+        binding._invalidate_identity_avatar()
         return binding
 
     @api.model
@@ -1106,10 +1117,6 @@ class ContactCenterApplication(models.AbstractModel):
         if event.conversation.conversation_type == "group" and not channel_binding:
             channel_binding = self._bootstrap_from_me_group_channel(connection, event)
             bootstrapped_group = True
-        if event.conversation.conversation_type == "direct" and channel_binding:
-            # A conversation initiated on the provider device must not remain a
-            # numeric guest until the remote person eventually replies.
-            channel_binding._request_identity_avatar_sync(connection)
         return channel_binding, bootstrapped_group
 
     @api.model
@@ -1323,20 +1330,16 @@ class ContactCenterApplication(models.AbstractModel):
                 ._resolve_channel(connection.account_id, identity, event)
                 .with_context(**{LIFECYCLE_CREATIONS_CONTEXT_KEY: None})
             )
-            channel_binding._request_identity_avatar_sync(connection)
         self._lock_inbound_projection_binding(
             channel_binding,
             connection.account_id,
         )
         self._enrich_channel_aliases(channel_binding, event.conversation.addresses)
-        if bootstrapped_group:
+        if event.conversation.conversation_type == "group":
             profile = self.env["contact.center.group.profile"]._get_or_create(
                 channel_binding, connection
             )
-            # Metadata is enrichment, not a prerequisite for persisting the
-            # authenticated human message.  This schedules provider I/O on the
-            # dedicated queue and keeps media processing independent.
-            profile._request_sync(connection)
+            profile._bind_current_connection(connection)
         existing = (
             self.env["contact.center.message.binding"]
             .sudo()
@@ -1750,6 +1753,9 @@ class ContactCenterApplication(models.AbstractModel):
             raise ValidationError(
                 _("The group receipt provider connection changed account.")
             )
+        # Rebind before taking shared channel locks, avoiding lock promotion
+        # between two first receipts from the new primary connection.
+        profile = self._group_profile_for_connection(binding, connection)
         # Alias creation stores a FK to the group profile. Acquire the parent
         # channel first so a first-seen participant receipt cannot invert the
         # channel -> group-profile order used by metadata synchronization.
@@ -1786,7 +1792,6 @@ class ContactCenterApplication(models.AbstractModel):
             raise ValidationError(
                 _("The group receipt conversation is no longer active.")
             )
-        profile = self._group_profile_for_connection(binding, connection)
         self.env.cr.execute(
             "SELECT id FROM contact_center_group_profile "
             "WHERE id = %s AND channel_binding_id = %s "
@@ -1803,7 +1808,7 @@ class ContactCenterApplication(models.AbstractModel):
             raise ValidationError(_("The group receipt profile is no longer valid."))
         return profile
 
-    def _group_delivery_participant(self, profile, event):
+    def _group_delivery_participant(self, profile, event, inbox_event=None):
         """Resolve and safely enrich the roster participant under its parent lock."""
 
         participant = profile._resolve_protocol_participant(
@@ -1812,8 +1817,15 @@ class ContactCenterApplication(models.AbstractModel):
             enrich=True,
         )
         if not participant:
-            raise TransientAdapterError(
-                "group participant aliases are waiting for roster correlation"
+            authoritative, required_after = self._group_roster_authority_status(
+                profile, event, inbox_event=inbox_event
+            )
+            if not authoritative:
+                raise GroupRosterRefreshRequired(
+                    profile.id, profile.provider_connection_id.id, required_after
+                )
+            raise ValidationError(
+                _("The receipt participant is absent from the confirmed group roster.")
             )
         return participant
 
@@ -1948,12 +1960,15 @@ class ContactCenterApplication(models.AbstractModel):
         state, actor_address, external_message_ids = self._group_delivery_request(event)
         binding = self._group_delivery_binding(connection, event)
         profile = self._lock_group_delivery_scope(connection, binding)
-        participant = self._group_delivery_participant(profile, event)
         candidates, by_external_id = self._group_delivery_candidates(
             binding,
             connection,
             external_message_ids,
             inbox_event,
+        )
+
+        participant = self._group_delivery_participant(
+            profile, event, inbox_event=inbox_event
         )
 
         # Participant receipts are also exact proof that the provider accepted
@@ -2773,11 +2788,7 @@ class ContactCenterApplication(models.AbstractModel):
             profile = self.env["contact.center.group.profile"]._get_or_create(
                 binding, connection
             )
-            profile._request_sync(connection)
-        else:
-            # The first direct message schedules a provider pull; no remote I/O is
-            # performed in webhook processing and later messages only refresh on TTL.
-            binding._request_identity_avatar_sync(connection)
+            profile._bind_current_connection(connection)
         external_message_id = event.message.external_message_id
         existing = (
             self.env["contact.center.message.binding"]

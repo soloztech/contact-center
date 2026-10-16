@@ -1,6 +1,9 @@
 import base64
 import datetime
 import uuid
+from dataclasses import replace
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
 from unittest.mock import patch
 
 from psycopg2 import OperationalError
@@ -12,6 +15,7 @@ from odoo.tests.common import SavepointCase
 from odoo.addons.queue_job.exception import RetryableJobError
 from odoo.addons.queue_job.tests.common import trap_jobs
 
+from ..models.application import GroupRosterRefreshRequired
 from ..services.adapter import (
     AdapterResult,
     ProviderAdapter,
@@ -47,6 +51,9 @@ class GroupMetadataTestAdapter(ProviderAdapter):
             "endpoint": "/unexpected",
             "payload": {"command_id": command.command_id},
         }
+
+    def derive_client_message_id(self, command_id):
+        return uuid.UUID(str(command_id)).hex.upper()
 
     def get_capabilities(self, connection):
         return {"send_message": False, "media": {}}
@@ -229,6 +236,9 @@ class TestContactCenterGroupMetadata(SavepointCase):
             .search([("channel_binding_id", "=", binding.id)], limit=1)
         )
         self.assertTrue(profile)
+        profile.with_context(contact_center_skip_enqueue=True)._request_sync(
+            self.connection
+        )
         return binding, profile
 
     def _snapshot(
@@ -314,6 +324,344 @@ class TestContactCenterGroupMetadata(SavepointCase):
         )
         profile.invalidate_recordset()
         return result
+
+    def _roster_waiter(self, profile, after=None):
+        return (
+            self.env["contact.center.inbox.event"]
+            .sudo()
+            .with_context(contact_center_skip_enqueue=True)
+            .create(
+                {
+                    "provider_connection_id": self.connection.id,
+                    "inbox_dedupe_key": "on-demand-waiter-%s" % uuid.uuid4(),
+                    "provider_schema_version": "fixture-v1",
+                    "raw_envelope_json": {"fixture": "on-demand"},
+                    "waiting_group_profile_id": profile.id,
+                    "waiting_group_roster_after": after or fields.Datetime.now(),
+                }
+            )
+        )
+
+    def test_group_open_reuses_cache_until_current_company_deadline(self):
+        binding, profile = self._create_group()
+        self.connection.capabilities_json = {
+            "conversation_types": {"group": {"send_message": False}}
+        }
+        self._sync(profile, self._snapshot([]))
+        now = fields.Datetime.now()
+        profile.write(
+            {
+                "last_synced_at": now - datetime.timedelta(days=6),
+                "next_sync_at": now - datetime.timedelta(days=5),
+            }
+        )
+        api_model = self.env["contact.center.ui.api"].with_user(self.agent)
+        with trap_jobs() as trap:
+            api_model.get_conversation(binding.channel_id.id)
+            api_model.request_conversation_profile(binding.channel_id.id)
+            trap.assert_jobs_count(0)
+        with self.assertRaises(AccessError), trap_jobs() as trap:
+            self.env["contact.center.ui.api"].with_user(
+                self.outsider
+            ).request_conversation_profile(binding.channel_id.id)
+        trap.assert_jobs_count(0)
+        with patch.object(
+            fields.Datetime, "now", return_value=now + datetime.timedelta(days=1)
+        ):
+            api_model.request_conversation_profile(binding.channel_id.id)
+        job_uuid, revision = profile.queue_job_uuid, profile.sync_revision
+        self.assertTrue(job_uuid)
+        with trap_jobs() as trap:
+            api_model.request_conversation_profile(binding.channel_id.id)
+            trap.assert_jobs_count(0)
+        self.assertEqual(profile.sync_revision, revision)
+        self.assertEqual(profile.queue_job_uuid, job_uuid)
+
+    def test_failed_or_cancelled_metadata_owner_finishes_waiters_without_replay(self):
+        for state in ("failed", "cancelled"):
+            with self.subTest(state=state), self.env.cr.savepoint():
+                _binding, profile = self._create_group()
+                profile.write({"queue_job_uuid": False, "last_error_class": False})
+                profile._enqueue_sync()
+                owner = self.env["queue.job"].search(
+                    [("uuid", "=", profile.queue_job_uuid)]
+                )
+                owner.write({"state": state})
+                waiter = self._roster_waiter(profile)
+                profile.sync_requested_at = fields.Datetime.now() - datetime.timedelta(
+                    minutes=10
+                )
+                with trap_jobs() as trap:
+                    self.env[
+                        "contact.center.inbox.event"
+                    ]._cron_recover_orphaned_queue_jobs()
+                    trap.assert_jobs_count(0)
+                self.assertEqual(profile.metadata_state, "failed")
+                self.assertEqual(profile.last_error_class, "ProfileQueueJobError")
+                self.assertFalse(profile.queue_job_uuid)
+                self.assertEqual(waiter.state, "dead")
+                self.assertEqual(owner.state, state)
+
+    def test_uncovered_waiter_recovers_lost_pointer_with_shared_budget_and_eta(self):
+        _binding, profile = self._create_group()
+        now = fields.Datetime.now()
+        profile.write(
+            {
+                "metadata_state": "ready",
+                "roster_complete": True,
+                "last_synced_at": now - datetime.timedelta(minutes=1),
+                "sync_requested_at": now - datetime.timedelta(minutes=1),
+                "applied_revision": profile.sync_revision,
+                "next_sync_at": now + datetime.timedelta(days=7),
+                "attempts": 4,
+            }
+        )
+        waiter = self._roster_waiter(profile, after=now)
+        profile._invalidate_metadata()
+        self.assertFalse(profile.next_sync_at)
+        self.env["contact.center.inbox.event"]._cron_recover_orphaned_queue_jobs(
+            grace_seconds=0
+        )
+        self.assertTrue(profile.queue_job_uuid)
+        owner = self.env["queue.job"].search([("uuid", "=", profile.queue_job_uuid)])
+        self.assertGreaterEqual(owner.eta, now + datetime.timedelta(minutes=14))
+        self.assertEqual(profile.attempts, 4)
+        revision = profile.sync_revision
+        profile.queue_job_uuid = False
+        with trap_jobs() as trap:
+            self.env["contact.center.inbox.event"]._cron_recover_orphaned_queue_jobs(
+                grace_seconds=0
+            )
+            trap.assert_jobs_count(0)
+        self.assertEqual(profile.queue_job_uuid, owner.uuid)
+        self.assertEqual(profile.sync_revision, revision)
+        self.assertEqual(waiter.state, "pending")
+
+    def test_partial_roster_retries_without_reset_and_stops_at_ceiling(self):
+        _binding, profile = self._create_group()
+        profile._enqueue_sync(technical=True)
+        owner = self.env["queue.job"].search([("uuid", "=", profile.queue_job_uuid)])
+        waiter = self._roster_waiter(profile)
+        revision = profile.sync_revision
+        GroupMetadataTestAdapter.snapshot = self._snapshot([], complete=False)
+        with patch.object(
+            GroupMetadataTestAdapter, "fetch_group_avatar", autospec=True
+        ) as avatar:
+            with self.assertRaises(RetryableJobError) as raised:
+                profile.with_context(job_uuid=owner.uuid)._job_sync_metadata(
+                    revision, technical=True
+                )
+            self.assertEqual(raised.exception.seconds, 900)
+            avatar.assert_not_called()
+        for _index in range(10):
+            another = self._roster_waiter(profile)
+            another._defer_for_group_roster(
+                GroupRosterRefreshRequired(
+                    profile.id, self.connection.id, fields.Datetime.now()
+                ),
+                1,
+            )
+        self.assertEqual(profile.sync_revision, revision)
+        self.assertEqual(profile.queue_job_uuid, owner.uuid)
+        owner.retry = 11
+        self.assertFalse(
+            profile.with_context(job_uuid=owner.uuid)._job_sync_metadata(
+                revision, technical=True
+            )
+        )
+        self.assertEqual(profile.attempts, 12)
+        self.assertEqual(profile.metadata_state, "failed")
+        self.assertEqual(waiter.state, "dead")
+        new_waiter = self._roster_waiter(profile)
+        with trap_jobs() as trap:
+            new_waiter._defer_for_group_roster(
+                GroupRosterRefreshRequired(
+                    profile.id, self.connection.id, fields.Datetime.now()
+                ),
+                1,
+            )
+            trap.assert_jobs_count(0)
+        self.assertEqual(new_waiter.state, "dead")
+
+    def test_visual_partial_without_own_identity_is_cached_without_retry(self):
+        _binding, profile = self._create_group()
+        self.connection.capabilities_json = {
+            "conversation_types": {"group": {"reply_requires_participant": True}}
+        }
+        snapshot = replace(
+            self._snapshot([], complete=False),
+            observed_at=datetime.datetime.now(datetime.timezone.utc),
+        )
+        with patch.object(
+            GroupMetadataTestAdapter,
+            "fetch_group_avatar",
+            autospec=True,
+            return_value=AvatarResult(state="absent"),
+        ) as avatar:
+            self.assertTrue(self._sync(profile, snapshot))
+        avatar.assert_called_once()
+        self.assertFalse(profile.roster_complete)
+        self.assertEqual(profile.metadata_state, "stale")
+        self.assertTrue(profile.last_synced_at)
+        self.assertFalse(profile.queue_job_uuid)
+        with trap_jobs() as trap:
+            profile._request_sync(self.connection)
+            profile._request_sync(self.connection)
+            trap.assert_jobs_count(0)
+
+    def test_scheduled_release_uses_own_identity_from_partial_snapshot(self):
+        binding, profile = self._create_group()
+        self.account.write(
+            {
+                "group_outbound_enabled": True,
+                "technical_author_id": self.agent.partner_id.id,
+            }
+        )
+        self.connection.write(
+            {
+                "outbound_active": True,
+                "capabilities_json": {
+                    "conversation_types": {
+                        "group": {
+                            "send_message": True,
+                            "reply_requires_participant": True,
+                            "sender_signature": True,
+                        }
+                    }
+                },
+            }
+        )
+        api_model = self.env["contact.center.ui.api"].with_user(self.agent)
+        now = fields.Datetime.now()
+        result = api_model.schedule_message(
+            binding.channel_id.id,
+            "Partial own identity",
+            now + datetime.timedelta(minutes=2),
+            str(uuid.uuid4()),
+        )
+        scheduled = self.env["contact.center.scheduled.message"].browse(
+            result["scheduled_message"]["id"]
+        )
+        release_uuid = scheduled.queue_job_uuid
+        with patch.object(
+            fields.Datetime, "now", return_value=now + datetime.timedelta(minutes=3)
+        ):
+            self.assertFalse(
+                scheduled.with_context(job_uuid=release_uuid)._job_release()
+            )
+            self.env["queue.job"].search([("uuid", "=", release_uuid)]).write(
+                {"state": "done"}
+            )
+            snapshot = replace(
+                self._snapshot(
+                    [("70000000000001@lid", "15550000001@s.whatsapp.net", "member")],
+                    complete=False,
+                    own_protocol_participant={
+                        "namespace": "whatsapp.lid",
+                        "value": "70000000000001@lid",
+                        "value_normalized": "70000000000001@lid",
+                        "role": "sender",
+                        "confidence": "protocol",
+                    },
+                ),
+                observed_at=(now + datetime.timedelta(minutes=3)).replace(
+                    tzinfo=datetime.timezone.utc
+                ),
+            )
+            metadata_uuid = profile.queue_job_uuid
+            self.assertTrue(self._sync(profile, snapshot))
+            self.env["queue.job"].search([("uuid", "=", metadata_uuid)]).write(
+                {"state": "done"}
+            )
+            self.assertFalse(profile.roster_complete)
+            self.assertTrue(profile.own_protocol_participant_json)
+            self.env[
+                "contact.center.scheduled.message"
+            ]._cron_recover_scheduled_messages(grace_seconds=0)
+            self.assertTrue(
+                scheduled.with_context(
+                    job_uuid=scheduled.queue_job_uuid
+                )._job_release(),
+                scheduled.last_error_message,
+            )
+        self.assertEqual(scheduled.state, "released")
+        self.assertTrue(scheduled.outbox_command_id)
+
+    def test_upgrade_converts_only_legacy_due_invalidations(self):
+        now = fields.Datetime.now()
+        profiles = {}
+        for index, kind in enumerate(
+            ("marker", "error", "partial", "active", "lost_pointer", "valid")
+        ):
+            self.group_ref = "1203630000099%s@g.us" % index
+            _binding, profile = self._create_group()
+            profile.write(
+                {
+                    "metadata_state": "stale",
+                    "roster_complete": True,
+                    "last_synced_at": now - datetime.timedelta(hours=1),
+                    "next_sync_at": now - datetime.timedelta(minutes=1),
+                    "applied_revision": profile.sync_revision,
+                    "attempts": 3,
+                }
+            )
+            if kind == "error":
+                profile.write(
+                    {
+                        "last_error_class": "AdapterError",
+                        "next_sync_at": now + datetime.timedelta(hours=24),
+                    }
+                )
+            elif kind == "partial":
+                profile.write(
+                    {
+                        "roster_complete": False,
+                        "next_sync_at": now + datetime.timedelta(minutes=15),
+                    }
+                )
+            elif kind in ("active", "lost_pointer"):
+                profile._enqueue_sync()
+                if kind == "lost_pointer":
+                    profile.queue_job_uuid = False
+            elif kind == "valid":
+                profile.write(
+                    {
+                        "metadata_state": "ready",
+                        "next_sync_at": now + datetime.timedelta(hours=6),
+                    }
+                )
+            profiles[kind] = profile
+        names = [
+            "metadata_state",
+            "roster_complete",
+            "sync_revision",
+            "applied_revision",
+            "attempts",
+            "queue_job_uuid",
+            "last_error_class",
+            "next_sync_at",
+        ]
+        before = {kind: profile.read(names)[0] for kind, profile in profiles.items()}
+        path = (
+            Path(__file__).resolve().parents[1]
+            / "migrations/16.0.1.11.15/post-migrate.py"
+        )
+        spec = spec_from_file_location("cc_on_demand_post_migrate", path)
+        migration = module_from_spec(spec)
+        spec.loader.exec_module(migration)
+        crons = self.env.ref(
+            "contact_center_base.ir_cron_contact_center_group_metadata"
+        ) | self.env.ref("contact_center_base.ir_cron_contact_center_identity_avatar")
+        crons.write({"active": True})
+        with trap_jobs() as trap:
+            migration.migrate(self.env.cr, "16.0.1.11.14")
+            trap.assert_jobs_count(0)
+        self.assertFalse(any(crons.mapped("active")))
+        for kind, profile in profiles.items():
+            expected = dict(before[kind])
+            if kind == "marker":
+                expected["next_sync_at"] = False
+            self.assertEqual(profile.read(names)[0], expected, kind)
 
     def test_first_message_creates_one_profile_and_roster_creates_no_personas(self):
         binding, profile = self._create_group()
@@ -425,7 +773,7 @@ class TestContactCenterGroupMetadata(SavepointCase):
             ]
         )
         self.assertEqual(profile.metadata_state, "stale")
-        self.assertTrue(profile.next_sync_at)
+        self.assertFalse(profile.next_sync_at)
         self.assertFalse(profile.own_protocol_participant_json)
         self.assertEqual(profile.own_protocol_participant_health_revision, 0)
 
@@ -697,8 +1045,8 @@ class TestContactCenterGroupMetadata(SavepointCase):
         )
 
         self.assertEqual(result, profile)
-        self.assertEqual(profile.sync_revision, previous_revision + 1)
-        self.assertEqual(profile.metadata_state, "stale")
+        self.assertEqual(profile.sync_revision, previous_revision)
+        self.assertFalse(profile.next_sync_at)
         unknown_ref = "120363000000099@g.us"
         unknown = self._event(
             group_ref=unknown_ref,
@@ -834,7 +1182,7 @@ class TestContactCenterGroupMetadata(SavepointCase):
             .get_group_metadata_runtime_contract()
         )
         self.assertEqual(contract["priority"], 50)
-        self.assertEqual(contract["ttl_seconds"], 6 * 60 * 60)
+        self.assertEqual(contract["ttl_seconds"], 7 * 24 * 60 * 60)
         self.assertEqual(contract["partial_retry_seconds"], 15 * 60)
         self.assertEqual(contract["avatar_max_bytes"], 2 * 1024 * 1024)
         self.assertEqual(
@@ -858,7 +1206,7 @@ class TestContactCenterGroupMetadata(SavepointCase):
                 "model": "contact.center.group.profile",
                 "state": "code",
                 "code": "model._cron_schedule_group_metadata()",
-                "active": True,
+                "active": False,
                 "interval_number": 15,
                 "interval_type": "minutes",
                 "numbercall": -1,
@@ -1090,14 +1438,12 @@ class TestContactCenterGroupMetadata(SavepointCase):
         old_revision = profile.sync_revision
 
         def invalidate_during_fetch(_connection, _conversation_ref):
-            profile.with_context(contact_center_skip_enqueue=True)._request_sync(
-                self.connection, force=True
-            )
+            profile._invalidate_metadata()
 
         GroupMetadataTestAdapter.snapshot = snapshot
         GroupMetadataTestAdapter.before_metadata_return = invalidate_during_fetch
-        job_uuid = str(uuid.uuid4())
-        profile.sudo().write({"queue_job_uuid": job_uuid})
+        profile._enqueue_sync()
+        job_uuid = profile.queue_job_uuid
         with patch.object(
             type(profile), "_enqueue_sync", autospec=True, return_value=True
         ) as enqueue:
@@ -1118,6 +1464,8 @@ class TestContactCenterGroupMetadata(SavepointCase):
         replacement = self.connection.copy(
             {
                 "name": "Replacement Metadata Provider",
+                "role": "standby",
+                "inbound_active": False,
                 "external_ref": "metadata-replacement-%s" % uuid.uuid4(),
             }
         )
@@ -1127,14 +1475,13 @@ class TestContactCenterGroupMetadata(SavepointCase):
         old_revision = profile.sync_revision
 
         def switch_connection(_connection, _conversation_ref):
-            profile.with_context(contact_center_skip_enqueue=True)._request_sync(
-                replacement, force=True
-            )
+            replacement.action_use_as_primary()
+            profile._bind_current_connection(replacement)
 
         GroupMetadataTestAdapter.snapshot = snapshot
         GroupMetadataTestAdapter.before_metadata_return = switch_connection
-        job_uuid = str(uuid.uuid4())
-        profile.sudo().write({"queue_job_uuid": job_uuid})
+        profile._enqueue_sync()
+        job_uuid = profile.queue_job_uuid
         with patch.object(
             type(profile), "_enqueue_sync", autospec=True, return_value=True
         ):
@@ -1187,8 +1534,8 @@ class TestContactCenterGroupMetadata(SavepointCase):
 
         GroupMetadataTestAdapter.snapshot = snapshot
         GroupMetadataTestAdapter.before_metadata_return = rotate_configuration
-        job_uuid = str(uuid.uuid4())
-        profile.sudo().write({"queue_job_uuid": job_uuid})
+        profile._enqueue_sync()
+        job_uuid = profile.queue_job_uuid
 
         with self.assertRaises(RetryableJobError):
             profile.with_context(job_uuid=job_uuid)._job_sync_metadata(
@@ -1302,7 +1649,10 @@ class TestContactCenterGroupMetadata(SavepointCase):
         waiter.write(
             {
                 "waiting_group_profile_id": profile.id,
-                "waiting_group_roster_after": fields.Datetime.now(),
+                "waiting_group_roster_after": fields.Datetime.to_datetime(
+                    snapshot.observed_at.replace(tzinfo=None)
+                )
+                - datetime.timedelta(seconds=1),
                 "group_roster_wait_count": 1,
                 "first_group_roster_wait_at": fields.Datetime.now(),
             }
@@ -1352,73 +1702,36 @@ class TestContactCenterGroupMetadata(SavepointCase):
         self.assertFalse(waiter.queue_job_uuid)
         release_log.assert_called_once()
 
-    def test_cron_backfills_an_existing_group_without_creating_personas(self):
+    def test_legacy_cron_does_not_backfill_or_refresh(self):
         binding, profile = self._create_group()
-        guest_count = self.env["mail.guest"].sudo().search_count([])
-        partner_count = self.env["res.partner"].sudo().search_count([])
-        member_ids = binding.channel_id.sudo().channel_member_ids.ids
-        profile.sudo().unlink()
-
+        profile.unlink()
         with trap_jobs() as trap:
             self.env["contact.center.group.profile"]._cron_schedule_group_metadata(
                 limit=100
             )
-            trap.assert_jobs_count(1)
+            trap.assert_jobs_count(0)
+        self.assertFalse(binding.group_profile_ids)
 
-            backfilled = (
-                self.env["contact.center.group.profile"]
-                .sudo()
-                .search([("channel_binding_id", "=", binding.id)])
+    def test_requested_group_recovered_without_renewing_idle_cache(self):
+        _binding, profile = self._create_group()
+        with trap_jobs() as trap:
+            self.env["contact.center.inbox.event"]._cron_recover_orphaned_queue_jobs(
+                grace_seconds=0
             )
-            queued_job = trap.enqueued_jobs[0]
-            self.assertEqual(queued_job.channel, "root.contact_center.group_metadata")
-            self.assertEqual(queued_job.priority, 50)
-            self.assertEqual(
-                queued_job.identity_key,
-                "contact_center:group_metadata:%s:%s"
-                % (backfilled.id, backfilled.sync_revision),
-            )
-            self.assertEqual(backfilled.queue_job_uuid, queued_job.uuid)
-        self.assertEqual(len(backfilled), 1)
-        self.assertEqual(backfilled.provider_connection_id, self.connection)
-        self.assertEqual(backfilled.metadata_state, "pending")
-        self.assertEqual(backfilled.sync_revision, 1)
-        self.assertEqual(self.env["mail.guest"].sudo().search_count([]), guest_count)
-        self.assertEqual(self.env["res.partner"].sudo().search_count([]), partner_count)
-        self.assertEqual(binding.channel_id.sudo().channel_member_ids.ids, member_ids)
-
-        # ``trap_jobs`` exposes a queue_job ``Job`` value object, not an Odoo
-        # recordset.  Some queue_job revisions persist the trapped row and some do
-        # not, so mark it terminal through the canonical model only when present.
-        persisted_job = queued_job.db_record()
-        if persisted_job:
-            persisted_job.write({"state": "done"})
-        backfilled.sudo().write(
+            trap.assert_jobs_count(0)
+        profile.write(
             {
                 "sync_requested_at": fields.Datetime.now()
                 - datetime.timedelta(minutes=10),
-                # Simulate a persisted reference whose runnable queue.job was lost.
-                # The original job is explicitly terminal so canonical recovery is
-                # not allowed to adopt it as the current revision owner.
                 "queue_job_uuid": str(uuid.uuid4()),
             }
         )
-        with trap_jobs() as recovery_trap:
-            self.env["contact.center.group.profile"]._cron_schedule_group_metadata(
-                limit=100
-            )
-            backfilled.invalidate_recordset(
-                ["sync_revision", "queue_job_uuid", "sync_requested_at"]
-            )
-            self.assertEqual(backfilled.sync_revision, 2)
-            recovery_trap.assert_jobs_count(1)
-            recovered_job = recovery_trap.enqueued_jobs[0]
-            self.assertEqual(recovered_job.priority, 50)
-            self.assertEqual(backfilled.queue_job_uuid, recovered_job.uuid)
-            self.assertEqual(
-                recovered_job.identity_key,
-                "contact_center:group_metadata:%s:2" % backfilled.id,
-            )
+        revision = profile.sync_revision
+        with trap_jobs() as trap:
+            self.env["contact.center.inbox.event"]._cron_recover_orphaned_queue_jobs()
+            trap.assert_jobs_count(1)
+        self.assertEqual(profile.sync_revision, revision)
+        self.assertTrue(profile.queue_job_uuid)
 
     def test_cron_does_not_supersede_an_active_due_metadata_job(self):
         _binding, profile = self._create_group()
@@ -1443,9 +1756,7 @@ class TestContactCenterGroupMetadata(SavepointCase):
         profile.sudo().write({"queue_job_uuid": False})
 
         with trap_jobs() as trap:
-            self.env["contact.center.group.profile"]._cron_schedule_group_metadata(
-                limit=100
-            )
+            profile._request_sync(self.connection)
             trap.assert_jobs_count(0)
 
         profile.invalidate_recordset()

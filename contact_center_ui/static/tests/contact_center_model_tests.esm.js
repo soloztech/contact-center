@@ -144,7 +144,7 @@ import {
 import {BrowserAttention} from "@contact_center_ui/js/browser_attention.esm";
 import {ConnectionHealth} from "@contact_center_ui/js/connection_health.esm";
 import {conversationComposerAvailable} from "@contact_center_ui/js/contact_center_app.esm";
-import {e2Clock, e2Deferred, e2Full, e2Store} from "./e2_test_helpers.esm";
+import {e2Clock, e2Deferred, e2Full, e2Settle, e2Store} from "./e2_test_helpers.esm";
 import {reactive} from "@odoo/owl";
 import {hotkeyService} from "@web/core/hotkeys/hotkey_service";
 import {makeTestEnv} from "@web/../tests/helpers/mock_env";
@@ -229,6 +229,47 @@ function removeNeutralizedDatabaseBanner() {
 
 QUnit.module("contact_center_ui > conversation lifecycle", (hooks) => {
     hooks.beforeEach(removeNeutralizedDatabaseBanner);
+
+    QUnit.test(
+        "profile demand requires explicit selection, including reselect",
+        async (assert) => {
+            const {store, calls} = e2Store();
+            const requests = () =>
+                calls.filter((call) => call.method === "request_conversation_profile");
+            try {
+                await store.selectConversation(10, {restored: true});
+                await e2Settle();
+                assert.strictEqual(requests().length, 0, "restore has no demand");
+                await store.selectConversation(10);
+                await e2Settle();
+                assert.strictEqual(
+                    requests().length,
+                    1,
+                    "reselect requests optional enrichment"
+                );
+                await store.selectConversation(10);
+                await e2Settle();
+                assert.strictEqual(
+                    requests().length,
+                    2,
+                    "explicit click is not blocked by the timeline cache"
+                );
+                assert.strictEqual(
+                    calls.filter((call) => call.method === "get_timeline").length,
+                    1
+                );
+                await store.refreshSelectedConversation();
+                await e2Settle();
+                assert.strictEqual(
+                    requests().length,
+                    2,
+                    "automatic detail refresh has no demand"
+                );
+            } finally {
+                store.destroy();
+            }
+        }
+    );
 
     QUnit.test(
         "uploads using authorized detail after compact refresh",

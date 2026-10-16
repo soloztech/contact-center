@@ -37,7 +37,7 @@
         id="action_contact_center_relationship_settings"
         model="ir.actions.act_window"
     >
-        <field name="name">Contact relationships</field>
+        <field name="name">Settings</field>
         <field name="res_model">res.config.settings</field>
         <field name="view_mode">form</field>
         <field name="target">inline</field>
@@ -45,7 +45,7 @@
     </record>
     <menuitem
         id="menu_contact_center_relationship_settings"
-        name="Contact relationships"
+        name="Settings"
         parent="menu_contact_center_configuration"
         action="action_contact_center_relationship_settings"
         sequence="60"

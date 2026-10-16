@@ -12,8 +12,6 @@ from odoo.exceptions import AccessError, UserError, ValidationError
 from odoo.tests.common import SavepointCase
 from odoo.tools import mute_logger
 
-from odoo.addons.queue_job.exception import RetryableJobError
-
 from ..models.application import GroupRosterRefreshRequired
 from ..services.adapter import (
     AdapterError,
@@ -1277,8 +1275,8 @@ class TestContactCenterGroups(SavepointCase):
         self.assertEqual(alias.channel_binding_id, binding)
         self.assertEqual(len(profile), 1)
         self.assertEqual(profile.provider_connection_id, self.connection)
-        self.assertEqual(profile.metadata_state, "pending")
-        self.assertEqual(profile.sync_revision, 1)
+        self.assertEqual(profile.metadata_state, "unavailable")
+        self.assertEqual(profile.sync_revision, 0)
         self.assertFalse(profile.queue_job_uuid)
         self.assertEqual(first.author_id, self.account.technical_author_id)
         self.assertIn("Human group message", first.body)
@@ -1680,6 +1678,103 @@ class TestContactCenterGroups(SavepointCase):
         self.assertEqual(message_binding.origin, "external_device")
         self.assertEqual(message_binding.direction, "outbound")
         self.assertEqual(message_binding.delivery_state, "sent")
+
+    def test_scheduled_group_release_rebinds_primary_and_commits_identity_demand(self):
+        self._process(self._event(message_id="scheduled-group-bootstrap"))
+        binding = self._group_binding()
+        api_model = self.env["contact.center.ui.api"].with_user(self.agent)
+        now = fields.Datetime.now()
+        result = api_model.schedule_message(
+            binding.channel_id.id,
+            "Scheduled group message",
+            now + datetime.timedelta(minutes=2),
+            str(uuid.uuid4()),
+        )
+        scheduled = self.env["contact.center.scheduled.message"].browse(
+            result["scheduled_message"]["id"]
+        )
+        replacement = self.connection.copy(
+            {
+                "name": "Scheduled primary replacement",
+                "capabilities_json": self.connection.capabilities_json,
+                "state": "connected",
+                "last_state_observed_at": fields.Datetime.now(),
+                "last_state_source": "health_job",
+                "external_ref": "scheduled-replacement-%s" % uuid.uuid4(),
+                "role": "standby",
+                "inbound_active": False,
+                "outbound_active": False,
+            }
+        )
+        replacement.action_use_as_primary()
+        replacement.action_enable_outbound()
+        self.connection = replacement
+        job_uuid = scheduled.queue_job_uuid
+        with patch.object(
+            fields.Datetime, "now", return_value=now + datetime.timedelta(minutes=3)
+        ):
+            self.assertFalse(scheduled.with_context(job_uuid=job_uuid)._job_release())
+        self.env["queue.job"].search([("uuid", "=", job_uuid)]).write({"state": "done"})
+        self.assertEqual(scheduled.state, "scheduled", scheduled.last_error_message)
+        self.assertFalse(scheduled.queue_job_uuid)
+        self.assertFalse(scheduled.message_id)
+        profile = binding.group_profile_ids
+        self.assertTrue(profile.queue_job_uuid)
+        self.assertEqual(profile.provider_connection_id, replacement)
+        self._seed_own_group_participant(binding)
+        with patch.object(
+            fields.Datetime, "now", return_value=now + datetime.timedelta(minutes=10)
+        ):
+            self.assertEqual(
+                self.env[
+                    "contact.center.scheduled.message"
+                ]._cron_recover_scheduled_messages(),
+                1,
+            )
+            self.assertTrue(
+                scheduled.with_context(job_uuid=scheduled.queue_job_uuid)._job_release()
+            )
+        self.assertEqual(scheduled.state, "released")
+        self.assertTrue(scheduled.message_id)
+        self.assertTrue(scheduled.outbox_command_id)
+
+    def test_scheduled_group_release_can_retry_after_expired_profile_error(self):
+        self._process(self._event(message_id="scheduled-expired-error"))
+        binding = self._group_binding()
+        profile = binding.group_profile_ids
+        now = fields.Datetime.now()
+        profile.write(
+            {
+                "metadata_state": "failed",
+                "last_error_class": "AdapterError",
+                "next_sync_at": now - datetime.timedelta(hours=1),
+                "attempts": 12,
+            }
+        )
+        result = (
+            self.env["contact.center.ui.api"]
+            .with_user(self.agent)
+            .schedule_message(
+                binding.channel_id.id,
+                "Retry after wait",
+                now + datetime.timedelta(minutes=2),
+                str(uuid.uuid4()),
+            )
+        )
+        scheduled = self.env["contact.center.scheduled.message"].browse(
+            result["scheduled_message"]["id"]
+        )
+        with patch.object(
+            fields.Datetime, "now", return_value=now + datetime.timedelta(minutes=3)
+        ):
+            self.assertFalse(
+                scheduled.with_context(job_uuid=scheduled.queue_job_uuid)._job_release()
+            )
+        self.assertEqual(scheduled.state, "scheduled")
+        self.assertFalse(scheduled.message_id)
+        self.assertTrue(profile.queue_job_uuid)
+        self.assertFalse(profile.last_error_class)
+        self.assertEqual(profile.attempts, 0)
 
     def test_group_send_without_own_roster_identity_creates_no_projection(self):
         self._process(self._event(message_id="group-own-identity-gate"))
@@ -2968,13 +3063,11 @@ class TestContactCenterGroups(SavepointCase):
 
         with patch(
             "odoo.addons.contact_center_base.models.queue._logger.exception"
-        ) as unexpected_log, self.assertRaises(RetryableJobError) as raised:
-            self._run_inbox_job(inbox)
-
-        self.assertFalse(raised.exception.ignore_retry)
-        self.assertIsNone(raised.exception.seconds)
-        self.assertIsInstance(raised.exception.__cause__, TransientAdapterError)
-        self.assertIn("roster correlation", str(raised.exception.__cause__))
+        ) as unexpected_log:
+            self.assertFalse(self._run_inbox_job(inbox))
+        self.assertEqual(inbox.waiting_group_profile_id, profile)
+        self.assertEqual(inbox.state, "pending")
+        self.assertTrue(profile.queue_job_uuid)
         unexpected_log.assert_not_called()
         target.invalidate_recordset(["message_state"])
         self.assertEqual(target.message_state, "active")
@@ -2990,6 +3083,7 @@ class TestContactCenterGroups(SavepointCase):
                     self.connection.health_configuration_revision
                 ),
                 "last_synced_at": refreshed_at,
+                "sync_requested_at": refreshed_at,
                 "next_sync_at": refreshed_at + datetime.timedelta(hours=6),
                 "applied_revision": profile.sync_revision,
             }

@@ -96,3 +96,17 @@ cache invalidation. These are synthetic observations, not production percentages
 parity, strict IDs, member/company reauthorization, ordering/filter/pin/new entry
 fallbacks, changed outside-window metadata and bounded unread SQL. Native execution
 remains required; syntax and diff checks do not replace it.
+
+## Optional conversation profile refresh
+
+`contact.center.ui.api.request_conversation_profile(channel_id)` uses the same channel
+authorization as the conversation detail. It returns only `{"schema_version": 1}` and
+may enqueue one coalesced profile request when the shared cache is missing, invalidated
+or expired. The default validity is seven days, configurable per company in Contact
+Center Settings. A retained failure wait and an existing request take precedence over
+another opening.
+
+The client calls it asynchronously after an explicit opening, including a reselection.
+Restoring a selection, listing, searching, bus updates and reading messages do not
+request enrichment. This endpoint performs no provider HTTP request and returns no
+provider credentials or group roster.

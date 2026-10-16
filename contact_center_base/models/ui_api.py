@@ -2343,6 +2343,44 @@ class ContactCenterUiApi(models.AbstractModel):
         }
 
     @api.model
+    def request_conversation_profile(self, channel_id):
+        """Request optional enrichment only after an agent opens this channel."""
+        channel, _member = self._authorized_channel(channel_id)
+        result = {"schema_version": SCHEMA_VERSION}
+        binding = self._binding_for_channel(channel).sudo()
+        if not binding or not channel.active or not binding.account_id.active:
+            return result
+        connection = binding.account_id.connection_ids.filtered(
+            lambda item: item._contact_center_inbound_is_available()
+            or item._contact_center_outbound_is_available()
+        )[:1]
+        if not connection:
+            return result
+        if binding.conversation_type == "direct":
+            binding._request_identity_avatar_sync(connection)
+        elif binding.conversation_type == "group" and conversation_capabilities(
+            connection.capabilities_json or {}, "group"
+        ):
+            profiles = self.env["contact.center.group.profile"].sudo()
+            profile = profiles.search(
+                [("channel_binding_id", "=", binding.id)], limit=1
+            )
+            if not profile and not self.env[
+                "contact.center.message.binding"
+            ].sudo().search(
+                [
+                    ("channel_binding_id", "=", binding.id),
+                    ("provider_connection_id.account_id", "=", binding.account_id.id),
+                ],
+                limit=1,
+            ):
+                return result
+            profile = profile or profiles._get_or_create(binding, connection)
+            profile._bind_current_connection(connection)
+            profile._request_sync(connection)
+        return result
+
+    @api.model
     def get_conversation(self, channel_id):
         channel, member = self._authorized_channel(channel_id)
         return {

@@ -1932,10 +1932,14 @@ class ContactCenterProviderConnection(models.Model):
         ),
     ]
 
-    _health_interval_seconds = 3600
     _health_job_lease_seconds = 300
     _health_jitter_window_seconds = 30
-    _health_stale_after_seconds = 3 * _health_interval_seconds
+    _health_stale_after_seconds = 10800
+
+    @property
+    def _health_interval_seconds(self):
+        self.ensure_one()
+        return self.company_id.contact_center_health_interval_minutes * 60
 
     @api.model
     def _contact_center_scope_domain(self, user=None, companies=None):
@@ -1992,7 +1996,10 @@ class ContactCenterProviderConnection(models.Model):
                 "allow_commit": job_function.allow_commit,
             },
             "priority_floor": 30,
-            "interval_seconds": self._health_interval_seconds,
+            "interval_seconds": (
+                self.env.company.contact_center_health_interval_minutes * 60
+            ),
+            "stale_after_seconds": self._health_stale_after_seconds,
             "jitter_window_seconds": self._health_jitter_window_seconds,
         }
 
@@ -4126,38 +4133,16 @@ class ContactCenterProviderConnection(models.Model):
         active_changed = "active" in values and any(
             bool(values["active"]) != connection.active for connection in self
         )
-        configuration_revision_changed = (
-            "health_configuration_revision" in values
-            and self.filtered(
-                lambda connection: values["health_configuration_revision"]
+        invalidated_connections = self.filtered(
+            lambda connection: (
+                "health_configuration_revision" in values
+                and values["health_configuration_revision"]
                 != connection.health_configuration_revision
             )
+            or ("role" in values and values["role"] != connection.role)
         )
         result = super().write(values)
-        if configuration_revision_changed:
-            profiles = (
-                self.env["contact.center.group.profile"]
-                .sudo()
-                .search(
-                    [
-                        (
-                            "provider_connection_id",
-                            "in",
-                            configuration_revision_changed.ids,
-                        )
-                    ]
-                )
-            )
-            if profiles:
-                profiles.write(
-                    {
-                        "own_protocol_participant_json": {},
-                        "own_protocol_participant_health_revision": 0,
-                        "metadata_state": "stale",
-                        "next_sync_at": fields.Datetime.now(),
-                    }
-                )
-                profiles._notify_updated()
+        invalidated_connections._invalidate_conversation_profiles()
         if topology_changed:
             application = self.env["contact.center.application"]
             for connection in self:
@@ -4170,6 +4155,85 @@ class ContactCenterProviderConnection(models.Model):
                     ),
                 )
         return result
+
+    def _invalidate_conversation_profiles(self):
+        """Invalidate local observations after configuration changes, without jobs."""
+        if not self:
+            return
+        profiles = (
+            self.env["contact.center.group.profile"]
+            .sudo()
+            .search(
+                [
+                    (
+                        "provider_connection_id",
+                        "in",
+                        self.ids,
+                    )
+                ]
+            )
+        )
+        if profiles:
+            profiles.write(
+                {
+                    "own_protocol_participant_json": {},
+                    "own_protocol_participant_health_revision": 0,
+                    "metadata_state": "stale",
+                    "next_sync_at": False,
+                    "last_error_class": False,
+                    "last_error_message": False,
+                }
+            )
+            profiles._notify_updated()
+        bindings = (
+            self.env["contact.center.channel.binding"]
+            .sudo()
+            .search(
+                [
+                    (
+                        "direct_avatar_connection_id",
+                        "in",
+                        self.ids,
+                    )
+                ]
+            )
+        )
+        bindings.write(
+            {
+                "direct_avatar_next_sync_at": False,
+                "direct_avatar_last_error_class": False,
+                "direct_avatar_last_error_message": False,
+            }
+        )
+        uuids = set(profiles.mapped("queue_job_uuid")) | set(
+            bindings.mapped("direct_avatar_queue_job_uuid")
+        )
+        active = set(
+            self.env["queue.job"]
+            .sudo()
+            .search(
+                [
+                    ("uuid", "in", list(uuids - {False})),
+                    (
+                        "state",
+                        "in",
+                        _ACTIVE_QUEUE_JOB_STATES,
+                    ),
+                ]
+            )
+            .mapped("uuid")
+        )
+        for records, uuid_field, requested_field in (
+            (profiles, "queue_job_uuid", "sync_requested_at"),
+            (
+                bindings,
+                "direct_avatar_queue_job_uuid",
+                "direct_avatar_sync_requested_at",
+            ),
+        ):
+            records.filtered(lambda record: record[uuid_field] not in active).write(
+                {uuid_field: False, requested_field: False}
+            )
 
     def get_adapter(self):
         self.ensure_one()

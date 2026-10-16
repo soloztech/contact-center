@@ -7,7 +7,7 @@ import logging
 from psycopg2 import IntegrityError, OperationalError
 
 from odoo import _, api, fields, models
-from odoo.exceptions import AccessError, ValidationError
+from odoo.exceptions import AccessError, MissingError, ValidationError
 from odoo.tools.mimetypes import guess_mimetype
 
 from odoo.addons.queue_job.exception import RetryableJobError
@@ -17,6 +17,7 @@ from ..services.adapter import (
     ProviderPausedError,
     TransientAdapterError,
     UnsupportedEventError,
+    conversation_capabilities,
 )
 from ..services.dto import (
     AddressDTO,
@@ -27,7 +28,9 @@ from ..services.dto import (
 from ..services.job import (
     ACTIVE_QUEUE_JOB_STATES,
     QUEUE_ATTEMPT_CEILING,
+    ProfileQueueJobError,
     canonical_queue_job,
+    profile_queue_job,
     provider_paused_retry_seconds,
     queue_job_owns_record,
 )
@@ -35,8 +38,6 @@ from ..services.job import (
 _logger = logging.getLogger(__name__)
 
 _ACTIVE_QUEUE_JOB_STATES = ACTIVE_QUEUE_JOB_STATES
-_GROUP_METADATA_TTL = datetime.timedelta(hours=6)
-_GROUP_PARTIAL_RETRY = datetime.timedelta(minutes=15)
 _GROUP_AVATAR_MAX_BYTES = 2 * 1024 * 1024
 _GROUP_AVATAR_MIMETYPES = frozenset(("image/jpeg", "image/png", "image/webp"))
 _GROUP_METADATA_JOB_PRIORITY = 50
@@ -471,8 +472,9 @@ class ContactCenterGroupProfile(models.Model):
                 "allow_commit": job_function.allow_commit,
             },
             "priority": _GROUP_METADATA_JOB_PRIORITY,
-            "ttl_seconds": int(_GROUP_METADATA_TTL.total_seconds()),
-            "partial_retry_seconds": int(_GROUP_PARTIAL_RETRY.total_seconds()),
+            "ttl_seconds": self.env.company.contact_center_group_cache_days * 86400,
+            "partial_retry_seconds": self.env.company.contact_center_roster_retry_minutes
+            * 60,
             "avatar_max_bytes": _GROUP_AVATAR_MAX_BYTES,
             "ui_group_keys": sorted(_GROUP_UI_KEYS),
             "roster_acl": roster_acl,
@@ -591,16 +593,119 @@ class ContactCenterGroupProfile(models.Model):
         avatars.exists().sudo().unlink()
         return result
 
-    def _has_active_queue_job(self, *, adopt=True):
+    def _has_active_queue_job(self, *, adopt=True, require_pointer_match=False):
         self.ensure_one()
-        return bool(
-            canonical_queue_job(
-                self,
-                "contact_center:group_metadata:%s:%s" % (self.id, self.sync_revision),
-                _ACTIVE_QUEUE_JOB_STATES,
-                adopt=adopt,
-            )
+        job = profile_queue_job(
+            self,
+            "group_metadata",
+            self.sync_revision,
+            adopt=adopt,
         )
+        return bool(
+            job and (not require_pointer_match or self.queue_job_uuid == job.uuid)
+        )
+
+    def _lock_metadata_request(self, *, skip_locked=False):
+        self.ensure_one()
+        suffix = " SKIP LOCKED" if skip_locked else ""
+        self.env.cr.execute(
+            "SELECT id FROM mail_channel WHERE id = %s FOR UPDATE" + suffix,
+            [self.channel_id.id],
+        )
+        if not self.env.cr.fetchone():
+            return False
+        self.env.cr.execute(
+            "SELECT id FROM contact_center_group_profile WHERE id = %s FOR UPDATE"
+            + suffix,
+            [self.id],
+        )
+        if not self.env.cr.fetchone():
+            return False
+        self.invalidate_recordset()
+        return True
+
+    def _current_metadata_connection(self):
+        self.ensure_one()
+        return self.account_id.connection_ids.filtered(
+            lambda item: item._contact_center_inbound_is_available()
+            or item._contact_center_outbound_is_available()
+        )[:1]
+
+    def _bind_current_connection(self, connection):
+        for profile in self.sudo():
+            if (
+                connection.account_id != profile.account_id
+                or connection != profile._current_metadata_connection()
+            ):
+                continue
+            if profile.provider_connection_id == connection:
+                continue
+            if not profile._lock_metadata_request():
+                continue
+            if connection != profile._current_metadata_connection():
+                continue
+            values = {
+                "provider_connection_id": connection.id,
+                "own_protocol_participant_json": {},
+                "own_protocol_participant_health_revision": 0,
+                "next_sync_at": False,
+                "last_error_class": False,
+                "last_error_message": False,
+                "metadata_state": "stale" if profile.last_synced_at else "unavailable",
+            }
+            if profile._has_active_queue_job(adopt=False):
+                values["sync_revision"] = profile.sync_revision + 1
+            else:
+                values.update({"queue_job_uuid": False, "sync_requested_at": False})
+            profile.write(values)
+        return True
+
+    def _metadata_sync_due(self, now):
+        self.ensure_one()
+        if self.last_error_class:
+            return not self.next_sync_at or self.next_sync_at <= now
+        return bool(
+            not self.next_sync_at
+            or not self.last_synced_at
+            or self.applied_revision != self.sync_revision
+            or self.last_synced_at
+            + datetime.timedelta(days=self.company_id.contact_center_group_cache_days)
+            <= now
+        )
+
+    def _roster_retry_delta(self):
+        self.ensure_one()
+        return datetime.timedelta(
+            minutes=self.company_id.contact_center_roster_retry_minutes
+        )
+
+    def _uncovered_roster_waiters(self, limit=1):
+        self.ensure_one()
+        domain = [
+            ("state", "=", "pending"),
+            ("waiting_group_profile_id", "=", self.id),
+            ("waiting_group_roster_after", "!=", False),
+        ]
+        if (
+            self.roster_complete
+            and self.metadata_state == "ready"
+            and self.applied_revision == self.sync_revision
+            and self.sync_requested_at
+            and self.last_synced_at
+        ):
+            covered = min(self.sync_requested_at, self.last_synced_at)
+            domain.append(("waiting_group_roster_after", ">", covered))
+        return self.env["contact.center.inbox.event"].sudo().search(domain, limit=limit)
+
+    def _invalidate_metadata(self):
+        for profile in self.sudo():
+            if not profile._lock_metadata_request() or profile.last_error_class:
+                continue
+            values = {"next_sync_at": False}
+            if profile._has_active_queue_job(adopt=False):
+                values["sync_revision"] = profile.sync_revision + 1
+            profile.write(values)
+        return True
 
     def _request_sync(
         self,
@@ -608,98 +713,202 @@ class ContactCenterGroupProfile(models.Model):
         force=False,
         eligible_states=None,
         skip_if_active=False,
+        technical=False,
     ):
-        for candidate in self.sudo():
-            profile = candidate.exists()
-            if not profile:
+        for profile in self.sudo().exists():
+            target = connection or profile._current_metadata_connection()
+            if not target or target != profile._current_metadata_connection():
                 continue
-            channel_id = profile.channel_id.id
-            # Global lock order for every path that may later touch both records:
-            # mail.channel -> group profile. Inbound processing follows the same
-            # order when it subsequently reconciles channel membership.
-            self.env.cr.execute(
-                "SELECT id FROM mail_channel WHERE id = %s FOR UPDATE",
-                [channel_id],
-            )
-            if not self.env.cr.fetchone():
-                continue
-            self.env.cr.execute(
-                "SELECT id FROM contact_center_group_profile WHERE id = %s FOR UPDATE",
-                [profile.id],
-            )
-            if not self.env.cr.fetchone():
-                continue
-            profile.invalidate_recordset(
-                [
-                    "provider_connection_id",
-                    "metadata_state",
-                    "last_synced_at",
-                    "next_sync_at",
-                    "sync_revision",
-                    "queue_job_uuid",
-                ]
-            )
-            if eligible_states and profile.metadata_state not in eligible_states:
-                continue
-            if skip_if_active and profile._has_active_queue_job():
-                continue
-            # Resolve the implicit connection only after taking the row lock. This
-            # prevents a cron request from restoring a connection that a concurrent
-            # inbound event has just replaced.
-            target_connection = connection or profile.provider_connection_id
-            target_connection.ensure_one()
-            if target_connection.account_id != profile.account_id:
-                raise ValidationError(
-                    _("The group synchronization connection is out of scope.")
-                )
+            changed = profile.provider_connection_id != target
             now = fields.Datetime.now()
-            due = not profile.next_sync_at or profile.next_sync_at <= now
-            connection_changed = profile.provider_connection_id != target_connection
+            if not force and not changed:
+                if profile._has_active_queue_job(
+                    adopt=False, require_pointer_match=True
+                ):
+                    continue
+                if not technical and not profile._metadata_sync_due(now):
+                    continue
+            if not profile._lock_metadata_request():
+                continue
+            if (
+                not profile.channel_binding_id.active
+                or profile.channel_binding_id.merged_into_id
+                or not profile.channel_id.active
+                or not profile.account_id.active
+                or target != profile._current_metadata_connection()
+                or (eligible_states and profile.metadata_state not in eligible_states)
+            ):
+                continue
+            profile._bind_current_connection(target)
+            active = profile._has_active_queue_job()
+            if active and (technical or skip_if_active or not force):
+                continue
+            if not force and profile._finish_abandoned_metadata_job():
+                continue
+            now = fields.Datetime.now()
             if (
                 not force
-                and not connection_changed
-                and profile.metadata_state in ("pending", "stale")
-                and profile._has_active_queue_job()
-            ):
-                # Ordinary messages do not imply a roster change. Let the current
-                # initial/TTL pull finish instead of continuously superseding it.
-                continue
-            if not (
-                force
-                or due
-                or connection_changed
-                or profile.metadata_state in ("unavailable", "failed")
+                and profile.last_error_class
+                and profile.next_sync_at
+                and profile.next_sync_at > now
             ):
                 continue
-            values = {
-                "provider_connection_id": target_connection.id,
-                "metadata_state": ("stale" if profile.last_synced_at else "pending"),
+            if not (force or technical or profile._metadata_sync_due(now)):
+                continue
+            continuing = bool(
+                technical
+                and (
+                    profile._uncovered_roster_waiters()
+                    or profile._technical_metadata_eta(now) > now
+                )
+            )
+            profile._start_metadata_request(
+                now, technical=technical, continuing=continuing
+            )
+        return True
+
+    def _finish_abandoned_metadata_job(self):
+        self.ensure_one()
+        if not self.queue_job_uuid:
+            return False
+        job = profile_queue_job(
+            self,
+            "group_metadata",
+            self.sync_revision,
+            adopt=False,
+            states=("failed", "cancelled"),
+        )
+        if not job:
+            return False
+        self._finish_failure(
+            ProfileQueueJobError("group metadata queue job %s" % job.state),
+            self.attempts + job.retry,
+        )
+        return True
+
+    @api.model
+    def _recover_metadata_requests(self, cutoff, limit):
+        limit = max(0, min(int(limit), 100))
+        if not limit:
+            return 0
+        self.flush_model()
+        self.env["queue.job"].sudo().flush_model()
+        self.env["contact.center.inbox.event"].sudo().flush_model()
+        self.env.cr.execute(
+            """
+            SELECT profile.id FROM contact_center_group_profile AS profile
+             WHERE (
+                (profile.queue_job_uuid IS NOT NULL AND profile.sync_requested_at <= %s)
+                OR EXISTS (
+                    SELECT 1 FROM contact_center_inbox_event AS inbox
+                     WHERE inbox.state = 'pending'
+                       AND inbox.waiting_group_profile_id = profile.id
+                       AND inbox.waiting_group_roster_after <= %s
+                       AND NOT (
+                           profile.metadata_state = 'ready' AND profile.roster_complete
+                           AND profile.applied_revision = profile.sync_revision
+                           AND profile.sync_requested_at IS NOT NULL
+                           AND profile.last_synced_at IS NOT NULL
+                           AND inbox.waiting_group_roster_after <= LEAST(
+                               profile.sync_requested_at, profile.last_synced_at))))
+               AND NOT EXISTS (
+                    SELECT 1 FROM queue_job AS job
+                     WHERE job.uuid = profile.queue_job_uuid AND job.state IN %s)
+             ORDER BY profile.id LIMIT %s
+            """,
+            [cutoff, cutoff, ACTIVE_QUEUE_JOB_STATES, limit],
+        )
+        recovered = 0
+        for candidate in self.sudo().browse([row[0] for row in self.env.cr.fetchall()]):
+            try:
+                with self.env.cr.savepoint():
+                    profile = candidate.exists()
+                    if (
+                        not profile
+                        or not profile._lock_metadata_request(skip_locked=True)
+                        or profile._has_active_queue_job()
+                    ):
+                        continue
+                    uncovered = bool(profile._uncovered_roster_waiters())
+                    if not profile.queue_job_uuid and not uncovered:
+                        continue
+                    if profile._finish_abandoned_metadata_job():
+                        recovered += 1
+                        continue
+                    if not profile._current_metadata_connection():
+                        profile._finish_unavailable(
+                            UnsupportedEventError(
+                                "group request no longer has an authorized connection"
+                            ),
+                            profile.attempts,
+                        )
+                        recovered += 1
+                        continue
+                    now = fields.Datetime.now()
+                    if (
+                        profile.last_error_class
+                        and profile.next_sync_at
+                        and profile.next_sync_at > now
+                    ):
+                        profile._finalize_roster_waiters_best_effort(
+                            profile_failed=True
+                        )
+                        continue
+                    if profile.queue_job_uuid:
+                        profile.write({"queue_job_uuid": False})
+                        profile._enqueue_sync(
+                            technical=uncovered,
+                            eta=profile._technical_metadata_eta(now)
+                            if uncovered
+                            else None,
+                        )
+                    elif uncovered:
+                        profile._request_sync(technical=True)
+                    recovered += int(bool(profile.queue_job_uuid))
+            except (MissingError, OperationalError):
+                _logger.info(
+                    "Deferred concurrent group request recovery for profile %s",
+                    candidate.id,
+                    exc_info=True,
+                )
+        return recovered
+
+    def _technical_metadata_eta(self, now):
+        self.ensure_one()
+        last_read = max(
+            filter(None, (self.last_synced_at, self.sync_requested_at)), default=None
+        )
+        return max(now, last_read + self._roster_retry_delta()) if last_read else now
+
+    def _start_metadata_request(
+        self, now, *, technical=False, continuing=False, advance_revision=True
+    ):
+        """Register one pull under the caller's channel/profile locks."""
+        self.ensure_one()
+        if continuing and self.attempts >= QUEUE_ATTEMPT_CEILING:
+            self._finish_failure(
+                AdapterError("group roster refresh exhausted its attempts"),
+                self.attempts,
+            )
+            return False
+        eta = self._technical_metadata_eta(now) if technical else None
+        self.write(
+            {
+                "metadata_state": "stale" if self.last_synced_at else "pending",
                 "sync_requested_at": now,
-                "sync_revision": profile.sync_revision + 1,
-                "attempts": 0,
+                "sync_revision": self.sync_revision + int(advance_revision),
+                "attempts": self.attempts if continuing else 0,
+                "queue_job_uuid": False,
                 "last_error_class": False,
                 "last_error_message": False,
             }
-            if connection_changed:
-                values.update(
-                    {
-                        "own_protocol_participant_json": {},
-                        "own_protocol_participant_health_revision": 0,
-                    }
-                )
-            profile.write(values)
-            profile.invalidate_recordset(
-                ["sync_revision", "metadata_state", "queue_job_uuid"]
-            )
-            if (
-                not self.env.context.get("contact_center_skip_enqueue")
-                and not profile._has_active_queue_job()
-            ):
-                profile._enqueue_sync(profile.sync_revision)
-            profile._notify_updated()
+        )
+        if not self.env.context.get("contact_center_skip_enqueue"):
+            self._enqueue_sync(self.sync_revision, eta=eta, technical=technical)
+        self._notify_updated()
         return True
 
-    def _enqueue_sync(self, revision=None, eta=None):
+    def _enqueue_sync(self, revision=None, eta=None, technical=False):
         for profile in self.sudo():
             target_revision = (
                 revision if revision is not None else profile.sync_revision
@@ -726,7 +935,9 @@ class ContactCenterGroupProfile(models.Model):
                     description="Contact Center group metadata %s" % profile.id,
                     eta=eta,
                 )
-                ._job_sync_metadata(target_revision)
+                ._job_sync_metadata(
+                    target_revision, **({"technical": True} if technical else {})
+                )
             )
             profile.write({"queue_job_uuid": delayed.uuid})
         return True
@@ -762,25 +973,17 @@ class ContactCenterGroupProfile(models.Model):
 
     def _schedule_latest_after_superseded(self, job_uuid):
         self = self.exists()
-        if not self:
+        if not self or not self._lock_metadata_request():
             return False
-        self.ensure_one()
-        self.env.cr.execute(
-            "SELECT id FROM mail_channel WHERE id = %s FOR UPDATE",
-            [self.channel_id.id],
-        )
-        if not self.env.cr.fetchone():
-            return False
-        self.env.cr.execute(
-            "SELECT id FROM contact_center_group_profile WHERE id = %s FOR UPDATE",
-            [self.id],
-        )
-        if not self.env.cr.fetchone():
-            return False
-        self.invalidate_recordset(["sync_revision", "queue_job_uuid"])
         if job_uuid and self.queue_job_uuid == job_uuid:
-            self.write({"queue_job_uuid": False})
-            self._enqueue_sync(self.sync_revision)
+            technical = bool(self.env.context.get("contact_center_technical_roster"))
+            self.write({"attempts": self._job_attempt()})
+            self._start_metadata_request(
+                fields.Datetime.now(),
+                technical=technical,
+                continuing=True,
+                advance_revision=False,
+            )
         return False
 
     def _provider_read_is_available(self, connection):
@@ -809,6 +1012,7 @@ class ContactCenterGroupProfile(models.Model):
             or self.channel_id.channel_type != "contact_center"
             or not connection.active
             or not connection.account_id.active
+            or connection != self._current_metadata_connection()
         ):
             raise UnsupportedEventError("group metadata scope is no longer active")
         if not self._provider_read_is_available(connection):
@@ -836,6 +1040,7 @@ class ContactCenterGroupProfile(models.Model):
             or self.channel_id.channel_type != "contact_center"
             or not connection.active
             or not connection.account_id.active
+            or connection != self._current_metadata_connection()
         ):
             raise UnsupportedEventError(
                 "group metadata scope changed while reading the provider"
@@ -849,7 +1054,7 @@ class ContactCenterGroupProfile(models.Model):
             )
         return True
 
-    def _job_sync_metadata(self, expected_revision):
+    def _job_sync_metadata(self, expected_revision, technical=False):
         self = self.exists()
         if not self:
             return False
@@ -861,11 +1066,16 @@ class ContactCenterGroupProfile(models.Model):
             expected_revision, bool
         ):
             raise ValidationError(_("The group synchronization revision is invalid."))
+        attempt = self._job_attempt()
+        self = self.with_context(
+            contact_center_technical_roster=(
+                technical or attempt > 1 or bool(self._uncovered_roster_waiters())
+            )
+        )
         if self._superseded(expected_revision, job_uuid):
             return self._schedule_latest_after_superseded(job_uuid)
         connection = self.provider_connection_id
         connection_id = connection.id
-        attempt = self._job_attempt()
         try:
             result = self._run_metadata_sync(
                 connection, expected_revision, job_uuid, connection_id, attempt
@@ -914,11 +1124,16 @@ class ContactCenterGroupProfile(models.Model):
             self.channel_binding_id.id,
         )
         adapter = connection.get_adapter()
+        read_started_at = fields.Datetime.now()
         snapshot = adapter.fetch_group_metadata(connection, conversation_ref)
         if not isinstance(snapshot, GroupMetadataDTO):
             raise AdapterError("fetch_group_metadata must return GroupMetadataDTO")
         if snapshot.conversation_ref != conversation_ref:
             raise AdapterError("group metadata belongs to another conversation")
+        if not snapshot.is_complete and self._partial_roster_is_needed(snapshot):
+            error = TransientAdapterError("complete group roster is still required")
+            error.retry_after_seconds = int(self._roster_retry_delta().total_seconds())
+            raise error
         try:
             avatar = adapter.fetch_group_avatar(connection, conversation_ref)
         except UnsupportedEventError:
@@ -939,6 +1154,7 @@ class ContactCenterGroupProfile(models.Model):
                 expected_revision,
                 expected_health_revision,
                 attempt,
+                requested_at=read_started_at,
             )
         # Privileged inbound deletes wait for a roster observed after local
         # receipt.  The inbox job that discovered the dependency returned
@@ -960,7 +1176,32 @@ class ContactCenterGroupProfile(models.Model):
                     "profile %s",
                     self.id,
                 )
+        if self._uncovered_roster_waiters():
+            self._start_metadata_request(
+                fields.Datetime.now(), technical=True, continuing=True
+            )
         return True
+
+    def _partial_roster_is_needed(self, snapshot):
+        if self._uncovered_roster_waiters():
+            return True
+        capabilities = conversation_capabilities(
+            self.provider_connection_id.capabilities_json or {}, "group"
+        )
+        return bool(
+            capabilities.get("reply_requires_participant")
+            and not snapshot.own_protocol_participant
+            and self.env["contact.center.scheduled.message"]
+            .sudo()
+            .search(
+                [
+                    ("channel_id", "=", self.channel_id.id),
+                    ("state", "=", "scheduled"),
+                    ("scheduled_at", "<=", fields.Datetime.now()),
+                ],
+                limit=1,
+            )
+        )
 
     def _retry_paused(self, error, expected_revision, job_uuid, connection_id):
         if self._superseded(expected_revision, job_uuid, connection_id):
@@ -982,9 +1223,12 @@ class ContactCenterGroupProfile(models.Model):
         if attempt >= QUEUE_ATTEMPT_CEILING:
             self._finish_failure(error, attempt)
             return False
+        delay = getattr(error, "retry_after_seconds", 0) or 0
+        if self.env.context.get("contact_center_technical_roster"):
+            delay = max(delay, int(self._roster_retry_delta().total_seconds()))
         raise RetryableJobError(
             str(error),
-            seconds=getattr(error, "retry_after_seconds", 0) or None,
+            seconds=delay or None,
         ) from error
 
     def _retry_unexpected(
@@ -995,7 +1239,14 @@ class ContactCenterGroupProfile(models.Model):
         if attempt >= QUEUE_ATTEMPT_CEILING:
             self._finish_failure(error, attempt)
             return False
-        raise RetryableJobError(str(error), seconds=None) from error
+        raise RetryableJobError(
+            str(error),
+            seconds=(
+                int(self._roster_retry_delta().total_seconds())
+                if self.env.context.get("contact_center_technical_roster")
+                else None
+            ),
+        ) from error
 
     def _lock_for_projection(self, connection, account_id, channel_id, binding_id):
         self.ensure_one()
@@ -1094,6 +1345,7 @@ class ContactCenterGroupProfile(models.Model):
         expected_revision,
         expected_health_revision,
         attempt,
+        requested_at=None,
     ):
         self.ensure_one()
         observed_at = _odoo_datetime(snapshot.observed_at)
@@ -1136,8 +1388,9 @@ class ContactCenterGroupProfile(models.Model):
             "provider_revision": snapshot.provider_revision or False,
             "snapshot_hash": snapshot_hash,
             "last_synced_at": observed_at,
+            "sync_requested_at": requested_at or self.sync_requested_at,
             "next_sync_at": observed_at
-            + (_GROUP_METADATA_TTL if snapshot.is_complete else _GROUP_PARTIAL_RETRY),
+            + datetime.timedelta(days=self.company_id.contact_center_group_cache_days),
             "applied_revision": expected_revision,
             "attempts": attempt,
             "queue_job_uuid": False,
@@ -1362,7 +1615,10 @@ class ContactCenterGroupProfile(models.Model):
                 "metadata_state": "failed",
                 "attempts": attempt,
                 "queue_job_uuid": False,
-                "next_sync_at": fields.Datetime.now() + datetime.timedelta(hours=24),
+                "next_sync_at": fields.Datetime.now()
+                + datetime.timedelta(
+                    hours=self.company_id.contact_center_profile_failure_hours
+                ),
                 "last_error_class": error.__class__.__name__[:128],
                 "last_error_message": str(error)[:4000],
             }
@@ -1377,7 +1633,10 @@ class ContactCenterGroupProfile(models.Model):
                 "metadata_state": ("stale" if self.last_synced_at else "unavailable"),
                 "attempts": attempt,
                 "queue_job_uuid": False,
-                "next_sync_at": fields.Datetime.now() + datetime.timedelta(hours=24),
+                "next_sync_at": fields.Datetime.now()
+                + datetime.timedelta(
+                    hours=self.company_id.contact_center_profile_failure_hours
+                ),
                 "last_error_class": error.__class__.__name__[:128],
                 "last_error_message": str(error)[:4000],
             }
@@ -1432,159 +1691,7 @@ class ContactCenterGroupProfile(models.Model):
 
     @api.model
     def _cron_schedule_group_metadata(self, limit=100):
-        now = fields.Datetime.now()
-        binding_model = self.env["contact.center.channel.binding"]
-        message_binding_model = self.env["contact.center.message.binding"]
-        binding_model.flush_model(
-            [
-                "conversation_type",
-                "identity_id",
-                "active",
-                "merged_into_id",
-                "channel_id",
-                "account_id",
-            ]
-        )
-        self.env["mail.channel"].flush_model(["active"])
-        self.env["contact.center.account"].flush_model(["active"])
-        message_binding_model.flush_model(
-            ["channel_binding_id", "provider_connection_id"]
-        )
-        self.flush_model(
-            [
-                "channel_binding_id",
-                "next_sync_at",
-                "metadata_state",
-                "queue_job_uuid",
-                "sync_requested_at",
-            ]
-        )
-        self.env["queue.job"].flush_model(["uuid", "identity_key", "state"])
-        self.env.cr.execute(
-            """
-            SELECT binding.id
-              FROM contact_center_channel_binding AS binding
-              JOIN mail_channel AS channel ON channel.id = binding.channel_id
-              JOIN contact_center_account AS account
-                ON account.id = binding.account_id
-         LEFT JOIN contact_center_group_profile AS profile
-                ON profile.channel_binding_id = binding.id
-             WHERE binding.conversation_type = 'group'
-               AND binding.identity_id IS NULL
-               AND binding.active IS TRUE
-               AND binding.merged_into_id IS NULL
-               AND profile.id IS NULL
-               AND channel.active IS TRUE
-               AND account.active IS TRUE
-               AND EXISTS (
-                    SELECT 1
-                      FROM contact_center_message_binding AS message
-                     WHERE message.channel_binding_id = binding.id
-                       AND message.provider_connection_id IS NOT NULL
-               )
-          ORDER BY binding.id
-             FOR UPDATE OF channel SKIP LOCKED
-             LIMIT %s
-            """,
-            [limit],
-        )
-        missing_bindings = binding_model.sudo().browse(
-            [row[0] for row in self.env.cr.fetchall()]
-        )
-        message_binding_model = message_binding_model.sudo()
-        for binding in missing_bindings:
-            last_message = message_binding_model.search(
-                [
-                    ("channel_binding_id", "=", binding.id),
-                    ("provider_connection_id", "!=", False),
-                ],
-                order="id desc",
-                limit=1,
-            )
-            if not last_message.provider_connection_id:
-                continue
-            profile = self._get_or_create(binding, last_message.provider_connection_id)
-            profile._request_sync(last_message.provider_connection_id, force=True)
-        remaining = max(0, limit - len(missing_bindings))
-        if remaining:
-            # The loop above may have created or updated profiles in this same
-            # transaction. Flush only the columns read by the SQL recovery query.
-            self.flush_model(
-                [
-                    "channel_binding_id",
-                    "next_sync_at",
-                    "metadata_state",
-                    "queue_job_uuid",
-                    "sync_requested_at",
-                ]
-            )
-            self.env["queue.job"].flush_model(["uuid", "identity_key", "state"])
-            self.env.cr.execute(
-                """
-                SELECT profile.id
-                  FROM contact_center_group_profile AS profile
-                  JOIN contact_center_channel_binding AS binding
-                    ON binding.id = profile.channel_binding_id
-                  JOIN mail_channel AS channel ON channel.id = binding.channel_id
-                  JOIN contact_center_account AS account
-                    ON account.id = binding.account_id
-                 WHERE (
-                        (
-                            profile.next_sync_at IS NOT NULL
-                            AND profile.next_sync_at <= %s
-                            AND profile.metadata_state
-                                IN ('ready', 'stale', 'failed', 'unavailable')
-                        )
-                        OR (
-                            (
-                                profile.metadata_state = 'pending'
-                                OR (
-                                    profile.metadata_state = 'stale'
-                                    AND profile.queue_job_uuid IS NOT NULL
-                                )
-                            )
-                            AND (
-                                profile.sync_requested_at IS NULL
-                                OR profile.sync_requested_at <= %s
-                            )
-                        )
-                   )
-                   AND NOT EXISTS (
-                        SELECT 1
-                          FROM queue_job AS job
-                         WHERE job.uuid = profile.queue_job_uuid
-                           AND job.identity_key =
-                               'contact_center:group_metadata:'
-                               || profile.id::text || ':'
-                               || profile.sync_revision::text
-                           AND job.state IN (
-                               'pending', 'enqueued', 'started',
-                               'wait_dependencies'
-                           )
-                   )
-                   AND binding.conversation_type = 'group'
-                   AND binding.identity_id IS NULL
-                   AND binding.active IS TRUE
-                   AND binding.merged_into_id IS NULL
-                   AND channel.active IS TRUE
-                   AND account.active IS TRUE
-              ORDER BY COALESCE(
-                           profile.next_sync_at,
-                           profile.sync_requested_at,
-                           profile.create_date
-                       ), profile.id
-                 FOR UPDATE OF channel SKIP LOCKED
-                 LIMIT %s
-                """,
-                [now, now - datetime.timedelta(minutes=5), remaining],
-            )
-            profiles = (
-                self.sudo().browse([row[0] for row in self.env.cr.fetchall()]).exists()
-            )
-            # The SQL intentionally selects missing/stale UUID pointers.  Re-check
-            # the canonical revision identity under the profile lock before forcing
-            # a successor: a live job may only need its denormalized pointer adopted.
-            profiles._request_sync(force=True, skip_if_active=True)
+        """Compatibility for the retired cron: expiry never requests a pull."""
         return True
 
 

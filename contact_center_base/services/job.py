@@ -15,6 +15,10 @@ ACTIVE_QUEUE_JOB_STATES = (
 )
 
 
+class ProfileQueueJobError(Exception):
+    """A durable profile request lost its queue executor terminally."""
+
+
 def canonical_queue_job(
     record,
     identity_key,
@@ -43,6 +47,50 @@ def canonical_queue_job(
     )
     owner.invalidate_recordset([uuid_field])
     if adopt and job and getattr(owner, uuid_field) != job.uuid:
+        owner.write({uuid_field: job.uuid})
+    return job
+
+
+def profile_queue_job(
+    record,
+    lane,
+    revision,
+    uuid_field="queue_job_uuid",
+    *,
+    adopt=True,
+    states=ACTIVE_QUEUE_JOB_STATES,
+):
+    """Keep a profile pull coalesced while a hint supersedes its revision."""
+
+    record.ensure_one()
+    owner = record.sudo()
+    job_model = owner.env["queue.job"].sudo()
+    prefix = "contact_center:%s:%s" % (lane, owner.id)
+    job = canonical_queue_job(
+        owner, "%s:%s" % (prefix, revision), states, uuid_field, adopt=False
+    )
+    if not job and getattr(owner, uuid_field):
+        job = job_model.search(
+            [("uuid", "=", getattr(owner, uuid_field)), ("state", "in", states)],
+            limit=1,
+        )
+    method = {
+        "identity_avatar": "_job_sync_identity_avatar",
+        "group_metadata": "_job_sync_metadata",
+    }[lane]
+    if not (
+        job
+        and job.model_name == owner._name
+        and job.method_name == method
+        and job.records.ids == owner.ids
+        and job.args
+        and isinstance(job.args[0], int)
+        and not isinstance(job.args[0], bool)
+        and 0 <= job.args[0] <= revision
+        and job.identity_key == "%s:%s" % (prefix, job.args[0])
+    ):
+        return job_model.browse()
+    if adopt and getattr(owner, uuid_field) != job.uuid:
         owner.write({uuid_field: job.uuid})
     return job
 

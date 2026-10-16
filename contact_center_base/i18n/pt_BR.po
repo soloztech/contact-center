@@ -1557,3 +1557,81 @@ msgstr "Ciclo rejeitado"
 #: model:ir.model.fields.selection,name:contact_center_base.selection__contact_center_inbox_event__pairing_hold_status__obsolete
 msgid "Earlier Epoch — Do Not Release"
 msgstr "Ciclo anterior — não liberar"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_res_company__contact_center_contact_cache_days
+#: model:ir.model.fields,field_description:contact_center_base.field_res_config_settings__contact_center_contact_cache_days
+msgid "Contact profile and photo validity (days)"
+msgstr "Validade de perfil e foto de contato (dias)"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_res_company__contact_center_group_cache_days
+#: model:ir.model.fields,field_description:contact_center_base.field_res_config_settings__contact_center_group_cache_days
+msgid "Group information and photo validity (days)"
+msgstr "Validade de informações e foto de grupo (dias)"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_res_company__contact_center_health_interval_minutes
+#: model:ir.model.fields,field_description:contact_center_base.field_res_config_settings__contact_center_health_interval_minutes
+msgid "Healthy connection check interval (minutes)"
+msgstr "Intervalo de consulta de conexão saudável (minutos)"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_res_company__contact_center_profile_failure_hours
+#: model:ir.model.fields,field_description:contact_center_base.field_res_config_settings__contact_center_profile_failure_hours
+msgid "Profile update failure wait (hours)"
+msgstr "Espera após falha na atualização de perfil (horas)"
+
+#. module: contact_center_base
+#: model:ir.model.fields,field_description:contact_center_base.field_res_company__contact_center_roster_retry_minutes
+#: model:ir.model.fields,field_description:contact_center_base.field_res_config_settings__contact_center_roster_retry_minutes
+msgid "Minimum group participant check interval (minutes)"
+msgstr "Intervalo mínimo de consulta de participantes (minutos)"
+
+#. module: contact_center_base
+#: model_terms:ir.ui.view,arch_db:contact_center_base.res_config_settings_view_contact_center_refresh
+msgid "Updates"
+msgstr "Atualizações"
+
+#. module: contact_center_base
+#: model_terms:ir.ui.view,arch_db:contact_center_base.res_config_settings_view_contact_center_refresh
+msgid "These settings apply to the selected company. Profiles and groups update when a conversation is opened and its cached information has expired. A change notification allows an earlier update on the next opening. Saving these settings does not request updates."
+msgstr "Estas definições valem para a empresa selecionada. Perfis e grupos são atualizados ao abrir uma conversa com informações vencidas. Um aviso de mudança permite atualizar antes do prazo, na próxima abertura. Salvar estas definições não solicita atualizações."
+
+#. module: contact_center_base
+#: model_terms:ir.ui.view,arch_db:contact_center_base.res_config_settings_view_contact_center_refresh
+msgid "From 1 to 365 days. All agents share the cached result."
+msgstr "De 1 a 365 dias. Todos os agentes compartilham o resultado armazenado."
+
+#. module: contact_center_base
+#: model_terms:ir.ui.view,arch_db:contact_center_base.res_config_settings_view_contact_center_refresh
+msgid "From 1 to 365 days. Participant checks needed for group operations remain available."
+msgstr "De 1 a 365 dias. As consultas de participantes necessárias às operações do grupo continuam disponíveis."
+
+#. module: contact_center_base
+#: model_terms:ir.ui.view,arch_db:contact_center_base.res_config_settings_view_contact_center_refresh
+msgid "From 1 to 60 minutes, starting with the next scheduled check. Sending does not require a prior check."
+msgstr "De 1 a 60 minutos, a partir da próxima consulta agendada. O envio não depende de uma consulta prévia."
+
+#. module: contact_center_base
+#: model_terms:ir.ui.view,arch_db:contact_center_base.res_config_settings_view_contact_center_refresh
+msgid "From 1 to 168 hours after a profile or group update exhausts its attempts. Existing waits are preserved."
+msgstr "De 1 a 168 horas após esgotar as tentativas de atualizar um perfil ou grupo. As esperas já agendadas são preservadas."
+
+#. module: contact_center_base
+#: model_terms:ir.ui.view,arch_db:contact_center_base.res_config_settings_view_contact_center_refresh
+msgid "From 1 to 1440 minutes between participant checks needed to complete pending group operations."
+msgstr "De 1 a 1440 minutos entre consultas de participantes necessárias para concluir operações pendentes do grupo."
+
+#. module: contact_center_base
+#: model:ir.actions.act_window,name:contact_center_base.action_contact_center_relationship_settings
+#: model:ir.ui.menu,name:contact_center_base.menu_contact_center_relationship_settings
+msgid "Settings"
+msgstr "Definições"
+
+#. module: contact_center_base
+#. odoo-python
+#: code:addons/contact_center_base/models/refresh_settings.py:0
+#, python-format
+msgid "%(field)s must be between 1 and %(maximum)s."
+msgstr "%(field)s deve estar entre 1 e %(maximum)s."

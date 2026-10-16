@@ -1,10 +1,11 @@
 import base64
 import datetime
+import logging
 
 from psycopg2 import OperationalError
 
 from odoo import _, api, fields, models
-from odoo.exceptions import ValidationError
+from odoo.exceptions import MissingError, ValidationError
 from odoo.tools.mimetypes import guess_mimetype
 
 from odoo.addons.queue_job.exception import RetryableJobError
@@ -19,15 +20,18 @@ from ..services.dto import AddressDTO, DTOValidationError, IdentityProfileResult
 from ..services.job import (
     ACTIVE_QUEUE_JOB_STATES,
     QUEUE_ATTEMPT_CEILING,
+    ProfileQueueJobError,
     canonical_queue_job,
+    profile_queue_job,
     provider_paused_retry_seconds,
     queue_job_owns_record,
 )
 
+_logger = logging.getLogger(__name__)
+
 _ACTIVE_QUEUE_JOB_STATES = ACTIVE_QUEUE_JOB_STATES
 _IDENTITY_AVATAR_MAX_BYTES = 2 * 1024 * 1024
 _IDENTITY_AVATAR_MIMETYPES = frozenset(("image/jpeg", "image/png", "image/webp"))
-_IDENTITY_AVATAR_TTL = datetime.timedelta(hours=24)
 _IDENTITY_AVATAR_JOB_PRIORITY = 60
 _IDENTITY_AVATAR_NAMESPACE_PRIORITY = {
     "whatsapp.pn": 0,
@@ -111,11 +115,10 @@ class ContactCenterChannelBinding(models.Model):
 
     def _direct_avatar_has_active_job(self, *, adopt=True, require_pointer_match=False):
         self.ensure_one()
-        job = canonical_queue_job(
+        job = profile_queue_job(
             self,
-            "contact_center:identity_avatar:%s:%s"
-            % (self.id, self.direct_avatar_sync_revision),
-            _ACTIVE_QUEUE_JOB_STATES,
+            "identity_avatar",
+            self.direct_avatar_sync_revision,
             uuid_field="direct_avatar_queue_job_uuid",
             adopt=adopt,
         )
@@ -129,35 +132,37 @@ class ContactCenterChannelBinding(models.Model):
 
     def _direct_avatar_default_connection(self, adapter_key=None):
         self.ensure_one()
-        candidates = self.env["contact.center.provider.connection"]
-        if self.direct_avatar_connection_id.active:
-            candidates |= self.direct_avatar_connection_id
-        latest_message = (
-            self.env["contact.center.message.binding"]
-            .sudo()
-            .search(
-                [
-                    ("channel_binding_id", "=", self.id),
-                    ("provider_connection_id", "!=", False),
-                ],
-                order="id desc",
-                limit=1,
+        return self.account_id.connection_ids.filtered(
+            lambda connection: (
+                connection._contact_center_inbound_is_available()
+                or connection._contact_center_outbound_is_available()
             )
-        )
-        if latest_message.provider_connection_id.active:
-            candidates |= latest_message.provider_connection_id
-        candidates |= self.account_id.connection_ids.filtered("active")
-        candidates = candidates.filtered(
-            lambda connection: connection.account_id == self.account_id
             and (not adapter_key or connection.adapter_key == adapter_key)
-        )
-        return (
-            candidates.filtered(
-                lambda item: item.state == "connected"
-                and not item._contact_center_has_probe_diagnostic()
-            )[:1]
-            or candidates[:1]
-        )
+        )[:1]
+
+    def _avatar_request_connection(self, connection):
+        self.ensure_one()
+        if (
+            self.conversation_type != "direct"
+            or not self.identity_id
+            or not self.active
+            or self.merged_into_id
+            or not self.channel_id.active
+            or not self.account_id.active
+        ):
+            return self.env["contact.center.provider.connection"]
+        target = connection or self._direct_avatar_default_connection()
+        if target and target.account_id != self.account_id:
+            raise ValidationError(
+                _("The identity avatar connection belongs to another account.")
+            )
+        if (
+            not target
+            or target != self._direct_avatar_default_connection()
+            or not target.get_adapter().supports_identity_profile(target)
+        ):
+            return self.env["contact.center.provider.connection"]
+        return target
 
     def _direct_avatar_address(self):
         self.ensure_one()
@@ -212,36 +217,47 @@ class ContactCenterChannelBinding(models.Model):
             confidence=alias.confidence,
         )
 
+    def _direct_avatar_sync_due(self, now):
+        self.ensure_one()
+        if self.direct_avatar_last_error_class:
+            return (
+                not self.direct_avatar_next_sync_at
+                or self.direct_avatar_next_sync_at <= now
+            )
+        return bool(
+            not self.direct_avatar_next_sync_at
+            or not self.direct_avatar_last_synced_at
+            or self.direct_avatar_applied_revision != self.direct_avatar_sync_revision
+            or self.direct_avatar_last_synced_at
+            + datetime.timedelta(days=self.company_id.contact_center_contact_cache_days)
+            <= now
+        )
+
+    def _invalidate_identity_avatar(self):
+        for binding in self.sudo():
+            if not binding._contact_center_lock_channel_then_binding():
+                continue
+            binding.invalidate_recordset()
+            if binding.direct_avatar_last_error_class:
+                continue
+            values = {"direct_avatar_next_sync_at": False}
+            if binding._direct_avatar_has_active_job(adopt=False):
+                values["direct_avatar_sync_revision"] = (
+                    binding.direct_avatar_sync_revision + 1
+                )
+            binding.write(values)
+        return True
+
     def _request_identity_avatar_sync(self, connection=None, force=False, eta=None):
         for candidate in self.sudo():
             binding = candidate.exists()
-            if (
-                not binding
-                or binding.conversation_type != "direct"
-                or not binding.identity_id
-                or not binding.active
-                or binding.merged_into_id
-            ):
+            if not binding:
                 continue
-            target_connection = (
-                connection or binding._direct_avatar_default_connection()
-            )
+            target_connection = binding._avatar_request_connection(connection)
             if not target_connection:
                 continue
-            target_connection.ensure_one()
-            if target_connection.account_id != binding.account_id:
-                raise ValidationError(
-                    _("The identity avatar connection belongs to another account.")
-                )
-            if not target_connection.get_adapter().supports_identity_profile(
-                target_connection
-            ):
-                continue
             now = fields.Datetime.now()
-            due = (
-                not binding.direct_avatar_next_sync_at
-                or binding.direct_avatar_next_sync_at <= now
-            )
+            due = binding._direct_avatar_sync_due(now)
             connection_changed = (
                 binding.direct_avatar_connection_id != target_connection
             )
@@ -254,48 +270,22 @@ class ContactCenterChannelBinding(models.Model):
                 )
             ):
                 continue
-            if not (
-                force
-                or due
-                or connection_changed
-                or binding.direct_avatar_state in ("unavailable", "failed")
-            ):
+            if not (force or due or connection_changed):
                 continue
 
-            # Most inbound messages observe an avatar that is still inside its
-            # TTL.  Avoid locking the hot conversation rows for that no-op.  The
+            # Repeated openings normally reuse the cache. Avoid locking hot
+            # conversation rows for that no-op. The
             # same conditions are deliberately checked again after acquiring the
             # canonical channel -> binding locks so this optimization cannot race
             # another worker into creating two revisions/jobs.
             if not binding._contact_center_lock_channel_then_binding():
                 continue
             binding.invalidate_recordset()
-            if (
-                binding.conversation_type != "direct"
-                or not binding.identity_id
-                or not binding.active
-                or binding.merged_into_id
-            ):
-                continue
-            target_connection = (
-                connection or binding._direct_avatar_default_connection()
-            )
+            target_connection = binding._avatar_request_connection(connection)
             if not target_connection:
                 continue
-            target_connection.ensure_one()
-            if target_connection.account_id != binding.account_id:
-                raise ValidationError(
-                    _("The identity avatar connection belongs to another account.")
-                )
-            if not target_connection.get_adapter().supports_identity_profile(
-                target_connection
-            ):
-                continue
             now = fields.Datetime.now()
-            due = (
-                not binding.direct_avatar_next_sync_at
-                or binding.direct_avatar_next_sync_at <= now
-            )
+            due = binding._direct_avatar_sync_due(now)
             connection_changed = (
                 binding.direct_avatar_connection_id != target_connection
             )
@@ -305,11 +295,12 @@ class ContactCenterChannelBinding(models.Model):
                 and binding._direct_avatar_has_active_job()
             ):
                 continue
-            if not (
-                force
-                or due
-                or connection_changed
-                or binding.direct_avatar_state in ("unavailable", "failed")
+            if not (force or due or connection_changed):
+                continue
+            if (
+                not force
+                and not connection_changed
+                and binding._finish_abandoned_avatar_job()
             ):
                 continue
             binding.write(
@@ -341,6 +332,88 @@ class ContactCenterChannelBinding(models.Model):
                     binding.direct_avatar_sync_revision, eta=eta
                 )
         return True
+
+    def _finish_abandoned_avatar_job(self):
+        self.ensure_one()
+        if not self.direct_avatar_queue_job_uuid:
+            return False
+        job = profile_queue_job(
+            self,
+            "identity_avatar",
+            self.direct_avatar_sync_revision,
+            uuid_field="direct_avatar_queue_job_uuid",
+            adopt=False,
+            states=("failed", "cancelled"),
+        )
+        if not job:
+            return False
+        self._finish_identity_avatar_failure(
+            ProfileQueueJobError("identity avatar queue job %s" % job.state),
+            self.direct_avatar_attempts + job.retry,
+        )
+        return True
+
+    @api.model
+    def _recover_identity_avatar_requests(self, cutoff, limit):
+        limit = max(0, min(int(limit), 100))
+        if not limit:
+            return 0
+        self.flush_model()
+        self.env["queue.job"].sudo().flush_model()
+        self.env.cr.execute(
+            """
+            SELECT binding.id FROM contact_center_channel_binding AS binding
+             WHERE binding.direct_avatar_queue_job_uuid IS NOT NULL
+               AND binding.direct_avatar_sync_requested_at <= %s
+               AND NOT EXISTS (
+                    SELECT 1 FROM queue_job AS job
+                     WHERE job.uuid = binding.direct_avatar_queue_job_uuid
+                       AND job.state IN %s)
+             ORDER BY binding.direct_avatar_sync_requested_at, binding.id LIMIT %s
+            """,
+            [cutoff, ACTIVE_QUEUE_JOB_STATES, limit],
+        )
+        recovered = 0
+        for candidate in self.sudo().browse([row[0] for row in self.env.cr.fetchall()]):
+            try:
+                with self.env.cr.savepoint():
+                    binding = candidate.exists()
+                    if not binding:
+                        continue
+                    self.env.cr.execute(
+                        "SELECT id FROM mail_channel WHERE id = %s FOR UPDATE SKIP LOCKED",
+                        [binding.channel_id.id],
+                    )
+                    if (
+                        not self.env.cr.fetchone()
+                        or not binding._contact_center_lock_channel_then_binding()
+                    ):
+                        continue
+                    binding.invalidate_recordset()
+                    if (
+                        not binding.direct_avatar_queue_job_uuid
+                        or binding._direct_avatar_has_active_job()
+                    ):
+                        continue
+                    if not binding._finish_abandoned_avatar_job():
+                        if not binding._avatar_request_connection(None):
+                            binding._finish_identity_avatar_unavailable(
+                                UnsupportedEventError(
+                                    "avatar request no longer has an authorized connection"
+                                ),
+                                binding.direct_avatar_attempts,
+                            )
+                        else:
+                            binding.write({"direct_avatar_queue_job_uuid": False})
+                            binding._enqueue_identity_avatar_sync()
+                    recovered += 1
+            except (MissingError, OperationalError):
+                _logger.info(
+                    "Deferred concurrent avatar recovery for binding %s",
+                    candidate.id,
+                    exc_info=True,
+                )
+        return recovered
 
     def _enqueue_identity_avatar_sync(self, revision=None, eta=None):
         for binding in self.sudo():
@@ -453,6 +526,7 @@ class ContactCenterChannelBinding(models.Model):
             or not connection.active
             or not connection.account_id.active
             or connection.account_id != self.account_id
+            or connection != self._direct_avatar_default_connection()
         ):
             raise UnsupportedEventError("identity avatar scope is no longer active")
         if not connection.get_adapter().supports_identity_profile(connection):
@@ -497,6 +571,7 @@ class ContactCenterChannelBinding(models.Model):
             or not self.channel_id.active
             or self.channel_id.channel_type != "contact_center"
             or connection.account_id != self.account_id
+            or connection != self._direct_avatar_default_connection()
         ):
             raise UnsupportedEventError(
                 "identity avatar scope changed while reading the provider"
@@ -661,7 +736,10 @@ class ContactCenterChannelBinding(models.Model):
                 else avatar.state
             ),
             "direct_avatar_last_synced_at": now,
-            "direct_avatar_next_sync_at": now + _IDENTITY_AVATAR_TTL,
+            "direct_avatar_next_sync_at": now
+            + datetime.timedelta(
+                days=self.company_id.contact_center_contact_cache_days
+            ),
             "direct_avatar_applied_revision": expected_revision,
             "direct_avatar_attempts": attempt,
             "direct_avatar_queue_job_uuid": False,
@@ -697,7 +775,10 @@ class ContactCenterChannelBinding(models.Model):
                 "direct_avatar_attempts": attempt,
                 "direct_avatar_queue_job_uuid": False,
                 "direct_avatar_next_sync_at": (
-                    fields.Datetime.now() + _IDENTITY_AVATAR_TTL
+                    fields.Datetime.now()
+                    + datetime.timedelta(
+                        hours=self.company_id.contact_center_profile_failure_hours
+                    )
                 ),
                 "direct_avatar_last_error_class": error.__class__.__name__[:128],
                 "direct_avatar_last_error_message": str(error)[:4000],
@@ -715,7 +796,10 @@ class ContactCenterChannelBinding(models.Model):
                 "direct_avatar_attempts": attempt,
                 "direct_avatar_queue_job_uuid": False,
                 "direct_avatar_next_sync_at": (
-                    fields.Datetime.now() + _IDENTITY_AVATAR_TTL
+                    fields.Datetime.now()
+                    + datetime.timedelta(
+                        hours=self.company_id.contact_center_profile_failure_hours
+                    )
                 ),
                 "direct_avatar_last_error_class": error.__class__.__name__[:128],
                 "direct_avatar_last_error_message": str(error)[:4000],
@@ -741,32 +825,5 @@ class ContactCenterChannelBinding(models.Model):
     def _cron_schedule_identity_avatars(
         self, limit=100, adapter_key=None, stagger_seconds=2
     ):
-        now = fields.Datetime.now()
-        bindings = self.sudo().search(
-            [
-                ("conversation_type", "=", "direct"),
-                ("identity_id", "!=", False),
-                ("active", "=", True),
-                ("merged_into_id", "=", False),
-                ("channel_id.active", "=", True),
-                ("account_id.active", "=", True),
-                "|",
-                ("direct_avatar_next_sync_at", "=", False),
-                ("direct_avatar_next_sync_at", "<=", now),
-            ],
-            order="direct_avatar_next_sync_at, id",
-            limit=limit,
-        )
-        for index, binding in enumerate(bindings):
-            connection = binding._direct_avatar_default_connection(
-                adapter_key=adapter_key
-            )
-            if not connection:
-                continue
-            eta = (
-                now + datetime.timedelta(seconds=index * max(0, stagger_seconds))
-                if stagger_seconds
-                else None
-            )
-            binding._request_identity_avatar_sync(connection, eta=eta)
+        """Compatibility for the retired cron: expiry never requests a pull."""
         return True
