@@ -1279,11 +1279,20 @@ class ContactCenterInboxEvent(models.Model):
             .exists()
         )
         connection = self.provider_connection_id.sudo()
+        binding = (
+            self.env["contact.center.channel.binding"]
+            .sudo()
+            .browse(error.channel_binding_id or profile.channel_binding_id.id)
+            .exists()
+        )
         if (
-            not profile
+            not binding
             or error.provider_connection_id != connection.id
-            or profile.provider_connection_id != connection
-            or profile.account_id != self.account_id
+            or binding.account_id != self.account_id
+            or binding.conversation_type != "group"
+            or not binding.active
+            or binding.merged_into_id
+            or not binding.channel_id.active
             or not connection._contact_center_inbound_is_available()
         ):
             scope_error = ValidationError(
@@ -1292,6 +1301,9 @@ class ContactCenterInboxEvent(models.Model):
             self._finish_failure("dead", scope_error, attempts=attempt)
             return False
 
+        profile = self.env["contact.center.application"]._group_profile_for_connection(
+            binding, connection
+        )
         now = fields.Datetime.now()
         wait_count = self.group_roster_wait_count + 1
         wait_observability = {

@@ -241,7 +241,14 @@ class ContactCenterChannelBinding(models.Model):
             if binding.direct_avatar_last_error_class:
                 continue
             values = {"direct_avatar_next_sync_at": False}
-            if binding._direct_avatar_has_active_job(adopt=False):
+            job = profile_queue_job(
+                binding,
+                "identity_avatar",
+                binding.direct_avatar_sync_revision,
+                uuid_field="direct_avatar_queue_job_uuid",
+                adopt=False,
+            )
+            if job and job.state == "started":
                 values["direct_avatar_sync_revision"] = (
                     binding.direct_avatar_sync_revision + 1
                 )

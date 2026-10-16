@@ -702,7 +702,10 @@ class ContactCenterGroupProfile(models.Model):
             if not profile._lock_metadata_request() or profile.last_error_class:
                 continue
             values = {"next_sync_at": False}
-            if profile._has_active_queue_job(adopt=False):
+            job = profile_queue_job(
+                profile, "group_metadata", profile.sync_revision, adopt=False
+            )
+            if job and job.state == "started":
                 values["sync_revision"] = profile.sync_revision + 1
             profile.write(values)
         return True
@@ -876,9 +879,18 @@ class ContactCenterGroupProfile(models.Model):
     def _technical_metadata_eta(self, now):
         self.ensure_one()
         last_read = max(
-            filter(None, (self.last_synced_at, self.sync_requested_at)), default=None
+            filter(
+                None,
+                (
+                    self.last_synced_at,
+                    self.env.context.get("contact_center_metadata_read_started_at"),
+                ),
+            ),
+            default=None,
         )
-        return max(now, last_read + self._roster_retry_delta()) if last_read else now
+        eta = max(now, last_read + self._roster_retry_delta()) if last_read else now
+        job = profile_queue_job(self, "group_metadata", self.sync_revision, adopt=False)
+        return max(eta, job.eta) if job and job.eta else eta
 
     def _start_metadata_request(
         self, now, *, technical=False, continuing=False, advance_revision=True
@@ -977,7 +989,10 @@ class ContactCenterGroupProfile(models.Model):
             return False
         if job_uuid and self.queue_job_uuid == job_uuid:
             technical = bool(self.env.context.get("contact_center_technical_roster"))
-            self.write({"attempts": self._job_attempt()})
+            read_started = self.env.context.get(
+                "contact_center_metadata_read_started_at"
+            )
+            self.write({"attempts": self._job_attempt() - int(not read_started)})
             self._start_metadata_request(
                 fields.Datetime.now(),
                 technical=technical,
@@ -1068,17 +1083,30 @@ class ContactCenterGroupProfile(models.Model):
             raise ValidationError(_("The group synchronization revision is invalid."))
         attempt = self._job_attempt()
         self = self.with_context(
+            contact_center_metadata_read_started_at=False,
             contact_center_technical_roster=(
-                technical or attempt > 1 or bool(self._uncovered_roster_waiters())
-            )
+                technical or bool(self._uncovered_roster_waiters())
+            ),
         )
         if self._superseded(expected_revision, job_uuid):
             return self._schedule_latest_after_superseded(job_uuid)
         connection = self.provider_connection_id
         connection_id = connection.id
         try:
+            health_revision, conversation_ref = self._provider_read_preflight(
+                connection
+            )
+            self = self.with_context(
+                contact_center_metadata_read_started_at=fields.Datetime.now()
+            )
             result = self._run_metadata_sync(
-                connection, expected_revision, job_uuid, connection_id, attempt
+                connection,
+                expected_revision,
+                job_uuid,
+                connection_id,
+                attempt,
+                health_revision,
+                conversation_ref,
             )
             if result is False:
                 return False
@@ -1113,18 +1141,22 @@ class ContactCenterGroupProfile(models.Model):
         return True
 
     def _run_metadata_sync(
-        self, connection, expected_revision, job_uuid, connection_id, attempt
+        self,
+        connection,
+        expected_revision,
+        job_uuid,
+        connection_id,
+        attempt,
+        expected_health_revision,
+        conversation_ref,
     ):
-        expected_health_revision, conversation_ref = self._provider_read_preflight(
-            connection
-        )
         scope_ids = (
             self.account_id.id,
             self.channel_id.id,
             self.channel_binding_id.id,
         )
         adapter = connection.get_adapter()
-        read_started_at = fields.Datetime.now()
+        read_started_at = self.env.context["contact_center_metadata_read_started_at"]
         snapshot = adapter.fetch_group_metadata(connection, conversation_ref)
         if not isinstance(snapshot, GroupMetadataDTO):
             raise AdapterError("fetch_group_metadata must return GroupMetadataDTO")

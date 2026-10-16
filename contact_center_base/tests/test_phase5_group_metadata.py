@@ -483,6 +483,88 @@ class TestContactCenterGroupMetadata(SavepointCase):
             trap.assert_jobs_count(0)
         self.assertEqual(new_waiter.state, "dead")
 
+    def test_queued_hints_preserve_budget_eta_and_eventual_single_read(self):
+        _binding, profile = self._create_group()
+        now = fields.Datetime.now()
+        eta = now + datetime.timedelta(minutes=15)
+        profile._enqueue_sync(eta=eta, technical=True)
+        owner = self.env["queue.job"].search([("uuid", "=", profile.queue_job_uuid)])
+        revision = profile.sync_revision
+        for index in range(13):
+            with patch.object(
+                fields.Datetime,
+                "now",
+                return_value=now + datetime.timedelta(minutes=15 * index),
+            ):
+                profile._invalidate_metadata()
+            self.assertEqual(profile.sync_revision, revision)
+            self.assertEqual(profile.attempts, 0)
+            self.assertEqual(profile.queue_job_uuid, owner.uuid)
+            self.assertEqual(owner.eta, eta)
+        GroupMetadataTestAdapter.snapshot = self._snapshot([])
+        owner.state = "started"
+        with patch.object(
+            GroupMetadataTestAdapter,
+            "fetch_group_metadata",
+            autospec=True,
+            return_value=GroupMetadataTestAdapter.snapshot,
+        ) as fetch:
+            self.assertTrue(
+                profile.with_context(job_uuid=owner.uuid)._job_sync_metadata(
+                    revision, technical=True
+                )
+            )
+        fetch.assert_called_once()
+        self.assertEqual(profile.attempts, 1)
+        self.assertEqual(profile.metadata_state, "ready")
+
+    def test_supersession_before_read_keeps_budget_and_accepted_eta(self):
+        _binding, profile = self._create_group()
+        eta = fields.Datetime.now() + datetime.timedelta(minutes=10)
+        profile._enqueue_sync(eta=eta, technical=True)
+        owner = self.env["queue.job"].search([("uuid", "=", profile.queue_job_uuid)])
+        revision = profile.sync_revision
+        profile.sync_revision += 1
+        with patch.object(
+            GroupMetadataTestAdapter, "fetch_group_metadata", autospec=True
+        ) as fetch:
+            self.assertFalse(
+                profile.with_context(job_uuid=owner.uuid)._job_sync_metadata(
+                    revision, technical=True
+                )
+            )
+        fetch.assert_not_called()
+        successor = self.env["queue.job"].search(
+            [("uuid", "=", profile.queue_job_uuid)]
+        )
+        self.assertNotEqual(successor, owner)
+        self.assertEqual(profile.attempts, 0)
+        self.assertEqual(successor.eta, eta)
+
+    def test_started_hint_successor_waits_from_actual_read(self):
+        _binding, profile = self._create_group()
+        now = fields.Datetime.now()
+        profile.sync_requested_at = now - datetime.timedelta(days=1)
+        profile._enqueue_sync(technical=True)
+        owner = self.env["queue.job"].search([("uuid", "=", profile.queue_job_uuid)])
+        owner.state = "started"
+        revision = profile.sync_revision
+        GroupMetadataTestAdapter.snapshot = self._snapshot([])
+        GroupMetadataTestAdapter.before_metadata_return = (
+            lambda *_args: profile._invalidate_metadata()
+        )
+        self.assertFalse(
+            profile.with_context(job_uuid=owner.uuid)._job_sync_metadata(
+                revision, technical=True
+            )
+        )
+        successor = self.env["queue.job"].search(
+            [("uuid", "=", profile.queue_job_uuid)]
+        )
+        self.assertNotEqual(successor, owner)
+        self.assertGreaterEqual(successor.eta, now + datetime.timedelta(minutes=15))
+        self.assertEqual(profile.attempts, 1)
+
     def test_visual_partial_without_own_identity_is_cached_without_retry(self):
         _binding, profile = self._create_group()
         self.connection.capabilities_json = {
@@ -1444,6 +1526,9 @@ class TestContactCenterGroupMetadata(SavepointCase):
         GroupMetadataTestAdapter.before_metadata_return = invalidate_during_fetch
         profile._enqueue_sync()
         job_uuid = profile.queue_job_uuid
+        self.env["queue.job"].search([("uuid", "=", job_uuid)]).write(
+            {"state": "started"}
+        )
         with patch.object(
             type(profile), "_enqueue_sync", autospec=True, return_value=True
         ) as enqueue:

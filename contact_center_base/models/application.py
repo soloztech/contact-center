@@ -68,11 +68,18 @@ class GroupRosterRefreshRequired(TransientAdapterError):
     committed before the current queue job finishes successfully.
     """
 
-    def __init__(self, group_profile_id, provider_connection_id, required_after):
+    def __init__(
+        self,
+        group_profile_id,
+        provider_connection_id,
+        required_after,
+        channel_binding_id=None,
+    ):
         super().__init__("group operation is waiting for a current roster")
         self.group_profile_id = int(group_profile_id)
         self.provider_connection_id = int(provider_connection_id)
         self.required_after = required_after
+        self.channel_binding_id = channel_binding_id
 
 
 class ContactCenterApplication(models.AbstractModel):
@@ -615,7 +622,7 @@ class ContactCenterApplication(models.AbstractModel):
         def refresh_or_terminal(error):
             if not roster_is_authoritative:
                 return GroupRosterRefreshRequired(
-                    profile.id, connection.id, required_after
+                    profile.id, connection.id, required_after, binding.id
                 )
             return ValidationError(str(error))
 
@@ -658,7 +665,9 @@ class ContactCenterApplication(models.AbstractModel):
         if actor_is_author:
             return True
         if not roster_is_authoritative:
-            raise GroupRosterRefreshRequired(profile.id, connection.id, required_after)
+            raise GroupRosterRefreshRequired(
+                profile.id, connection.id, required_after, profile.channel_binding_id.id
+            )
         if not actor_participant.active or actor_participant.role not in (
             "admin",
             "superadmin",
@@ -717,7 +726,7 @@ class ContactCenterApplication(models.AbstractModel):
                 # and must remain a permanent inbox failure.
                 if not roster_is_authoritative:
                     raise GroupRosterRefreshRequired(
-                        profile.id, connection.id, required_after
+                        profile.id, connection.id, required_after, binding.id
                     )
                 raise ValidationError(
                     _("The current sender is absent from the confirmed group roster.")
@@ -1822,7 +1831,10 @@ class ContactCenterApplication(models.AbstractModel):
             )
             if not authoritative:
                 raise GroupRosterRefreshRequired(
-                    profile.id, profile.provider_connection_id.id, required_after
+                    profile.id,
+                    profile.provider_connection_id.id,
+                    required_after,
+                    profile.channel_binding_id.id,
                 )
             raise ValidationError(
                 _("The receipt participant is absent from the confirmed group roster.")

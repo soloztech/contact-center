@@ -3659,6 +3659,54 @@ class TestContactCenterGroups(SavepointCase):
         self.assertFalse(profile.queue_job_uuid)
         self.assertEqual(target.message_state, "active")
 
+    def _assert_roster_defer_survives_profile_rollback(self, rebind):
+        self._process(self._event(message_id="roster-rollback-target"))
+        binding = self._group_binding()
+        profile = binding.group_profile_ids.sudo()[:1]
+        if rebind:
+            old = self.connection.copy(
+                {
+                    "name": "Old roster provider",
+                    "role": "standby",
+                    "inbound_active": False,
+                    "outbound_active": False,
+                }
+            )
+            profile.provider_connection_id = old
+        else:
+            profile.unlink()
+        inbox = self._inbox_for_event(
+            self._event(
+                event_type="message.reaction",
+                message=False,
+                sender_lid="999111229099@lid",
+                sender_pn="5511999919099@s.whatsapp.net",
+                mutation={
+                    "type": "react",
+                    "target_external_message_id": "roster-rollback-target",
+                    "emoji": "👍",
+                    "operation": "add",
+                },
+            )
+        )
+        self.assertFalse(self._run_inbox_job(inbox))
+        inbox.invalidate_recordset()
+        profile = binding.group_profile_ids.sudo()[:1]
+        self.assertEqual(inbox.state, "pending")
+        self.assertEqual(inbox.waiting_group_profile_id, profile)
+        self.assertEqual(profile.provider_connection_id, self.connection)
+        self.assertTrue(profile.queue_job_uuid)
+        self.assertEqual(
+            self.env["queue.job"].search_count([("uuid", "=", profile.queue_job_uuid)]),
+            1,
+        )
+
+    def test_roster_defer_recreates_profile_outside_projection_rollback(self):
+        self._assert_roster_defer_survives_profile_rollback(rebind=False)
+
+    def test_roster_defer_rebinds_profile_outside_projection_rollback(self):
+        self._assert_roster_defer_survives_profile_rollback(rebind=True)
+
     def test_group_roster_defer_rejects_an_out_of_scope_dependency(self):
         self._process(self._event(message_id="group-roster-scope-bootstrap"))
         profile = self._group_binding().group_profile_ids.sudo()[:1]

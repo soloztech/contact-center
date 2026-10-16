@@ -264,10 +264,99 @@ class TestContactCenterIdentityAvatar(SavepointCase):
 
     def test_avatar_error_wait_and_configuration_fix(self):
         binding = self._create_direct_binding()
-        self._sync(binding, AvatarResult(state="absent"))
+        ready = AvatarResult(
+            state="ready",
+            content=b"\xff\xd8\xff\xe0config-photo",
+            mime_type="image/jpeg",
+        )
+        self.assertTrue(self._sync(binding, ready))
+        attachment = binding.direct_avatar_attachment_id
+        other_account = self.account.copy(
+            {"name": "Isolated profile account", "external_ref": str(uuid.uuid4())}
+        )
+        isolated = []
+        for account, role in ((self.account, "standby"), (other_account, "primary")):
+            connection = self.connection.copy(
+                {
+                    "account_id": account.id,
+                    "role": role,
+                    "inbound_active": role == "primary",
+                    "outbound_active": False,
+                    "external_ref": str(uuid.uuid4()),
+                }
+            )
+            guest = self.env["mail.guest"].create({"name": "Isolated profile guest"})
+            identity = self.env["contact.center.identity"].create(
+                {
+                    "name": guest.name,
+                    "company_id": account.company_id.id,
+                    "mail_guest_id": guest.id,
+                }
+            )
+            channel = self.env["mail.channel"]._contact_center_create_channel(
+                account=account,
+                identity=identity,
+                teams=self.team,
+                partner_ids=self.agent.partner_id.ids,
+                guest_ids=guest.ids,
+            )
+            other = self.env["contact.center.channel.binding"].create(
+                {
+                    "account_id": account.id,
+                    "channel_id": channel.id,
+                    "conversation_type": "direct",
+                    "identity_id": identity.id,
+                    "conversation_ref": str(uuid.uuid4()),
+                    "direct_avatar_connection_id": connection.id,
+                }
+            )
+            group_channel = self.env["mail.channel"]._contact_center_create_channel(
+                account=account,
+                conversation_type="group",
+                name="Isolated group",
+                partner_ids=self.agent.partner_id.ids,
+            )
+            group_binding = self.env["contact.center.channel.binding"].create(
+                {
+                    "account_id": account.id,
+                    "channel_id": group_channel.id,
+                    "conversation_type": "group",
+                    "conversation_ref": str(uuid.uuid4()) + "@g.us",
+                }
+            )
+            group = self.env["contact.center.group.profile"]._get_or_create(
+                group_binding, connection
+            )
+            cooldown = fields.Datetime.now() + datetime.timedelta(days=1)
+            other.write(
+                {
+                    "direct_avatar_last_error_class": "UnsupportedEventError",
+                    "direct_avatar_next_sync_at": cooldown,
+                }
+            )
+            group.write(
+                {"last_error_class": "UnsupportedEventError", "next_sync_at": cooldown}
+            )
+            isolated += [
+                (
+                    other,
+                    other.read(
+                        [
+                            "direct_avatar_last_error_class",
+                            "direct_avatar_next_sync_at",
+                            "direct_avatar_sync_revision",
+                        ]
+                    ),
+                ),
+                (
+                    group,
+                    group.read(["last_error_class", "next_sync_at", "sync_revision"]),
+                ),
+            ]
         binding._finish_identity_avatar_unavailable(
             UnsupportedEventError("temporarily unavailable"), 1
         )
+        old_cooldown = binding.direct_avatar_next_sync_at
         with trap_jobs() as trap:
             binding._request_identity_avatar_sync(self.connection)
             binding._invalidate_identity_avatar()
@@ -282,8 +371,16 @@ class TestContactCenterIdentityAvatar(SavepointCase):
             )
             trap.assert_jobs_count(0)
             self.assertFalse(binding.direct_avatar_last_error_class)
-            binding._request_identity_avatar_sync(self.connection)
+            self.env["contact.center.ui.api"].with_user(
+                self.agent
+            ).request_conversation_profile(binding.channel_id.id)
             trap.assert_jobs_count(1)
+        self.assertTrue(self._sync(binding, ready))
+        self.assertEqual(binding.direct_avatar_attachment_id, attachment)
+        self.assertTrue(attachment.exists())
+        self.assertLess(binding.direct_avatar_last_synced_at, old_cooldown)
+        for record, before in isolated:
+            self.assertEqual(record.read(list(before[0].keys() - {"id"})), before)
 
     def test_avatar_terminal_owner_recovery_preserves_queue_history(self):
         binding = self._create_direct_binding()
