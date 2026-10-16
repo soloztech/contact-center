@@ -603,8 +603,12 @@ class TestWuzapiIngressConcurrency(TransactionCase):
         fixture = self._fixture()
         with self.registry.cursor() as setup_cr:
             env = api.Environment(setup_cr, SUPERUSER_ID, {})
-            request = env["contact.center.wuzapi.reconnect.wizard"].create(
-                {"connection_id": fixture["connection"]}
+            actor = env["res.users"].browse(fixture["agent"])
+            actor.groups_id += env.ref("contact_center_base.group_contact_center_admin")
+            request = (
+                env["contact.center.wuzapi.reconnect.wizard"]
+                .with_user(actor)
+                .create({"connection_id": fixture["connection"]})
             )
             with trap_jobs() as trap:
                 request.action_start()

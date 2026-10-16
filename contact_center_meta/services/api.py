@@ -53,7 +53,6 @@ def _adapter_error(error):
                 )
             )
         )
-        and not isinstance(translated, ProviderRateLimitError)
     )
     return translated
 

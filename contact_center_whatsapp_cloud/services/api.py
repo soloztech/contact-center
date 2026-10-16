@@ -63,7 +63,6 @@ def _copy_diagnostics(source, translated):
                 )
             )
         )
-        and not isinstance(translated, ProviderRateLimitError)
     )
     return translated
 
