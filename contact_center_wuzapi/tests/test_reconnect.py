@@ -93,7 +93,7 @@ class TestWuzapiReconnect(WuzapiCase):
             }
         )
 
-    def _job(self, request, health, observation=None):
+    def _job(self, request, health, observation=None, after_health=None):
         with trap_jobs() as trap:
             request.action_start()
         token = self.connection._contact_center_health_observation_token()
@@ -104,7 +104,12 @@ class TestWuzapiReconnect(WuzapiCase):
             self.clock,
         )
         with mock.patch.object(
-            type(request), "_health_snapshot", return_value=snapshots
+            type(request),
+            "_health_snapshot",
+            side_effect=[
+                snapshots,
+                (after_health or health, snapshots[1], token, self.clock),
+            ],
         ), mock.patch(CLIENT) as client:
             request.with_context(job_uuid=trap.enqueued_jobs[0].uuid)._job_reconnect(
                 request.request_revision
@@ -124,20 +129,79 @@ class TestWuzapiReconnect(WuzapiCase):
         with self.assertRaises(AccessError):
             self.connection.write({"wuzapi_pairing_state": "verified"})
 
-    def test_paired_restore_does_not_create_qr_epoch_or_invalidate_configuration(self):
-        request = self._request()
+    def test_paired_restore_preserves_lid_group_metadata_and_configuration(self):
+        self.connection._apply_health_result(
+            {
+                "state": "connected",
+                "identity_matches": True,
+                "wuzapi_own_identity": {
+                    "jid": self.account.own_external_identity,
+                    "lid": "200000000000002@lid",
+                },
+            },
+            records_health_probe=True,
+            observed_at=self.clock - datetime.timedelta(seconds=1),
+        )
+        pair = dict(self.connection.wuzapi_own_identity_json)
+        channel = self.env["mail.channel"]._contact_center_create_channel(
+            account=self.account,
+            conversation_type="group",
+            name="Reconnect Group",
+            partner_ids=self.agent.partner_id.ids,
+        )
+        binding = self.env["contact.center.channel.binding"].create(
+            {
+                "channel_id": channel.id,
+                "account_id": self.account.id,
+                "conversation_type": "group",
+                "conversation_ref": "120363000000901@g.us",
+            }
+        )
         revision = self.connection.health_configuration_revision
+        profile = self.env["contact.center.group.profile"].create(
+            {
+                "channel_binding_id": binding.id,
+                "provider_connection_id": self.connection.id,
+                "metadata_state": "stale",
+                "next_sync_at": self.clock + datetime.timedelta(hours=2),
+                "own_protocol_participant_json": {
+                    "namespace": "whatsapp.pn",
+                    "value": self.account.own_external_identity,
+                    "value_normalized": self.account.own_external_identity,
+                    "role": "sender",
+                    "confidence": "protocol",
+                },
+                "own_protocol_participant_health_revision": revision,
+            }
+        )
+        names = [
+            "metadata_state",
+            "next_sync_at",
+            "own_protocol_participant_json",
+            "own_protocol_participant_health_revision",
+        ]
+        group_before = profile.read(names)
+        request = self._request()
         state = self.connection.wuzapi_onboarding_state
         self._phase("none", epoch=4)
         client = self._job(
-            request, {"state": "connected", "connected": True, "identity_matches": True}
+            request,
+            {"state": "disconnected", "reason": "session_inactive", "connected": False},
+            after_health={
+                "state": "connected",
+                "connected": True,
+                "identity_matches": True,
+            },
         )
         self.assertEqual(request.state, "ready")
-        client.return_value.connect.assert_not_called()
+        client.return_value.connect.assert_called_once_with(())
         client.return_value.qr_png.assert_not_called()
         self.assertEqual(self.connection.wuzapi_pairing_revision, 4)
         self.assertEqual(self.connection.health_configuration_revision, revision)
         self.assertEqual(self.connection.wuzapi_onboarding_state, state)
+        self.assertEqual(self.connection.wuzapi_own_identity_json, pair)
+        profile.invalidate_recordset()
+        self.assertEqual(profile.read(names), group_before)
 
     def test_qr_is_only_exposed_after_marker_and_pairing_health_are_persisted(self):
         request = self._request()
@@ -367,3 +431,51 @@ class TestWuzapiReconnect(WuzapiCase):
         with mock.patch(CLIENT) as client, self.assertRaises(AccessError):
             request.with_user(self.agent)._qr_png(1)
         client.assert_not_called()
+
+    def test_wrong_scan_unlink_and_new_qr_never_release_the_old_epoch(self):
+        self._phase("mismatch", epoch=1)
+        held = self._held()
+        wrong = self._request()
+        client = self._job(
+            wrong,
+            {
+                "state": "degraded",
+                "reason": "identity_mismatch",
+                "identity_matches": False,
+                "connected": True,
+            },
+        )
+        self.assertEqual(wrong.state, "error")
+        client.return_value.qr_png.assert_not_called()
+        self.connection._apply_health_result(
+            {"state": "disconnected", "reason": "session_inactive"},
+            records_health_probe=True,
+            observed_at=self.clock + datetime.timedelta(seconds=1),
+        )
+        correct = self._request()
+        with mock.patch.object(
+            fields.Datetime,
+            "now",
+            return_value=self.clock + datetime.timedelta(seconds=5),
+        ):
+            client = self._job(
+                correct,
+                {
+                    "state": "disconnected",
+                    "reason": "session_inactive",
+                    "connected": False,
+                },
+                after_health={
+                    "state": "disconnected",
+                    "reason": "session_inactive",
+                    "connected": True,
+                },
+            )
+        client.return_value.connect.assert_called_once_with(())
+        self.assertEqual(self.connection.wuzapi_pairing_revision, 2)
+        self.assertEqual(self.connection.wuzapi_pairing_state, "qr")
+        self._proof(offset=6)
+        self.assertEqual(self.connection.wuzapi_pairing_state, "verified")
+        self.assertEqual(held.pairing_hold_status, "obsolete")
+        with self.assertRaises(ValidationError):
+            held.with_user(self.admin).action_confirm_pairing_origin()

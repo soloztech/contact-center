@@ -1092,6 +1092,7 @@ class TestConnectionHealth(SavepointCase):
                         "healthy" if states[index] == "connected" else "unavailable"
                     ),
                     "last_state_observed_at": observed_at,
+                    "last_state_source": "health_job",
                 }
             )
         for connection, state in zip(connections.sorted("id"), states):
@@ -1102,6 +1103,7 @@ class TestConnectionHealth(SavepointCase):
                         "healthy" if state == "connected" else "unavailable"
                     ),
                     "last_state_observed_at": observed_at,
+                    "last_state_source": "health_job",
                 }
             )
         first = connections.sorted("id")[0]
@@ -1109,7 +1111,7 @@ class TestConnectionHealth(SavepointCase):
             {
                 "health_check_pending": True,
                 "next_health_check_at": observed_at
-                + datetime.timedelta(seconds=first._health_interval_seconds),
+                + datetime.timedelta(seconds=first._health_job_lease_seconds),
             }
         )
 
